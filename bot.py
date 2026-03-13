@@ -93,7 +93,7 @@ class CreateTicket(View):
         )
 
         embed.add_field(name="👤 Khách", value=interaction.user.mention)
-        embed.add_field(name="🎮 Minecraft", value=mc_name)
+        embed.add_field(name="🎮 Minecraft username", value=mc_name)
         embed.add_field(name="📂 Loại", value=ticket_type)
         embed.add_field(name="📊 Trạng thái", value="⏳ Chưa xử lý", inline=False)
 
