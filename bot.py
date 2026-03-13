@@ -1,127 +1,154 @@
 import discord
 from discord.ext import commands
-from discord.ui import Button, View
-import os
+from discord.ui import View, Select, Button, Modal, TextInput
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = "BOT_TOKEN_HERE"
+
+ADMIN_ID = 1464961078042689588
+TICKET_CATEGORY_ID = 123456789
+STATUS_CHANNEL_ID = 123456789
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-shop_name = "𝙩𝙪𝙮𝙩𝙖𝙢 𝙨𝙩𝙤𝙧𝙚✨"
 
-order_id = 1000
+class MinecraftModal(Modal):
+
+    def __init__(self):
+        super().__init__(title="Nhập thông tin")
+
+        self.mc_name = TextInput(
+            label="Tên tài khoản Minecraft",
+            placeholder="Ví dụ: quannmc",
+            required=True
+        )
+
+        self.add_item(self.mc_name)
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        view = TicketTypeSelect(self.mc_name.value)
+
+        await interaction.response.send_message(
+            "Chọn loại ticket:",
+            view=view,
+            ephemeral=True
+        )
+
+
+class TicketTypeSelect(View):
+
+    def __init__(self, mc_name):
+        super().__init__(timeout=None)
+        self.mc_name = mc_name
+
+        select = Select(
+            placeholder="Chọn loại ticket",
+            options=[
+                discord.SelectOption(label="Mua item / money", emoji="💰"),
+                discord.SelectOption(label="Hỗ trợ", emoji="❓"),
+                discord.SelectOption(label="Bảo hành", emoji="🛠️"),
+            ]
+        )
+
+        async def callback(interaction: discord.Interaction):
+
+            ticket_type = select.values[0]
+            guild = interaction.guild
+            category = guild.get_channel(TICKET_CATEGORY_ID)
+
+            channel_name = f"ticket-{self.mc_name}-{ticket_type}".replace(" ", "-").lower()
+
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            }
+
+            channel = await guild.create_text_channel(
+                channel_name,
+                category=category,
+                overwrites=overwrites
+            )
+
+            await channel.send(
+                f"<@{ADMIN_ID}> ơi, có {interaction.user.mention} cần {ticket_type}"
+            )
+
+            embed = discord.Embed(
+                title="🧾 Ticket mới",
+                color=0x5865F2
+            )
+
+            embed.add_field(name="Buyer", value=interaction.user.mention, inline=False)
+            embed.add_field(name="Minecraft", value=self.mc_name, inline=False)
+            embed.add_field(name="Loại ticket", value=ticket_type, inline=False)
+            embed.add_field(name="Thanh toán", value="Ngân hàng TMCP Quân Đội", inline=False)
+
+            await channel.send(embed=embed, view=TicketButtons())
+
+            await interaction.response.send_message(
+                f"✅ Ticket đã tạo: {channel.mention}",
+                ephemeral=True
+            )
+
+        select.callback = callback
+        self.add_item(select)
 
 
 class TicketButtons(View):
 
-    def __init__(self, status_message):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.status_message = status_message
 
-    async def update_status(self, interaction, text):
-        embed = self.status_message.embeds[0]
-        embed.set_field_at(3, name="📊 Trạng thái", value=text, inline=False)
-        await self.status_message.edit(embed=embed)
-        await interaction.response.send_message("Đã cập nhật trạng thái.", ephemeral=True)
-
-    @discord.ui.button(label="💳 Đã thanh toán", style=discord.ButtonStyle.primary)
-    async def paid(self, interaction: discord.Interaction, button: Button):
-        await self.update_status(interaction, "💳 Đã thanh toán")
-
-    @discord.ui.button(label="📦 Đang xử lý", style=discord.ButtonStyle.secondary)
-    async def processing(self, interaction: discord.Interaction, button: Button):
-        await self.update_status(interaction, "📦 Đang xử lý")
-
-    @discord.ui.button(label="✅ Hoàn thành", style=discord.ButtonStyle.success)
-    async def done(self, interaction: discord.Interaction, button: Button):
-        await self.update_status(interaction, "✅ Hoàn thành")
-
-    @discord.ui.button(label="❌ Huỷ đơn", style=discord.ButtonStyle.danger)
-    async def cancel(self, interaction: discord.Interaction, button: Button):
-        await self.update_status(interaction, "❌ Đã huỷ")
-
-    @discord.ui.button(label="🔒 Close Ticket", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.red)
     async def close(self, interaction: discord.Interaction, button: Button):
-        await interaction.channel.delete()
 
+        await interaction.channel.send("🔒 Ticket đã đóng.")
+        await interaction.channel.edit(locked=True)
 
-class CreateTicket(View):
+    @discord.ui.button(label="Complete", style=discord.ButtonStyle.green)
+    async def complete(self, interaction: discord.Interaction, button: Button):
 
-    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.success)
-    async def create_ticket(self, interaction: discord.Interaction, button: Button):
-
-        await interaction.response.send_message("Nhập **tên Minecraft** của bạn:", ephemeral=True)
-
-        def check(m):
-            return m.author == interaction.user and m.channel == interaction.channel
-
-        msg = await bot.wait_for("message", check=check)
-        mc_name = msg.content.lower()
-
-        await interaction.followup.send(
-            "Chọn loại ticket:\n1️⃣ Mua Item / Money\n2️⃣ Bán Item\n3️⃣ Hỗ trợ / Bảo hành",
-            ephemeral=True
-        )
-
-        msg2 = await bot.wait_for("message", check=check)
-
-        types = {
-            "1": ("Mua Item / Money", "mua"),
-            "2": ("Bán Item", "ban"),
-            "3": ("Hỗ trợ / Bảo hành", "hotro")
-        }
-
-        ticket_type, short = types.get(msg2.content, ("Khác", "khac"))
-
-        global order_id
-        order_id += 1
-
-        guild = interaction.guild
-
-        category = discord.utils.get(guild.categories, name="TICKETS")
-        admin_role = discord.utils.get(guild.roles, name="Admin")
-
-        channel = await guild.create_text_channel(
-            f"ticket-{mc_name}-{short}",
-            category=category
-        )
+        status_channel = interaction.guild.get_channel(STATUS_CHANNEL_ID)
 
         embed = discord.Embed(
-            title=f"📦 ORDER #{order_id}",
-            color=0x2ecc71
+            title="✅ Đơn hàng hoàn thành",
+            description=f"{interaction.channel.name}",
+            color=0x00ff00
         )
 
-        embed.add_field(name="👤 Khách", value=interaction.user.mention)
-        embed.add_field(name="🎮 Minecraft username", value=mc_name)
-        embed.add_field(name="📂 Loại", value=ticket_type)
-        embed.add_field(name="📊 Trạng thái", value="⏳ Chưa xử lý", inline=False)
+        await status_channel.send(embed=embed)
 
-        await channel.send(admin_role.mention, embed=embed)
+        await interaction.channel.send("🎉 Đơn hàng đã hoàn thành.")
 
-        status_channel = discord.utils.get(guild.text_channels, name="status")
 
-        status_msg = await status_channel.send(embed=embed)
+class TicketPanel(View):
 
-        view = TicketButtons(status_msg)
+    @discord.ui.button(label="Tạo ticket", style=discord.ButtonStyle.green, emoji="🎫")
+    async def create_ticket(self, interaction: discord.Interaction, button: Button):
 
-        await channel.send("Quản lý đơn hàng:", view=view)
-
-        await interaction.followup.send(
-            f"Ticket của bạn: {channel.mention}",
-            ephemeral=True
-        )
+        await interaction.response.send_modal(MinecraftModal())
 
 
 @bot.command()
 async def panel(ctx):
 
     embed = discord.Embed(
-        title=shop_name,
-        description="Nhấn nút để tạo ticket mua bán."
+        title="🎫 Tuytam Store",
+        description=(
+            "Mở ticket để mua hàng hoặc hỗ trợ.\n\n"
+            "**Server:** DonutSMP\n"
+            "**Thanh toán:** Ngân hàng TMCP Quân Đội"
+        ),
+        color=0x5865F2
     )
 
-    await ctx.send(embed=embed, view=CreateTicket())
+    await ctx.send(embed=embed, view=TicketPanel())
+
+
+@bot.event
+async def on_ready():
+    print(f"Bot đã online: {bot.user}")
 
 
 bot.run(TOKEN)
