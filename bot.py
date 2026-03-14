@@ -221,4 +221,56 @@ async def panel(ctx):
 async def on_ready():
     print(f"Bot đã online: {bot.user}")
 
+delete_list_cache = {}
+
+@bot.command()
+async def xoa(ctx, *args):
+
+    if ctx.author.id != 846332174734983219:
+        await ctx.send("❌ Bạn không có quyền dùng lệnh này.")
+        return
+
+    guild = ctx.guild
+
+    # Nếu chỉ gõ !xoa → gửi danh sách kênh
+    if len(args) == 0:
+
+        channels = guild.channels
+        delete_list_cache[guild.id] = channels
+
+        text = "📋 **Danh sách kênh:**\n\n"
+
+        for i, ch in enumerate(channels, start=1):
+            text += f"{i}. {ch.name}\n"
+
+        text += "\nDùng:\n`!xoa 1 2 3` để xoá nhiều kênh"
+
+        await ctx.send(text)
+        return
+
+    # Nếu có số → xoá kênh
+    if guild.id not in delete_list_cache:
+        await ctx.send("⚠️ Hãy chạy `!xoa` trước để lấy danh sách kênh.")
+        return
+
+    channels = delete_list_cache[guild.id]
+
+    deleted = []
+
+    for num in args:
+        try:
+            index = int(num) - 1
+            channel = channels[index]
+
+            await channel.delete()
+            deleted.append(channel.name)
+
+        except:
+            pass
+
+    if deleted:
+        await ctx.send(f"✅ Đã xoá: {', '.join(deleted)}")
+    else:
+        await ctx.send("❌ Không xoá được kênh nào.")
+        
 bot.run(TOKEN)
