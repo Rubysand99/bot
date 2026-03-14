@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord.ui import View, Button, Select, Modal, TextInput
 
-TOKEN = "BOT_TOKEN"
+TOKEN = os.getenv("TOKEN")
 
 ADMIN_ID = 1464961078042689588
 TICKET_CATEGORY_ID = 000000000000
