@@ -195,26 +195,43 @@ class TicketControlView(View):
 @bot.command()
 async def panel(ctx):
 
-    view = View()
-
-    button = Button(
-        label="🎫 Tạo Ticket",
-        style=discord.ButtonStyle.green
-    )
-
-    async def create(interaction):
-        await interaction.response.send_modal(MinecraftNameModal())
-
-    button.callback = create
-    view.add_item(button)
-
     embed = discord.Embed(
-        title="🎫 𝙩𝙪𝙮𝙩𝙖𝙢 𝙨𝙩𝙤𝙧𝙚✨",
-        description="Nhấn nút bên dưới để tạo ticket mua bán hoặc hỗ trợ."
+        title="BEATRIX STORE\nTICKET PANEL",
+        color=discord.Color.light_grey()
     )
+
+    embed.description = (
+        "🍃 **Chào mừng quý khách đến với trung tâm hỗ trợ của Beatrix Store.**\n"
+        "🍃 **Đội ngũ Admin luôn túc trực 24/7 để phục vụ bạn.**\n\n"
+        "**🎫 DỊCH VỤ CỦA CHÚNG TÔI:**\n"
+        "➤ Mua/Bán Vật Phẩm DonutSMP.\n"
+        "➤ Mua Rank Donut.\n"
+        "➤ Mua Krypton Client.\n\n"
+        "**🅱 Vui lòng lựa chọn dịch vụ ở Menu bên dưới để bắt đầu!**"
+    )
+
+    select = discord.ui.Select(
+        placeholder="Chọn dịch vụ bạn cần hỗ trợ...",
+        options=[
+            discord.SelectOption(label="Selling ske", description="Bán ske"),
+            discord.SelectOption(label="Selling monkey", description="Bán monkey"),
+            discord.SelectOption(label="Buying ske", description="Mua ske"),
+            discord.SelectOption(label="Buying money", description="Mua money"),
+            discord.SelectOption(label="Hỗ trợ", description="Cần trợ giúp"),
+            discord.SelectOption(label="Bảo hành", description="Bảo hành sản phẩm"),
+        ]
+    )
+
+    async def select_callback(interaction):
+        modal = MinecraftNameModal()
+        await interaction.response.send_modal(modal)
+
+    select.callback = select_callback
+
+    view = discord.ui.View(timeout=None)
+    view.add_item(select)
 
     await ctx.send(embed=embed, view=view)
-
 # ===== READY =====
 
 @bot.event
