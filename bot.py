@@ -201,7 +201,7 @@ async def panel(ctx):
     )
 
     embed.description = (
-        "🍃 **Chào mừng quý khách đến với trung tâm hỗ trợ của Beatrix Store.**\n"
+        "🍃 **Chào mừng quý khách đến với trung tâm hỗ trợ của 𝙩𝙪𝙮𝙩𝙖𝙢 𝙨𝙩𝙤𝙧𝙚✨.**\n"
         "🍃 **Đội ngũ Admin luôn túc trực 24/7 để phục vụ bạn.**\n\n"
         "**🎫 DỊCH VỤ CỦA CHÚNG TÔI:**\n"
         "➤ Mua/Bán Vật Phẩm DonutSMP.\n"
