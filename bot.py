@@ -26,13 +26,22 @@ ticket_types = [
 
 # ===== MODAL NHẬP TÊN =====
 
-class MinecraftNameModal(discord.ui.Modal, title="Nhập thông tin"):
+class MinecraftNameModal(discord.ui.Modal):
+
+    def __init__(self, ticket_type):
+        super().__init__(title="Nhập thông tin")
+
+        self.ticket_type = ticket_type
+
+        self.mc_name = discord.ui.TextInput(
+            label="Tên tài khoản Minecraft",
+            placeholder="Ví dụ: quannmc",
+            required=True
+        )
+
+        self.add_item(self.mc_name)
     
-    mc_name = discord.ui.TextInput(
-        label="Tên tài khoản Minecraft",
-        placeholder="Ví dụ: quannmc",
-        required=True
-    )
+    
 
     async def on_submit(self, interaction: discord.Interaction):
 
