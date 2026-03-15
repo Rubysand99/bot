@@ -301,14 +301,17 @@ async def panel(ctx):
 
     embed = discord.Embed(
         title="tuytam store✨",
-        description="🍃 Chào mừng quý khách đến với trung tâm hỗ trợ\n\n"
-                    "💎 Selling ske\n"
-                    "💰 Selling money\n"
-                    "🛒 Buying ske\n"
-                    "💵 Buying money\n"
-                    "🆘 Hỗ trợ\n"
-                    "🛠 Bảo hành\n\n"
-                    "Chọn dịch vụ bên dưới để tạo ticket",
+        description=
+        "🍃 **Chào mừng quý khách đến với trung tâm hỗ trợ**\n\n"
+        "💎 Selling ske\n"
+        "💰 Selling money\n"
+        "🛒 Buying ske\n"
+        "💵 Buying money\n"
+        "📦 Order vật phẩm\n"
+        "🧑‍🔧 Thuê dịch vụ\n"
+        "🆘 Hỗ trợ\n"
+        "🛠 Bảo hành\n\n"
+        "**Chọn dịch vụ bên dưới để tạo ticket**",
         color=discord.Color.gold()
     )
 
