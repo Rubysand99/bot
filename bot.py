@@ -208,7 +208,6 @@ async def panel(ctx):
         "➤ Mua Rank Donut.\n"
         "➤ Mua Krypton Client.\n\n"
         "** Vui lòng lựa chọn dịch vụ ở Menu bên dưới để bắt đầu!**"
-        "made by rubynek209"
     )
 
     select = discord.ui.Select(
