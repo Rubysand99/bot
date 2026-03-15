@@ -299,33 +299,24 @@ class TicketButtons(View):
 @bot.command()
 async def panel(ctx):
 
-    if ctx.author.id not in ADMIN_IDS:
-        return
-
     embed = discord.Embed(
-    title="tuytam store ✨",
-    description="""
-🍃 Chào mừng quý khách đến với trung tâm hỗ trợ
+        title="tuytam store✨",
+        description="🍃 Chào mừng quý khách đến với trung tâm hỗ trợ\n\n"
+                    "💎 Selling ske\n"
+                    "💰 Selling money\n"
+                    "🛒 Buying ske\n"
+                    "💵 Buying money\n"
+                    "🆘 Hỗ trợ\n"
+                    "🛠 Bảo hành\n\n"
+                    "Chọn dịch vụ bên dưới để tạo ticket",
+        color=discord.Color.gold()
+    )
 
-💎 Selling ske
-💰 Selling money
-🛒 Buying ske
-💵 Buying money
-📦 Order vật phẩm
-🧑‍🔧 Thuê phục vụ
-🆘 Hỗ trợ
-🛠 Bảo hành
+    embed.set_thumbnail(
+        url="https://cdn.discordapp.com/attachments/1465005765478584404/1482629221149966356/shop.gif"
+    )
 
-📩 Chọn dịch vụ bên dưới để mở ticket
-""",
-    color=discord.Color.gold()
-)
-
-embed.set_thumbnail(
-    url="https://cdn.discordapp.com/attachments/1465005765478584404/1482629221149966356/shop.gif"
-)
-
-    await ctx.send(embed=embed,view=TicketPanel())
+    await ctx.send(embed=embed, view=TicketPanel())
 
 
 # ================= DELETE COMMAND =================
