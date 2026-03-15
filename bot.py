@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands
 from discord.ui import Button, View
-import datetime
 import os
 
 TOKEN = os.getenv("TOKEN")
@@ -17,14 +16,14 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 ticket_types = [
     "selling ske",
-    "selling monkey",
+    "selling money",
     "buying ske",
     "buying money",
     "hỗ trợ",
     "bảo hành"
 ]
 
-# ===== MODAL NHẬP TÊN =====
+# ===== MODAL NHẬP MINECRAFT =====
 
 class MinecraftNameModal(discord.ui.Modal):
 
@@ -40,46 +39,22 @@ class MinecraftNameModal(discord.ui.Modal):
         )
 
         self.add_item(self.mc_name)
-    
-    
 
     async def on_submit(self, interaction: discord.Interaction):
 
-        view = TicketTypeView(self.mc_name.value)
-        await interaction.response.send_message(
-            "Chọn loại ticket:",
-            view=view,
-            ephemeral=True
-        )
-
-# ===== CHỌN LOẠI TICKET =====
-
-class TicketTypeView(View):
-
-    def __init__(self, mc_name):
-        super().__init__(timeout=None)
-        self.mc_name = mc_name
-
-        for t in ticket_types:
-            self.add_item(TicketButton(t, mc_name))
-
-class TicketButton(Button):
-
-    def __init__(self, ticket_type, mc_name):
-        super().__init__(label=ticket_type, style=discord.ButtonStyle.primary)
-        self.ticket_type = ticket_type
-        self.mc_name = mc_name
-
-    async def callback(self, interaction: discord.Interaction):
-
         if "selling" in self.ticket_type or "buying" in self.ticket_type:
 
-            modal = QuantityModal(self.ticket_type, self.mc_name)
+            modal = QuantityModal(self.ticket_type, self.mc_name.value)
             await interaction.response.send_modal(modal)
 
         else:
 
-            await create_ticket(interaction, self.ticket_type, self.mc_name, None)
+            await create_ticket(
+                interaction,
+                self.ticket_type,
+                self.mc_name.value,
+                None
+            )
 
 # ===== MODAL SỐ LƯỢNG =====
 
@@ -149,7 +124,7 @@ async def create_ticket(interaction, ticket_type, mc_name, quantity):
         ephemeral=True
     )
 
-# ===== NÚT TRONG TICKET =====
+# ===== NÚT TICKET =====
 
 class TicketControlView(View):
 
@@ -165,9 +140,13 @@ class TicketControlView(View):
 
         status_channel = bot.get_channel(STATUS_CHANNEL_ID)
 
-        await status_channel.send(
-            f"✅ Đơn trong {interaction.channel.name} đã hoàn thành."
+        embed = discord.Embed(
+            title="✅ Đơn đã hoàn thành",
+            description=f"{interaction.channel.name}",
+            color=discord.Color.green()
         )
+
+        await status_channel.send(embed=embed)
 
         await interaction.response.send_message("Đã đánh dấu hoàn thành.")
 
@@ -199,20 +178,18 @@ class TicketControlView(View):
 
         await interaction.channel.delete()
 
-# ===== LỆNH TẠO PANEL =====
+# ===== SELECT PANEL =====
 
 class TicketSelect(discord.ui.Select):
     def __init__(self):
 
         options = [
-            discord.SelectOption(label="Selling ske", emoji="💎"),
-            discord.SelectOption(label="Selling money", emoji="💰"),
-            discord.SelectOption(label="Buying ske", emoji="🛒"),
-            discord.SelectOption(label="Buying money", emoji="💵"),
-            discord.SelectOption(label="Thuê phục vụ", emoji="👨‍🌾"),
-            discord.SelectOption(label="Order vật phẩm", emoji="📦"),
-            discord.SelectOption(label="Hỗ trợ", emoji="🆘"),
-            discord.SelectOption(label="Bảo hành", emoji="🛠")
+            discord.SelectOption(label="selling ske", emoji="💎"),
+            discord.SelectOption(label="selling money", emoji="💰"),
+            discord.SelectOption(label="buying ske", emoji="🛒"),
+            discord.SelectOption(label="buying money", emoji="💵"),
+            discord.SelectOption(label="hỗ trợ", emoji="🆘"),
+            discord.SelectOption(label="bảo hành", emoji="🛠")
         ]
 
         super().__init__(
@@ -229,36 +206,30 @@ class TicketSelect(discord.ui.Select):
         modal = MinecraftNameModal(ticket_type)
         await interaction.response.send_modal(modal)
 
-
 class TicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(TicketSelect())
 
+# ===== PANEL =====
 
 @bot.command()
 async def panel(ctx):
 
     embed = discord.Embed(
-        title="𝙩𝙪𝙮𝙩𝙖𝙢 𝙨𝙩𝙤𝙧𝙚✨\nTICKET PANEL",
+        title="𝙩𝙪𝙮𝙩𝙖𝙢 𝙨𝙩𝙤𝙧𝙚✨",
         color=discord.Color.gold()
     )
 
     embed.description = (
-        "🍃 **Chào mừng quý khách đến với trung tâm hỗ trợ của Tuytam Store**\n"
-        "🍃 **Admin luôn sẵn sàng phục vụ bạn**\n\n"
-
-        "**🎫 DỊCH VỤ CỦA CHÚNG TÔI:**\n"
+        "🍃 **Chào mừng quý khách đến với trung tâm hỗ trợ**\n\n"
         "💎 Selling ske\n"
         "💰 Selling money\n"
         "🛒 Buying ske\n"
         "💵 Buying money\n"
-        "👨‍🌾 Thuê phục vụ\n"
-        "📦 Order vật phẩm\n"
         "🆘 Hỗ trợ\n"
         "🛠 Bảo hành\n\n"
-
-        "**📩 Chọn dịch vụ ở menu bên dưới để tạo ticket**"
+        "**Chọn dịch vụ bên dưới để tạo ticket**"
     )
 
     embed.set_thumbnail(
@@ -266,10 +237,14 @@ async def panel(ctx):
     )
 
     await ctx.send(embed=embed, view=TicketView())
-    
+
+# ===== READY =====
+
 @bot.event
 async def on_ready():
     print(f"Bot đã online: {bot.user}")
+
+# ===== LỆNH XOÁ =====
 
 delete_list_cache = {}
 
@@ -282,7 +257,6 @@ async def xoa(ctx, *args):
 
     guild = ctx.guild
 
-    # Nếu chỉ gõ !xoa → gửi danh sách kênh
     if len(args) == 0:
 
         channels = guild.channels
@@ -293,14 +267,9 @@ async def xoa(ctx, *args):
         for i, ch in enumerate(channels, start=1):
             text += f"{i}. {ch.name}\n"
 
-        text += "\nDùng:\n`!xoa 1 2 3` để xoá nhiều kênh"
+        text += "\nDùng `!xoa 1 2 3` để xoá"
 
         await ctx.send(text)
-        return
-
-    # Nếu có số → xoá kênh
-    if guild.id not in delete_list_cache:
-        await ctx.send("⚠️ Hãy chạy `!xoa` trước để lấy danh sách kênh.")
         return
 
     channels = delete_list_cache[guild.id]
@@ -318,9 +287,6 @@ async def xoa(ctx, *args):
         except:
             pass
 
-    if deleted:
-        await ctx.send(f"✅ Đã xoá: {', '.join(deleted)}")
-    else:
-        await ctx.send("❌ Không xoá được kênh nào.")
-        
+    await ctx.send(f"✅ Đã xoá: {', '.join(deleted)}")
+
 bot.run(TOKEN)
