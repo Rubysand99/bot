@@ -316,7 +316,7 @@ async def panel(ctx):
     )
 
     embed.set_thumbnail(
-        url="https://cdn.discordapp.com/attachments/1465005765478584404/1482629221149966356/shop.gif"
+        url="https://cdn.discordapp.com/attachments/1464999465294369035/1482738201327308930/file_000000001e1071fdb6b8584209a80bd3.png?ex=69b80b0f&is=69b6b98f&hm=4229cf795e300a26a6b5a3be48d5e16348249490d7ab1952ae04dd55a347a27b&"
     )
 
     await ctx.send(embed=embed, view=TicketPanel())
