@@ -125,7 +125,11 @@ class TypeSelect(Select):
 
 class AmountModal(Modal,title="Số lượng"):
 
-    amount = TextInput(label="Nhập số lượng")
+    amount = TextInput(
+        label="Nhập số lượng",
+        placeholder="Chỉ nhập số",
+        required=True
+    )
 
     def __init__(self,mc,ticket_type):
         super().__init__()
@@ -134,11 +138,20 @@ class AmountModal(Modal,title="Số lượng"):
 
     async def on_submit(self,interaction:discord.Interaction):
 
+        value = self.amount.value
+
+        if not value.isdigit():
+
+            return await interaction.response.send_message(
+                "❌ Số lượng phải là **số**.",
+                ephemeral=True
+            )
+
         await create_ticket(
             interaction,
             self.mc,
             self.ticket_type,
-            self.amount.value
+            value
         )
 
 
@@ -290,31 +303,27 @@ async def panel(ctx):
         return
 
     embed = discord.Embed(
+    title="tuytam store ✨",
+    description="""
+🍃 Chào mừng quý khách đến với trung tâm hỗ trợ
 
-        title="𝙩𝙪𝙮𝙩𝙖𝙢 𝙨𝙩𝙤𝙧𝙚✨",
+💎 Selling ske
+💰 Selling money
+🛒 Buying ske
+💵 Buying money
+📦 Order vật phẩm
+🧑‍🔧 Thuê phục vụ
+🆘 Hỗ trợ
+🛠 Bảo hành
 
-        description="""
-selling ske
-selling money
-buying ske
-buying money
-thuê phục vụ
-order vật phẩm
-hỗ trợ
-bảo hành
+📩 Chọn dịch vụ bên dưới để mở ticket
 """,
+    color=discord.Color.gold()
+)
 
-        color=discord.Color.orange()
-
-    )
-
-    embed.set_thumbnail(
-        url="https://cdn-icons-png.flaticon.com/512/263/263142.png"
-    )
-
-    embed.set_image(
-        url="https://cdn.discordapp.com/attachments/1465005765478584404/1482629221149966356/shop.gif"
-    )
+embed.set_thumbnail(
+    url="https://cdn.discordapp.com/attachments/1465005765478584404/1482629221149966356/shop.gif"
+)
 
     await ctx.send(embed=embed,view=TicketPanel())
 
