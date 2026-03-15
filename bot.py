@@ -196,7 +196,7 @@ class TicketControlView(View):
 async def panel(ctx):
 
     embed = discord.Embed(
-        title="BEATRIX STORE\nTICKET PANEL",
+        title="𝙩𝙪𝙮𝙩𝙖𝙢 𝙨𝙩𝙤𝙧𝙚✨\nTICKET PANEL",
         color=discord.Color.light_grey()
     )
 
@@ -207,7 +207,8 @@ async def panel(ctx):
         "➤ Mua/Bán Vật Phẩm DonutSMP.\n"
         "➤ Mua Rank Donut.\n"
         "➤ Mua Krypton Client.\n\n"
-        "**🅱 Vui lòng lựa chọn dịch vụ ở Menu bên dưới để bắt đầu!**"
+        "** Vui lòng lựa chọn dịch vụ ở Menu bên dưới để bắt đầu!**"
+        "made by rubynek209"
     )
 
     select = discord.ui.Select(
