@@ -192,48 +192,72 @@ class TicketControlView(View):
 
 # ===== LỆNH TẠO PANEL =====
 
+class TicketSelect(discord.ui.Select):
+    def __init__(self):
+
+        options = [
+            discord.SelectOption(label="Selling ske", emoji="💎"),
+            discord.SelectOption(label="Selling money", emoji="💰"),
+            discord.SelectOption(label="Buying ske", emoji="🛒"),
+            discord.SelectOption(label="Buying money", emoji="💵"),
+            discord.SelectOption(label="Thuê phục vụ", emoji="👨‍🌾"),
+            discord.SelectOption(label="Order vật phẩm", emoji="📦"),
+            discord.SelectOption(label="Hỗ trợ", emoji="🆘"),
+            discord.SelectOption(label="Bảo hành", emoji="🛠")
+        ]
+
+        super().__init__(
+            placeholder="Chọn loại ticket...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+
+        ticket_type = self.values[0]
+
+        modal = MinecraftNameModal(ticket_type)
+        await interaction.response.send_modal(modal)
+
+
+class TicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketSelect())
+
+
 @bot.command()
 async def panel(ctx):
 
     embed = discord.Embed(
         title="𝙩𝙪𝙮𝙩𝙖𝙢 𝙨𝙩𝙤𝙧𝙚✨\nTICKET PANEL",
-        color=discord.Color.light_grey()
+        color=discord.Color.gold()
     )
 
     embed.description = (
-        "🍃 **Chào mừng quý khách đến với trung tâm hỗ trợ của 𝙩𝙪𝙮𝙩𝙖𝙢 𝙨𝙩𝙤𝙧𝙚✨.**\n"
-        "🍃 **Đội ngũ Admin luôn túc trực 24/7 để phục vụ bạn.**\n\n"
+        "🍃 **Chào mừng quý khách đến với trung tâm hỗ trợ của Tuytam Store**\n"
+        "🍃 **Admin luôn sẵn sàng phục vụ bạn**\n\n"
+
         "**🎫 DỊCH VỤ CỦA CHÚNG TÔI:**\n"
-        "➤ Mua/Bán Vật Phẩm DonutSMP.\n"
-        "➤ Mua Rank Donut.\n"
-        "➤ Mua Krypton Client.\n\n"
-        "** Vui lòng lựa chọn dịch vụ ở Menu bên dưới để bắt đầu!**"
+        "💎 Selling ske\n"
+        "💰 Selling money\n"
+        "🛒 Buying ske\n"
+        "💵 Buying money\n"
+        "👨‍🌾 Thuê phục vụ\n"
+        "📦 Order vật phẩm\n"
+        "🆘 Hỗ trợ\n"
+        "🛠 Bảo hành\n\n"
+
+        "**📩 Chọn dịch vụ ở menu bên dưới để tạo ticket**"
     )
 
-    select = discord.ui.Select(
-        placeholder="Chọn dịch vụ bạn cần hỗ trợ...",
-        options=[
-            discord.SelectOption(label="Selling ske", description="Bán ske"),
-            discord.SelectOption(label="Selling monkey", description="Bán monkey"),
-            discord.SelectOption(label="Buying ske", description="Mua ske"),
-            discord.SelectOption(label="Buying money", description="Mua money"),
-            discord.SelectOption(label="Hỗ trợ", description="Cần trợ giúp"),
-            discord.SelectOption(label="Bảo hành", description="Bảo hành sản phẩm"),
-        ]
+    embed.set_thumbnail(
+        url="https://cdn.discordapp.com/attachments/1465005765478584404/1482629221149966356/shop.gif"
     )
 
-    async def select_callback(interaction):
-        modal = MinecraftNameModal()
-        await interaction.response.send_modal(modal)
-
-    select.callback = select_callback
-
-    view = discord.ui.View(timeout=None)
-    view.add_item(select)
-
-    await ctx.send(embed=embed, view=view)
-# ===== READY =====
-
+    await ctx.send(embed=embed, view=TicketView())
+    
 @bot.event
 async def on_ready():
     print(f"Bot đã online: {bot.user}")
