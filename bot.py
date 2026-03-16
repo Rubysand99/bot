@@ -19,7 +19,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ================= STATS =================
 
 def load_stats():
-
     try:
         with open("stats.json","r") as f:
             return json.load(f)
@@ -27,23 +26,22 @@ def load_stats():
         return {"orders":0}
 
 def save_stats(data):
-
     with open("stats.json","w") as f:
         json.dump(data,f)
 
-# ================= TICKET COUNT =================
+# ================= COUNT =================
 
 async def get_ticket_number(guild):
 
-    count = 0
+    count=0
 
     for channel in guild.text_channels:
         if channel.name.startswith("ticket-"):
-            count += 1
+            count+=1
 
     return f"{count+1:03d}"
 
-# ================= CHECK OPEN =================
+# ================= CHECK =================
 
 async def has_ticket(guild,user):
 
@@ -63,7 +61,11 @@ class TicketPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🎫 Tạo Ticket",style=discord.ButtonStyle.green)
+    @discord.ui.button(
+        label="🎫 Tạo Ticket",
+        style=discord.ButtonStyle.green,
+        custom_id="create_ticket"
+    )
     async def create(self,interaction:discord.Interaction,button:Button):
 
         if await has_ticket(interaction.guild,interaction.user):
@@ -75,7 +77,7 @@ class TicketPanel(View):
 
         await interaction.response.send_modal(MinecraftModal())
 
-# ================= MINECRAFT =================
+# ================= MODAL MC =================
 
 class MinecraftModal(Modal,title="Thông tin khách hàng"):
 
@@ -97,7 +99,7 @@ class MinecraftModal(Modal,title="Thông tin khách hàng"):
 class TicketTypeView(View):
 
     def __init__(self,mc):
-        super().__init__(timeout=None)
+        super().__init__(timeout=60)
 
         options=[
 
@@ -114,12 +116,11 @@ class TicketTypeView(View):
 
         self.add_item(TypeSelect(options,mc))
 
-
 class TypeSelect(Select):
 
     def __init__(self,options,mc):
         super().__init__(placeholder="Chọn dịch vụ",options=options)
-        self.mc = mc
+        self.mc=mc
 
     async def callback(self,interaction:discord.Interaction):
 
@@ -239,7 +240,11 @@ class TicketButtons(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="✅ Hoàn thành",style=discord.ButtonStyle.green)
+    @discord.ui.button(
+        label="✅ Hoàn thành",
+        style=discord.ButtonStyle.green,
+        custom_id="ticket_done"
+    )
     async def done(self,interaction:discord.Interaction,button:Button):
 
         if interaction.user.id not in ADMIN_IDS:
@@ -281,7 +286,11 @@ class TicketButtons(View):
 
         await interaction.response.send_message("Đã đánh dấu hoàn thành")
 
-    @discord.ui.button(label="🔒 Đóng ticket",style=discord.ButtonStyle.red)
+    @discord.ui.button(
+        label="🔒 Đóng ticket",
+        style=discord.ButtonStyle.red,
+        custom_id="ticket_close"
+    )
     async def close(self,interaction:discord.Interaction,button:Button):
 
         if interaction.user.id not in ADMIN_IDS:
@@ -340,7 +349,7 @@ async def panel(ctx):
         "🧑‍🔧 Thuê dịch vụ\n"
         "🆘 Hỗ trợ\n"
         "🛠 Bảo hành\n\n"
-        "Chọn dịch vụ bên dưới",
+        "Nhấn nút bên dưới để tạo ticket",
         color=discord.Color.gold()
     )
 
@@ -350,7 +359,7 @@ async def panel(ctx):
 
     await ctx.send(embed=embed,view=TicketPanel())
 
-# ================= STATS COMMAND =================
+# ================= STATS =================
 
 @bot.command()
 async def stats(ctx):
