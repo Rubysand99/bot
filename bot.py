@@ -3,24 +3,42 @@ from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput, Select
 import io
 import os
+import json
 
 TOKEN = os.getenv("TOKEN")
 
-ADMIN_IDS = [846332174734983219, 1464961078042689588, 1438384178755276923]
+ADMIN_IDS = [
+    846332174734983219,
+    1464961078042689588,
+    1438384178755276923
+]
+
 LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ================= COUNT =================
+# ================= DATABASE =================
+
+def load_data():
+    try:
+        with open("data.json", "r") as f:
+            return json.load(f)
+    except:
+        return {"ticket": 0}
+
+def save_data(data):
+    with open("data.json", "w") as f:
+        json.dump(data, f, indent=4)
+
+# ================= TICKET COUNT =================
 
 async def get_ticket_number(guild):
-    count = 0
-    for channel in guild.text_channels:
-        if channel.name.startswith("🎫-ticket-"):
-            count += 1
-    return f"{count+1:03d}"
+    data = load_data()
+    data["ticket"] += 1
+    save_data(data)
+    return f"{data['ticket']:03d}"
 
 # ================= CHECK =================
 
