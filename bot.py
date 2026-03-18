@@ -2,7 +2,6 @@ import discord
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput, Select
 import datetime
-import json
 import io
 import os
 
@@ -10,49 +9,47 @@ TOKEN = os.getenv("TOKEN")
 
 ADMIN_IDS = [846332174734983219,1464961078042689588,1438384178755276923]
 
-STATUS_CHANNEL = 1469647159560241318
 LOG_CHANNEL = 1482234024868053083
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ================= STATS =================
-
-def load_stats():
-    try:
-        with open("stats.json","r") as f:
-            return json.load(f)
-    except:
-        return {"orders":0}
-
-def save_stats(data):
-    with open("stats.json","w") as f:
-        json.dump(data,f)
-
 # ================= COUNT =================
 
 async def get_ticket_number(guild):
-
     count=0
-
     for channel in guild.text_channels:
         if channel.name.startswith("ticket-"):
             count+=1
-
     return f"{count+1:03d}"
 
 # ================= CHECK =================
 
 async def has_ticket(guild,user):
-
     for channel in guild.text_channels:
-
         if channel.topic:
-
             if str(user.id) in channel.topic:
                 return True
-
     return False
+
+# ================= MONEY PARSE =================
+
+def parse_money(value):
+    value=value.lower().replace(" ","")
+
+    if value.isdigit():
+        return int(value)
+
+    if value.endswith("k") and value[:-1].isdigit():
+        return int(value[:-1]) * 1000
+
+    if value.endswith("m") and value[:-1].isdigit():
+        return int(value[:-1]) * 1000000
+
+    return None
+
+def format_money(num):
+    return f"{num:,}"
 
 # ================= PANEL =================
 
@@ -69,7 +66,6 @@ class TicketPanel(View):
     async def create(self,interaction:discord.Interaction,button:Button):
 
         if await has_ticket(interaction.guild,interaction.user):
-
             return await interaction.response.send_message(
                 "❌ Bạn đã có ticket đang mở",
                 ephemeral=True
@@ -102,7 +98,6 @@ class TicketTypeView(View):
         super().__init__(timeout=60)
 
         options=[
-
         discord.SelectOption(label="selling ske"),
         discord.SelectOption(label="selling money"),
         discord.SelectOption(label="buying ske"),
@@ -111,7 +106,6 @@ class TicketTypeView(View):
         discord.SelectOption(label="thuê dịch vụ"),
         discord.SelectOption(label="hỗ trợ"),
         discord.SelectOption(label="bảo hành")
-
         ]
 
         self.add_item(TypeSelect(options,mc))
@@ -127,13 +121,10 @@ class TypeSelect(Select):
         ticket_type=self.values[0]
 
         if "selling" in ticket_type or "buying" in ticket_type:
-
             await interaction.response.send_modal(
                 AmountModal(self.mc,ticket_type)
             )
-
         else:
-
             await create_ticket(
                 interaction,
                 self.mc,
@@ -147,7 +138,7 @@ class AmountModal(Modal,title="Nhập số lượng"):
 
     amount = TextInput(
         label="Số lượng",
-        placeholder="Chỉ nhập số"
+        placeholder="Ví dụ: 100k, 2m hoặc 500000"
     )
 
     def __init__(self,mc,ticket_type):
@@ -157,18 +148,37 @@ class AmountModal(Modal,title="Nhập số lượng"):
 
     async def on_submit(self,interaction:discord.Interaction):
 
-        if not self.amount.value.isdigit():
+        value=self.amount.value.lower().replace(" ","")
 
-            return await interaction.response.send_message(
-                "❌ Số lượng phải là số",
-                ephemeral=True
-            )
+        # MONEY
+        if "money" in self.ticket_type:
+
+            parsed=parse_money(value)
+
+            if parsed is None:
+                return await interaction.response.send_message(
+                    "❌ Money chỉ được nhập dạng: 100k, 2m hoặc số",
+                    ephemeral=True
+                )
+
+            display=format_money(parsed)
+
+        # SKE
+        else:
+
+            if not value.isdigit():
+                return await interaction.response.send_message(
+                    "❌ Số lượng phải là số",
+                    ephemeral=True
+                )
+
+            display=value
 
         await create_ticket(
             interaction,
             self.mc,
             self.ticket_type,
-            self.amount.value
+            display
         )
 
 # ================= CREATE =================
@@ -176,34 +186,20 @@ class AmountModal(Modal,title="Nhập số lượng"):
 async def create_ticket(interaction,mc,ticket_type,amount):
 
     guild=interaction.guild
-
     number=await get_ticket_number(guild)
-
     safe=ticket_type.replace(" ","-")
 
     name=f"ticket-{mc}-{safe}-{number}"
 
     overwrites={
-
     guild.default_role:discord.PermissionOverwrite(view_channel=False),
-
-    interaction.user:discord.PermissionOverwrite(
-        view_channel=True,
-        send_messages=True
-    )
-
+    interaction.user:discord.PermissionOverwrite(view_channel=True,send_messages=True)
     }
 
     for admin in ADMIN_IDS:
-
         member=guild.get_member(admin)
-
         if member:
-
-            overwrites[member]=discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True
-            )
+            overwrites[member]=discord.PermissionOverwrite(view_channel=True,send_messages=True)
 
     channel=await guild.create_text_channel(
         name=name,
@@ -223,7 +219,7 @@ async def create_ticket(interaction,mc,ticket_type,amount):
     embed.add_field(name="Số lượng",value=amount)
 
     await channel.send(
-        f"<@&1474572393908404305> có khách",
+        f"<@{ADMIN_IDS[1]}> có khách",
         embed=embed,
         view=TicketButtons()
     )
@@ -241,52 +237,6 @@ class TicketButtons(View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="✅ Hoàn thành",
-        style=discord.ButtonStyle.green,
-        custom_id="ticket_done"
-    )
-    async def done(self,interaction:discord.Interaction,button:Button):
-
-        if interaction.user.id not in ADMIN_IDS:
-
-            return await interaction.response.send_message(
-                "Bạn không có quyền",
-                ephemeral=True
-            )
-
-        data=interaction.channel.topic.split("|")
-
-        buyer=data[0]
-        mc=data[1]
-        t=data[2]
-        amount=data[3]
-
-        embed=discord.Embed(
-            title="🟢 Đơn hoàn thành",
-            color=discord.Color.green()
-        )
-
-        embed.add_field(name="Buyer",value=f"<@{buyer}>")
-        embed.add_field(name="Minecraft",value=mc)
-        embed.add_field(name="Loại",value=t)
-        embed.add_field(name="Số lượng",value=amount)
-        embed.add_field(name="Admin",value=interaction.user.mention)
-
-        embed.timestamp=datetime.datetime.now()
-
-        status=bot.get_channel(STATUS_CHANNEL)
-
-        await status.send(embed=embed)
-
-        stats=load_stats()
-
-        stats["orders"]+=1
-
-        save_stats(stats)
-
-        await interaction.response.send_message("Đã đánh dấu hoàn thành")
-
-    @discord.ui.button(
         label="🔒 Đóng ticket",
         style=discord.ButtonStyle.red,
         custom_id="ticket_close"
@@ -294,7 +244,6 @@ class TicketButtons(View):
     async def close(self,interaction:discord.Interaction,button:Button):
 
         if interaction.user.id not in ADMIN_IDS:
-
             return await interaction.response.send_message(
                 "Bạn không có quyền",
                 ephemeral=True
@@ -303,9 +252,7 @@ class TicketButtons(View):
         messages=[]
 
         async for msg in interaction.channel.history(limit=None):
-
             time=msg.created_at.strftime("%H:%M")
-
             messages.append(
                 f"<p><b>[{time}] {msg.author}</b>: {msg.content}</p>"
             )
@@ -358,17 +305,6 @@ async def panel(ctx):
     )
 
     await ctx.send(embed=embed,view=TicketPanel())
-
-# ================= STATS =================
-
-@bot.command()
-async def stats(ctx):
-
-    stats=load_stats()
-
-    await ctx.send(
-        f"📊 Tổng đơn đã xử lý: {stats['orders']}"
-    )
 
 # ================= READY =================
 
