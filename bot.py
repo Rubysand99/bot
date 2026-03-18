@@ -214,7 +214,7 @@ async def create_ticket(interaction, mc, ticket_type, amount):
     embed.add_field(name="Số lượng", value=amount)
 
     await channel.send(
-        f"<@{ADMIN_IDS[1]}> có khách",
+        f"<@&1474572393908404305> có khách",
         embed=embed,
         view=TicketButtons()
     )
