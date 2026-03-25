@@ -19,8 +19,8 @@ TICKET_CATEGORY_ID = 1464426174611456195
 
 # ===== EarnPoint =====
 API = "https://website-kiemtien.onrender.com"
-CODE_CHANNEL_ID = 123456789  # ⚠️ sửa
-LOG_CODE_CHANNEL_ID = 987654321  # ⚠️ sửa
+CODE_CHANNEL_ID = 1464999465294369035  # ⚠️ sửa
+LOG_CODE_CHANNEL_ID = 1482234024868053083  # ⚠️ sửa
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
