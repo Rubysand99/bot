@@ -4,6 +4,7 @@ from discord.ui import View, Button, Modal, TextInput, Select
 import io
 import os
 import json
+import requests
 
 TOKEN = os.getenv("TOKEN")
 
@@ -15,6 +16,11 @@ ADMIN_IDS = [
 
 LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
+
+# ===== EarnPoint =====
+API = "https://website-kiemtien.onrender.com"
+CODE_CHANNEL_ID = 123456789  # ⚠️ sửa
+LOG_CODE_CHANNEL_ID = 987654321  # ⚠️ sửa
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -308,5 +314,61 @@ async def on_ready():
     bot.add_view(TicketPanel())
     bot.add_view(TicketButtons())
     print("Bot online:", bot.user)
+
+# ================= EarnPoint =================
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    if message.channel.id == CODE_CHANNEL_ID:
+
+        code = message.content.strip()
+
+        if not code.startswith("EP-"):
+            await message.reply("code không hợp lệ ❌")
+            return
+
+        try:
+            res = requests.post(API + "/check-code", json={
+                "code": code,
+                "discordId": str(message.author.id)
+            })
+
+            data = res.json()
+
+            log_channel = bot.get_channel(LOG_CODE_CHANNEL_ID)
+
+            if data["status"] in ["invalid", "used"]:
+                await message.reply("code không hợp lệ ❌")
+                if log_channel:
+                    await log_channel.send(f"❌ {message.author}: {code}")
+                return
+
+            if data["status"] == "expired":
+                await message.reply("⏱️ code hết hạn")
+                if log_channel:
+                    await log_channel.send(f"⏱️ {message.author}: {code}")
+                return
+
+            if data["status"] == "ok":
+                await message.reply(
+                    f"code hợp lệ ✔️ +1 point\n💰 Tổng: {data['points']}"
+                )
+                if log_channel:
+                    await log_channel.send(
+                        f"✅ {message.author}: {code} (+1 point)"
+                    )
+                return
+
+        except Exception as e:
+            print("EarnPoint error:", e)
+            await message.reply("❌ lỗi server")
+            return
+
+    await bot.process_commands(message)
+
+# ================= RUN =================
 
 bot.run(TOKEN)
