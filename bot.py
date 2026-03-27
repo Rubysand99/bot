@@ -27,21 +27,21 @@ session = None
 # ================= API =================
 
 async def api_get(url):
-    async with session.get(url) as res:
-        return await res.json()
+    try:
+        async with session.get(url) as res:
+            return await res.json()
+    except:
+        return None
 
 async def api_post(url, data):
-    async with session.post(url, json=data) as res:
-        return await res.json()
+    try:
+        async with session.post(url, json=data) as res:
+            return await res.json()
+    except:
+        return None
 
 async def get_points(user_id):
     return await api_get(f"{API}/points/{user_id}")
-
-async def add_points(user_id, amount):
-    return await api_post(f"{API}/add-point", {
-        "discordId": str(user_id),
-        "amount": amount
-    })
 
 async def remove_points(user_id, amount=None):
     return await api_post(f"{API}/remove-point", {
@@ -49,10 +49,7 @@ async def remove_points(user_id, amount=None):
         "amount": amount
     })
 
-async def get_leaderboard():
-    return await api_get(f"{API}/leaderboard")
-
-# ================= MODAL RÚT =================
+# ================= MODAL =================
 
 class WithdrawModal(Modal, title="Rút Point"):
 
@@ -83,10 +80,8 @@ class WithdrawModal(Modal, title="Rút Point"):
                 ephemeral=True
             )
 
-        # ✅ trừ point
         await remove_points(interaction.user.id, amount)
 
-        # ✅ gửi log
         log = bot.get_channel(LOG_ADMIN_CHANNEL)
         if log:
             await log.send(
@@ -121,6 +116,32 @@ async def on_ready():
     bot.add_view(WithdrawView())
     print("Bot online:", bot.user)
 
+# ================= LEADERBOARD REALTIME =================
+
+async def build_leaderboard(guild):
+
+    results = []
+
+    for member in guild.members:
+
+        if member.bot:
+            continue
+
+        data = await get_points(member.id)
+
+        if not data:
+            continue
+
+        points = data.get("points", 0)
+
+        if points > 0:
+            results.append((member, points))
+
+    # sort giảm dần
+    results.sort(key=lambda x: x[1], reverse=True)
+
+    return results[:10]
+
 # ================= ON MESSAGE =================
 
 @bot.event
@@ -133,9 +154,32 @@ async def on_message(message):
     # ================= CODE CHANNEL =================
     if message.channel.id == CODE_CHANNEL_ID:
 
-        # ===== POINT =====
-        if content == "point":
+        # ===== POINT + LB =====
+        if content.startswith("point"):
 
+            parts = content.split()
+
+            # ===== LEADERBOARD =====
+            if len(parts) >= 2 and parts[1] == "lb":
+
+                await message.reply("⏳ Đang tải leaderboard...")
+
+                lb = await build_leaderboard(message.guild)
+
+                text = ""
+                for i, (member, points) in enumerate(lb, start=1):
+                    text += f"{i}. {member.mention} - {points} point\n"
+
+                embed = discord.Embed(
+                    title="🏆 Leaderboard",
+                    description=text or "Không có dữ liệu",
+                    color=discord.Color.green()
+                )
+
+                await message.channel.send(embed=embed)
+                return
+
+            # ===== POINT =====
             data = await get_points(message.author.id)
             points = data.get("points", 0)
 
@@ -147,28 +191,6 @@ async def on_message(message):
             embed.add_field(name="💎 Point", value=str(points))
 
             await message.reply(embed=embed, view=WithdrawView())
-            return
-
-        # ===== LEADERBOARD =====
-        if content == "point lb":
-
-            data = await get_leaderboard()
-
-            if not data:
-                return await message.reply("❌ lỗi server")
-
-            text = ""
-            for i, user in enumerate(data[:10], start=1):
-                if user["points"] > 0:
-                    text += f"{i}. <@{user['discordId']}> - {user['points']} point\n"
-
-            embed = discord.Embed(
-                title="🏆 Leaderboard",
-                description=text or "Không có dữ liệu",
-                color=discord.Color.green()
-            )
-
-            await message.reply(embed=embed)
             return
 
         # ===== CODE =====
@@ -216,7 +238,10 @@ async def on_message(message):
 
             if content.startswith("gp"):
                 amount = int(parts[2])
-                await add_points(member.id, amount)
+                await api_post(f"{API}/add-point", {
+                    "discordId": str(member.id),
+                    "amount": amount
+                })
                 await message.reply(f"✅ +{amount} point {member.mention}")
 
             elif content.startswith("xp"):
