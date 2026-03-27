@@ -16,16 +16,18 @@ ADMIN_IDS = [
 
 LOG_CHANNEL = 1482234024868053083
 LOG_ADMIN_CHANNEL = 1464524557657440396
+LOG_CODE_CHANNEL_ID = 1482234024868053083
+
 TICKET_CATEGORY_ID = 1464426174611456195
-CODE_CHANNEL_ID = 1464428982857634044
+CODE_CHANNEL_ID = 1486967511839801414  # ✅ đã đổi
 
 API = "https://website-kiemtien.onrender.com"
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ================= GLOBAL SESSION =================
-session: aiohttp.ClientSession = None
+# ================= SESSION =================
+session = None
 
 @bot.event
 async def on_ready():
@@ -85,16 +87,14 @@ async def api_get(url):
     try:
         async with session.get(url) as res:
             return await res.json()
-    except Exception as e:
-        print("GET ERROR:", e)
+    except:
         return None
 
 async def api_post(url, data):
     try:
         async with session.post(url, json=data) as res:
             return await res.json()
-    except Exception as e:
-        print("POST ERROR:", e)
+    except:
         return None
 
 async def get_points(user_id):
@@ -124,20 +124,12 @@ class TicketPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="🎫 Tạo Ticket",
-        style=discord.ButtonStyle.green,
-        custom_id="create_ticket"
-    )
+    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green, custom_id="create_ticket")
     async def create(self, interaction: discord.Interaction, button: Button):
         if await has_ticket(interaction.guild, interaction.user):
-            return await interaction.response.send_message(
-                "❌ Bạn đã có ticket đang mở",
-                ephemeral=True
-            )
+            return await interaction.response.send_message("❌ Bạn đã có ticket", ephemeral=True)
         await interaction.response.send_modal(MinecraftModal())
 
-# ================= MODAL =================
 class MinecraftModal(Modal, title="Thông tin khách hàng"):
     mc = TextInput(label="Tên Minecraft", placeholder="Ví dụ: quannmc")
 
@@ -178,10 +170,8 @@ class TypeSelect(Select):
             await create_ticket(interaction, self.mc, ticket_type, "không có")
 
 class AmountModal(Modal, title="Nhập số lượng"):
-    amount = TextInput(
-        label="Số lượng",
-        placeholder="Ví dụ: 100k, 2m hoặc 500000"
-    )
+    amount = TextInput(label="Số lượng", placeholder="100k, 2m hoặc 500000")
+
     def __init__(self, mc, ticket_type):
         super().__init__()
         self.mc = mc
@@ -192,90 +182,74 @@ class AmountModal(Modal, title="Nhập số lượng"):
         if "money" in self.ticket_type:
             parsed = parse_money(value)
             if parsed is None:
-                return await interaction.response.send_message(
-                    "❌ Money chỉ được nhập dạng: 100k, 2m hoặc số",
-                    ephemeral=True
-                )
+                return await interaction.response.send_message("❌ Sai định dạng money", ephemeral=True)
             display = format_money(parsed)
         else:
             if not value.isdigit():
-                return await interaction.response.send_message(
-                    "❌ Số lượng phải là số",
-                    ephemeral=True
-                )
+                return await interaction.response.send_message("❌ Số phải là số", ephemeral=True)
             display = value
+
         await create_ticket(interaction, self.mc, self.ticket_type, display)
 
 async def create_ticket(interaction, mc, ticket_type, amount):
     guild = interaction.guild
     number = await get_ticket_number(guild)
-    name = f"🎫-ticket-{number}"
+
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+        interaction.user: discord.PermissionOverwrite(view_channel=True)
     }
+
     for admin in ADMIN_IDS:
         member = guild.get_member(admin)
         if member:
-            overwrites[member] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+            overwrites[member] = discord.PermissionOverwrite(view_channel=True)
+
     category = discord.utils.get(guild.categories, id=TICKET_CATEGORY_ID)
-    channel = await guild.create_text_channel(name=name, overwrites=overwrites, category=category)
-    channel.topic = f"{interaction.user.id}|{mc}|{ticket_type}|{amount}"
-    embed = discord.Embed(title="🛒 Ticket mới", color=discord.Color.green())
-    embed.add_field(name="Buyer", value=interaction.user.mention)
-    embed.add_field(name="Minecraft", value=mc)
-    embed.add_field(name="Loại", value=ticket_type)
-    embed.add_field(name="Số lượng", value=amount)
-    await channel.send(
-        f"<@&1474572393908404305> có khách",
-        embed=embed,
-        view=TicketButtons()
+
+    channel = await guild.create_text_channel(
+        name=f"ticket-{number}",
+        overwrites=overwrites,
+        category=category
     )
-    await interaction.response.send_message(f"Ticket của bạn: {channel.mention}", ephemeral=True)
+
+    embed = discord.Embed(title="Ticket mới", color=discord.Color.green())
+    embed.add_field(name="User", value=interaction.user.mention)
+    embed.add_field(name="MC", value=mc)
+    embed.add_field(name="Type", value=ticket_type)
+    embed.add_field(name="Amount", value=amount)
+
+    await channel.send(embed=embed, view=TicketButtons())
+    await interaction.response.send_message(f"✅ {channel.mention}", ephemeral=True)
 
 class TicketButtons(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="🔒 Đóng ticket",
-        style=discord.ButtonStyle.red,
-        custom_id="ticket_close"
-    )
+    @discord.ui.button(label="🔒 Đóng", style=discord.ButtonStyle.red)
     async def close(self, interaction: discord.Interaction, button: Button):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("Bạn không có quyền", ephemeral=True)
+            return await interaction.response.send_message("❌ Không có quyền", ephemeral=True)
+
         messages = []
         async for msg in interaction.channel.history(limit=None):
-            time = msg.created_at.strftime("%H:%M")
-            messages.append(f"<p><b>[{time}] {msg.author}</b>: {msg.content}</p>")
-        html = f"<html><body><h2>Transcript {interaction.channel.name}</h2>{''.join(messages[::-1])}</body></html>"
-        file = discord.File(io.BytesIO(html.encode()), filename="transcript.html")
+            messages.append(f"<p><b>{msg.author}</b>: {msg.content}</p>")
+
+        html = f"<html><body>{''.join(messages[::-1])}</body></html>"
+
+        file = discord.File(io.BytesIO(html.encode()), filename="log.html")
         log = bot.get_channel(LOG_CHANNEL)
-        await log.send(f"Transcript {interaction.channel.name}", file=file)
+        await log.send(file=file)
+
         await interaction.channel.delete()
 
-# ================= PANEL COMMAND =================
+# ================= COMMAND =================
 @bot.command()
 async def panel(ctx):
-    embed = discord.Embed(
-        title="🏪 tuytam store",
-        description=
-        "💎 Selling ske\n"
-        "💰 Selling money\n"
-        "🛒 Buying ske\n"
-        "💵 Buying money\n"
-        "📦 Order vật phẩm\n"
-        "🧑‍🔧 Thuê dịch vụ\n"
-        "🆘 Hỗ trợ\n"
-        "🛠 Bảo hành\n\n"
-        "Nhấn nút bên dưới để tạo ticket",
-        color=discord.Color.gold()
-    )
-    embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1465005765478584404/1482629221149966356/shop.gif")
+    embed = discord.Embed(title="🎫 Ticket", description="Nhấn để tạo", color=discord.Color.gold())
     await ctx.send(embed=embed, view=TicketPanel())
 
-# ================= MESSAGE HANDLER =================
+# ================= MESSAGE =================
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -283,75 +257,51 @@ async def on_message(message):
 
     content = message.content.strip()
 
-    # ===== ADMIN COMMANDS =====
+    # ===== ADMIN =====
     if content.startswith("gp ") or content.startswith("xp "):
         if message.author.id not in ADMIN_IDS:
-            return await message.reply("❌ Bạn không có quyền")
+            return await message.reply("❌ Không có quyền")
+
         parts = content.split()
-        if len(parts) < 2:
-            return await message.reply("❌ Sai cú pháp")
-        cmd, username = parts[0], parts[1]
-        member = find_member(message.guild, username)
+        member = find_member(message.guild, parts[1])
         if not member:
             return await message.reply("❌ Không tìm thấy user")
-        log_channel = bot.get_channel(LOG_ADMIN_CHANNEL)
 
-        if cmd == "gp":
-            if len(parts) < 3:
-                return await message.reply("❌ Thiếu số point")
-            try:
-                amount = int(parts[2])
-            except:
-                return await message.reply("❌ Số không hợp lệ")
+        if parts[0] == "gp":
+            amount = int(parts[2])
             await add_points(member.id, amount)
-            await message.reply(f"✅ +{amount} point cho {member.mention}")
-            if log_channel:
-                await log_channel.send(f"➕ {message.author} → {member} (+{amount})")
-        elif cmd == "xp":
-            amount = None
-            if len(parts) >= 3:
-                try:
-                    amount = int(parts[2])
-                except:
-                    return await message.reply("❌ Số không hợp lệ")
+            await message.reply(f"+{amount} point")
+
+        if parts[0] == "xp":
+            amount = int(parts[2]) if len(parts) > 2 else None
             await remove_points(member.id, amount)
-            if amount is None:
-                await message.reply(f"🗑️ Xoá hết point {member.mention}")
-                if log_channel:
-                    await log_channel.send(f"🗑️ {message.author} → {member} (xoá hết)")
-            else:
-                await message.reply(f"🗑️ -{amount} point {member.mention}")
-                if log_channel:
-                    await log_channel.send(f"➖ {message.author} → {member} (-{amount})")
+            await message.reply(f"-point")
 
-    # ===== EARN CODE =====
-if message.channel.id == CODE_CHANNEL_ID:
-    if not content.startswith("EP-"):
-        # Không quan tâm tới các tin nhắn khác
-        return
-    code = content
-    print("📩 Code nhận:", code)
+    # ===== CODE =====
+    if message.channel.id == CODE_CHANNEL_ID:
+        if not content.startswith("EP-"):
+            return  # ✅ bỏ qua hoàn toàn
 
-    data = await api_post(f"{API}/check-code", {"code": code, "discordId": str(message.author.id)})
-    print("🔍 API trả:", data)
-    log_channel = bot.get_channel(LOG_CODE_CHANNEL_ID)
+        data = await api_post(f"{API}/check-code", {
+            "code": content,
+            "discordId": str(message.author.id)
+        })
 
-    if not data:
-        return await message.reply("❌ lỗi server")
+        if not data:
+            return await message.reply("❌ lỗi server")
 
-    status = data.get("status")
-    if status == "ok":
-        await message.reply(f"✅ +1 point | Tổng: {data.get('points', 1)}")
+        status = data.get("status")
+        log_channel = bot.get_channel(LOG_CODE_CHANNEL_ID)
+
+        if status == "ok":
+            await message.reply(f"✅ +1 | Tổng: {data.get('points', 1)}")
+        elif status == "expired":
+            await message.reply("⏱️ hết hạn")
+        else:
+            await message.reply("❌ không hợp lệ")
+
         if log_channel:
-            await log_channel.send(f"✅ {message.author}: {code} (+1 point)")
-    elif status == "expired":
-        await message.reply("⏱️ code hết hạn")
-        if log_channel:
-            await log_channel.send(f"⏱️ {message.author}: {code}")
-    else:
-        await message.reply("❌ code không hợp lệ")
-        if log_channel:
-            await log_channel.send(f"❌ {message.author}: {code}")
+            await log_channel.send(f"{message.author}: {content} → {status}")
 
     await bot.process_commands(message)
 
