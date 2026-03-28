@@ -1,8 +1,10 @@
 import discord
 from discord.ext import commands
-from discord.ui import View, Button, Modal, TextInput
+from discord.ui import View, Button, Modal, TextInput, Select
 import aiohttp
+import io
 import os
+import json
 
 TOKEN = os.getenv("TOKEN")
 
@@ -16,12 +18,58 @@ ADMIN_PING = 846332174734983219
 LOG_ADMIN_CHANNEL = 1464524557657440396
 CODE_CHANNEL_ID = 1486967511839801414
 
+# ===== Ticket Config =====
+LOG_CHANNEL = 1482234024868053083
+TICKET_CATEGORY_ID = 1464426174611456195
+SUPPORT_ROLE_ID = 1474572393908404305  # Role ping khi có ticket mới
+
+# ===== EarnPoint API =====
 API = "https://website-kiemtien.onrender.com"
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 session = None
+
+# ================= DATABASE =================
+def load_data():
+    try:
+        with open("data.json", "r") as f:
+            return json.load(f)
+    except:
+        return {"ticket": 0}
+
+def save_data(data):
+    with open("data.json", "w") as f:
+        json.dump(data, f, indent=4)
+
+# ================= TICKET COUNT =================
+async def get_ticket_number(guild):
+    data = load_data()
+    data["ticket"] += 1
+    save_data(data)
+    return f"{data['ticket']:03d}"
+
+# ================= CHECK EXISTING TICKET =================
+async def has_ticket(guild, user):
+    for channel in guild.text_channels:
+        if channel.topic and str(user.id) in channel.topic:
+            return True
+    return False
+
+# ================= MONEY HELPER =================
+def parse_money(value):
+    value = value.lower().replace(" ", "")
+    if value.isdigit():
+        return int(value)
+    if value.endswith("k") and value[:-1].isdigit():
+        return int(value[:-1]) * 1000
+    if value.endswith("m") and value[:-1].isdigit():
+        return int(value[:-1]) * 1000000
+    return None
+
+def format_money(num):
+    return f"{num:,}"
 
 # ================= API =================
 async def api_get(url):
@@ -45,189 +93,185 @@ async def api_post(url, data):
 async def get_points(user_id):
     return await api_get(f"{API}/points/{user_id}")
 
-async def remove_points(user_id, amount=None):
-    return await api_post(f"{API}/remove-point", {
-        "discordId": str(user_id),
-        "amount": amount
-    })
-
-# ================= MODAL =================
-class WithdrawModal(Modal, title="Rút Point"):
-    amount = TextInput(label="Nhập số point muốn rút")
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            amount = int(self.amount.value)
-        except:
-            return await interaction.response.send_message("❌ Số không hợp lệ", ephemeral=True)
-
-        if amount < 5:
-            return await interaction.response.send_message("❌ Tối thiểu 5 point", ephemeral=True)
-
-        data = await get_points(interaction.user.id)
-        current = data.get("points", 0) if data is not None else 0
-
-        if amount > current:
-            return await interaction.response.send_message("❌ Không đủ point", ephemeral=True)
-
-        await remove_points(interaction.user.id, amount)
-
-        log = bot.get_channel(LOG_ADMIN_CHANNEL)
-        if log:
-            await log.send(f"💸 <@{ADMIN_PING}> | {interaction.user} rút {amount} point")
-
-        await interaction.response.send_message(f"✅ Đã rút {amount} point", ephemeral=True)
-
-# ================= BUTTON =================
-class WithdrawView(View):
+# ================= TICKET VIEWS & MODALS =================
+class TicketPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="💸 Rút point",
-        style=discord.ButtonStyle.green,
-        custom_id="withdraw_point"
+    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green, custom_id="create_ticket")
+    async def create(self, interaction: discord.Interaction, button: Button):
+        if await has_ticket(interaction.guild, interaction.user):
+            return await interaction.response.send_message("❌ Bạn đã có ticket đang mở", ephemeral=True)
+
+        await interaction.response.send_modal(MinecraftModal())
+
+class MinecraftModal(Modal, title="Thông tin khách hàng"):
+    mc = TextInput(label="Tên Minecraft", placeholder="Ví dụ: quannmc")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.send_message("Chọn dịch vụ", view=TicketTypeView(self.mc.value), ephemeral=True)
+
+class TicketTypeView(View):
+    def __init__(self, mc):
+        super().__init__(timeout=60)
+        self.add_item(TypeSelect([
+            discord.SelectOption(label="selling ske"),
+            discord.SelectOption(label="selling money"),
+            discord.SelectOption(label="buying ske"),
+            discord.SelectOption(label="buying money"),
+            discord.SelectOption(label="order vật phẩm"),
+            discord.SelectOption(label="thuê dịch vụ"),
+            discord.SelectOption(label="hỗ trợ"),
+            discord.SelectOption(label="bảo hành")
+        ], mc))
+
+class TypeSelect(Select):
+    def __init__(self, options, mc):
+        super().__init__(placeholder="Chọn dịch vụ", options=options)
+        self.mc = mc
+
+    async def callback(self, interaction: discord.Interaction):
+        ticket_type = self.values[0]
+        if "selling" in ticket_type or "buying" in ticket_type:
+            await interaction.response.send_modal(AmountModal(self.mc, ticket_type))
+        else:
+            await create_ticket(interaction, self.mc, ticket_type, "không có")
+
+class AmountModal(Modal, title="Nhập số lượng"):
+    amount = TextInput(label="Số lượng", placeholder="Ví dụ: 100k, 2m hoặc 500000")
+
+    def __init__(self, mc, ticket_type):
+        super().__init__()
+        self.mc = mc
+        self.ticket_type = ticket_type
+
+    async def on_submit(self, interaction: discord.Interaction):
+        value = self.amount.value.lower().replace(" ", "")
+        if "money" in self.ticket_type:
+            parsed = parse_money(value)
+            if parsed is None:
+                return await interaction.response.send_message("❌ Money chỉ được nhập dạng: 100k, 2m hoặc số", ephemeral=True)
+            display = format_money(parsed)
+        else:
+            if not value.isdigit():
+                return await interaction.response.send_message("❌ Số lượng phải là số", ephemeral=True)
+            display = value
+
+        await create_ticket(interaction, self.mc, self.ticket_type, display)
+
+# ================= CREATE TICKET =================
+async def create_ticket(interaction, mc, ticket_type, amount):
+    guild = interaction.guild
+    number = await get_ticket_number(guild)
+    name = f"🎫-ticket-{number}"
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+    }
+
+    for admin_id in ADMIN_IDS:
+        member = guild.get_member(admin_id)
+        if member:
+            overwrites[member] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+
+    category = discord.utils.get(guild.categories, id=TICKET_CATEGORY_ID)
+    if not category:
+        return await interaction.response.send_message("❌ Không tìm thấy category Ticket", ephemeral=True)
+
+    channel = await guild.create_text_channel(name=name, overwrites=overwrites, category=category)
+    channel.topic = f"{interaction.user.id}|{mc}|{ticket_type}|{amount}"
+
+    embed = discord.Embed(title="🛒 Ticket mới", color=discord.Color.green())
+    embed.add_field(name="Buyer", value=interaction.user.mention)
+    embed.add_field(name="Minecraft", value=mc)
+    embed.add_field(name="Loại", value=ticket_type)
+    embed.add_field(name="Số lượng", value=amount)
+
+    await channel.send(f"<@&{SUPPORT_ROLE_ID}> có khách", embed=embed, view=TicketButtons())
+
+    await interaction.response.send_message(f"✅ Ticket của bạn đã được tạo: {channel.mention}", ephemeral=True)
+
+class TicketButtons(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔒 Đóng ticket", style=discord.ButtonStyle.red, custom_id="ticket_close")
+    async def close(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Bạn không có quyền đóng ticket", ephemeral=True)
+
+        # Tạo transcript
+        messages = []
+        async for msg in interaction.channel.history(limit=None):
+            time = msg.created_at.strftime("%H:%M")
+            messages.append(f"<p><b>[{time}] {msg.author}</b>: {msg.content}</p>")
+
+        html = f"""
+        <html><body><h2>Transcript {interaction.channel.name}</h2>{''.join(messages[::-1])}</body></html>
+        """
+
+        file = discord.File(io.BytesIO(html.encode()), filename="transcript.html")
+        log = bot.get_channel(LOG_CHANNEL)
+        if log:
+            await log.send(f"📄 Transcript {interaction.channel.name}", file=file)
+
+        await interaction.channel.delete()
+
+# ================= COMMANDS =================
+@bot.command()
+async def panel(ctx):
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới dùng lệnh này")
+    
+    embed = discord.Embed(
+        title="🏪 tuytam store",
+        description="Nhấn nút bên dưới để tạo ticket",
+        color=discord.Color.gold()
     )
-    async def withdraw(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(WithdrawModal())
+    embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1465005765478584404/1482629221149966356/shop.gif")
+    await ctx.send(embed=embed, view=TicketPanel())
 
-# ================= LEADERBOARD =================
-async def build_leaderboard(guild):
-    results = []
-    for member in guild.members:
-        if member.bot:
-            continue
-        data = await get_points(member.id)
-        if data and (points := data.get("points", 0)) > 0:
-            results.append((member, points))
+# ================= ON READY =================
+@bot.event
+async def on_ready():
+    global session
+    session = aiohttp.ClientSession()
+    bot.add_view(TicketPanel())
+    bot.add_view(TicketButtons())
+    print(f"Bot online: {bot.user}")
 
-    results.sort(key=lambda x: x[1], reverse=True)
-    return results[:10]
-
-# ================= ON MESSAGE =================
+# ================= ON MESSAGE - EarnPoint =================
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    content = message.content.strip().lower()
-
-    # ================= CODE CHANNEL =================
+    # EarnPoint Code Channel
     if message.channel.id == CODE_CHANNEL_ID:
+        code = message.content.strip()
+        if not code.startswith("EP-"):
+            return await message.reply("code không hợp lệ ❌")
 
-        # ===== POINT + LEADERBOARD =====
-        if content.startswith("point"):
-            parts = content.split()
+        data = await api_post(f"{API}/check-code", {
+            "code": code,
+            "discordId": str(message.author.id)
+        })
 
-            # Leaderboard
-            if len(parts) >= 2 and parts[1] == "lb":
-                await message.reply("⏳ Đang tải leaderboard...")
-                lb = await build_leaderboard(message.guild)
+        if not data:
+            return await message.reply("❌ lỗi server")
 
-                text = "\n".join([f"{i}. {member.mention} - {points} point" 
-                                for i, (member, points) in enumerate(lb, start=1)])
-
-                embed = discord.Embed(
-                    title="🏆 Leaderboard",
-                    description=text or "Không có dữ liệu",
-                    color=discord.Color.green()
-                )
-                await message.channel.send(embed=embed)
-                return
-
-            # ===== Xem point cá nhân =====
-            data = await get_points(message.author.id)
-            points = data.get("points", 0) if data is not None else 0
-
-            embed = discord.Embed(
-                title="💰 Thông tin point",
-                color=discord.Color.gold()
-            )
-            embed.add_field(name="👤 User", value=message.author.mention, inline=False)
-            embed.add_field(name="💎 Point", value=str(points), inline=False)
-
-            await message.reply(embed=embed, view=WithdrawView())
-            return
-
-        # ===== Nhập code EP- =====
-        if message.content.startswith("EP-"):
-            data = await api_post(f"{API}/check-code", {
-                "code": message.content,
-                "discordId": str(message.author.id)
-            })
-
-            if not data:
-                return await message.reply("❌ Lỗi server")
-
-            status = data.get("status")
-            if status == "ok":
-                await message.reply(f"✅ +1 point | Tổng: {data.get('points', 0)}")
-            elif status == "expired":
-                await message.reply("⏱️ Code hết hạn")
-            elif status == "used":
-                await message.reply("❌ Code đã dùng")
-            else:
-                await message.reply("❌ Code không hợp lệ")
-            return
-
-    # ================= ADMIN CHANNEL =================
-    if message.channel.id == LOG_ADMIN_CHANNEL:
-        if content.startswith(("gp ", "xp ")):
-            if message.author.id not in ADMIN_IDS:
-                return await message.reply("❌ Không có quyền")
-
-            parts = message.content.split()
-            if len(parts) < 2:
-                return
-
-            username = parts[1]
-            member = discord.utils.find(
-                lambda m: m.name.lower() == username.lower() or str(m.id) == username,
-                message.guild.members
-            )
-
-            if not member:
-                return await message.reply("❌ Không tìm thấy user")
-
-            if content.startswith("gp "):
-                try:
-                    amount = int(parts[2])
-                    await api_post(f"{API}/add-point", {
-                        "discordId": str(member.id),
-                        "amount": amount
-                    })
-                    await message.reply(f"✅ Đã cộng +{amount} point cho {member.mention}")
-                except:
-                    await message.reply("❌ Số point không hợp lệ")
-
-            elif content.startswith("xp "):
-                try:
-                    amount = int(parts[2]) if len(parts) > 2 else None
-                    await remove_points(member.id, amount)
-                    await message.reply(f"🗑️ Đã xử lý trừ point cho {member.mention}")
-                except:
-                    await message.reply("❌ Số point không hợp lệ")
+        status = data.get("status")
+        if status in ["invalid", "used"]:
+            await message.reply("code không hợp lệ ❌")
+        elif status == "expired":
+            await message.reply("⏱️ code hết hạn")
+        elif status == "ok":
+            await message.reply(f"code hợp lệ ✔️ +1 point\n💰 Tổng: {data.get('points', 0)}")
         return
 
-    # Xử lý command prefix nếu có
+    # Xử lý command prefix
     await bot.process_commands(message)
-
-
-# ================= READY =================
-@bot.event
-async def on_ready():
-    global session
-    session = aiohttp.ClientSession()
-    bot.add_view(WithdrawView())
-    print(f"Bot online: {bot.user}")
-
-
-# ================= CLOSE =================
-@bot.event
-async def on_close():
-    if session:
-        await session.close()
-
 
 # ================= RUN =================
 bot.run(TOKEN)
