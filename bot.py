@@ -14,7 +14,8 @@ ADMIN_IDS = [
     1438384178755276923
 ]
 
-# ===== Ticket Config =====
+# ================= CONFIG =================
+CODE_CHANNEL_ID = 1486967511839801414      # ← Đã thêm lại
 LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
 SUPPORT_ROLE_ID = 1474572393908404305
@@ -22,9 +23,9 @@ SUPPORT_ROLE_ID = 1474572393908404305
 # ===== EarnPoint API =====
 API = "https://website-kiemtien.onrender.com"
 
-# ================= CẤU HÌNH BOT =================
+# ================= BOT SETUP =================
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)  # Tắt help mặc định
+bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 
 session = None
 
@@ -100,7 +101,7 @@ async def build_leaderboard(guild):
     results.sort(key=lambda x: x[1], reverse=True)
     return results[:10]
 
-# ================= TICKET VIEWS & MODALS =================
+# ================= TICKET VIEWS =================
 class TicketPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -239,8 +240,7 @@ async def panel(ctx):
 @bot.command()
 async def point(ctx, subcommand: str = None):
     """Xem point cá nhân hoặc leaderboard"""
-    if subcommand is None or subcommand.lower() in ["me", ""]:
-        # .point
+    if subcommand is None or subcommand.lower() in ["", "me"]:
         data = await get_points(ctx.author.id)
         points = data.get("points", 0) if data is not None else 0
 
@@ -248,10 +248,9 @@ async def point(ctx, subcommand: str = None):
         embed.add_field(name="👤 User", value=ctx.author.mention, inline=False)
         embed.add_field(name="💎 Point", value=str(points), inline=False)
 
-        await ctx.reply(embed=embed, view=WithdrawView())
+        await ctx.reply(embed=embed, view=WithdrawView())   # Nếu chưa có WithdrawView sẽ lỗi
 
     elif subcommand.lower() == "lb":
-        # .point lb
         await ctx.reply("⏳ Đang tải leaderboard...")
         lb = await build_leaderboard(ctx.guild)
 
@@ -264,7 +263,6 @@ async def point(ctx, subcommand: str = None):
             color=discord.Color.green()
         )
         await ctx.send(embed=embed)
-
     else:
         await ctx.reply("❌ Sử dụng: `.point` hoặc `.point lb`")
 
@@ -272,12 +270,12 @@ async def point(ctx, subcommand: str = None):
 async def help(ctx):
     """Hiển thị danh sách lệnh"""
     embed = discord.Embed(
-        title="📋 Danh sách lệnh",
-        description=f"Prefix hiện tại: **` . `** (dấu chấm)",
+        title="📋 Danh sách lệnh Bot",
+        description="Prefix hiện tại: **`.`**",
         color=discord.Color.blue()
     )
     embed.add_field(
-        name="Lệnh chính",
+        name="Các lệnh có sẵn",
         value=(
             "`.help` - Hiển thị danh sách lệnh này\n"
             "`.point` - Xem số point của bạn\n"
@@ -286,8 +284,6 @@ async def help(ctx):
         ),
         inline=False
     )
-    embed.set_footer(text="Bot được phát triển cho hệ thống EarnPoint + Ticket")
-    
     await ctx.reply(embed=embed)
 
 # ================= ON READY =================
@@ -299,7 +295,7 @@ async def on_ready():
     bot.add_view(TicketButtons())
     print(f"Bot online: {bot.user}")
 
-# ================= ON MESSAGE (Chỉ xử lý code EP-) =================
+# ================= ON MESSAGE =================
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -327,7 +323,6 @@ async def on_message(message):
                 await message.reply(f"code hợp lệ ✔️ +1 point\n💰 Tổng: {data.get('points', 0)}")
         return
 
-    # Cho phép bot xử lý command
     await bot.process_commands(message)
 
 # ================= RUN =================
