@@ -45,7 +45,7 @@ async def get_ticket_number(guild):
     data = load_data()
     data["ticket"] += 1
     save_data(data)
-    return f"{data['ticket']:03d"}
+    return f"{data['ticket']:03d}"   # ← Đã sửa lỗi ở đây
 
 async def has_ticket(guild, user):
     for channel in guild.text_channels:
@@ -72,10 +72,10 @@ async def api_get(url):
         async with session.get(url) as res:
             if res.status == 200:
                 return await res.json()
-            print(f"[API ERROR] Status {res.status} for {url}")
+            print(f"[API ERROR] Status {res.status} - {url}")
             return None
     except Exception as e:
-        print(f"[API ERROR] {e} for {url}")
+        print(f"[API ERROR] {e} - {url}")
         return None
 
 async def api_post(url, data):
@@ -83,10 +83,10 @@ async def api_post(url, data):
         async with session.post(url, json=data) as res:
             if res.status == 200:
                 return await res.json()
-            print(f"[API ERROR] Status {res.status} for {url}")
+            print(f"[API ERROR] Status {res.status} - {url}")
             return None
     except Exception as e:
-        print(f"[API ERROR] {e} for {url}")
+        print(f"[API ERROR] {e} - {url}")
         return None
 
 async def get_points(user_id):
@@ -110,7 +110,7 @@ async def build_leaderboard(guild):
     results.sort(key=lambda x: x[1], reverse=True)
     return results[:10]
 
-# ================= WITHDRAW SYSTEM (ĐÃ BỔ SUNG) =================
+# ================= WITHDRAW SYSTEM =================
 class WithdrawModal(Modal, title="Rút Point"):
     amount = TextInput(label="Nhập số point muốn rút", placeholder="Tối thiểu 5")
 
@@ -144,10 +144,125 @@ class WithdrawView(View):
     async def withdraw(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(WithdrawModal())
 
-# ================= TICKET VIEWS (giữ nguyên) =================
-# ... (TicketPanel, MinecraftModal, TicketTypeView, TypeSelect, AmountModal, create_ticket, TicketButtons) ...
+# ================= TICKET VIEWS =================
+class TicketPanel(View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
-# (Để code không quá dài, tôi rút gọn phần Ticket. Bạn copy phần Ticket từ code trước đó vào đây)
+    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green, custom_id="create_ticket")
+    async def create(self, interaction: discord.Interaction, button: Button):
+        if await has_ticket(interaction.guild, interaction.user):
+            return await interaction.response.send_message("❌ Bạn đã có ticket đang mở", ephemeral=True)
+        await interaction.response.send_modal(MinecraftModal())
+
+class MinecraftModal(Modal, title="Thông tin khách hàng"):
+    mc = TextInput(label="Tên Minecraft", placeholder="Ví dụ: quannmc")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.send_message("Chọn dịch vụ", view=TicketTypeView(self.mc.value), ephemeral=True)
+
+class TicketTypeView(View):
+    def __init__(self, mc):
+        super().__init__(timeout=60)
+        self.add_item(TypeSelect([
+            discord.SelectOption(label="selling ske"),
+            discord.SelectOption(label="selling money"),
+            discord.SelectOption(label="buying ske"),
+            discord.SelectOption(label="buying money"),
+            discord.SelectOption(label="order vật phẩm"),
+            discord.SelectOption(label="thuê dịch vụ"),
+            discord.SelectOption(label="hỗ trợ"),
+            discord.SelectOption(label="bảo hành")
+        ], mc))
+
+class TypeSelect(Select):
+    def __init__(self, options, mc):
+        super().__init__(placeholder="Chọn dịch vụ", options=options)
+        self.mc = mc
+
+    async def callback(self, interaction: discord.Interaction):
+        ticket_type = self.values[0]
+        if "selling" in ticket_type or "buying" in ticket_type:
+            await interaction.response.send_modal(AmountModal(self.mc, ticket_type))
+        else:
+            await create_ticket(interaction, self.mc, ticket_type, "không có")
+
+class AmountModal(Modal, title="Nhập số lượng"):
+    amount = TextInput(label="Số lượng", placeholder="Ví dụ: 100k, 2m hoặc 500000")
+
+    def __init__(self, mc, ticket_type):
+        super().__init__()
+        self.mc = mc
+        self.ticket_type = ticket_type
+
+    async def on_submit(self, interaction: discord.Interaction):
+        value = self.amount.value.lower().replace(" ", "")
+        if "money" in self.ticket_type:
+            parsed = parse_money(value)
+            if parsed is None:
+                return await interaction.response.send_message("❌ Money chỉ được nhập dạng: 100k, 2m hoặc số", ephemeral=True)
+            display = format_money(parsed)
+        else:
+            if not value.isdigit():
+                return await interaction.response.send_message("❌ Số lượng phải là số", ephemeral=True)
+            display = value
+
+        await create_ticket(interaction, self.mc, self.ticket_type, display)
+
+async def create_ticket(interaction, mc, ticket_type, amount):
+    guild = interaction.guild
+    number = await get_ticket_number(guild)
+    name = f"🎫-ticket-{number}"
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+    }
+
+    for admin_id in ADMIN_IDS:
+        member = guild.get_member(admin_id)
+        if member:
+            overwrites[member] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+
+    category = discord.utils.get(guild.categories, id=TICKET_CATEGORY_ID)
+    if not category:
+        return await interaction.response.send_message("❌ Không tìm thấy category Ticket", ephemeral=True)
+
+    channel = await guild.create_text_channel(name=name, overwrites=overwrites, category=category)
+    channel.topic = f"{interaction.user.id}|{mc}|{ticket_type}|{amount}"
+
+    embed = discord.Embed(title="🛒 Ticket mới", color=discord.Color.green())
+    embed.add_field(name="Buyer", value=interaction.user.mention)
+    embed.add_field(name="Minecraft", value=mc)
+    embed.add_field(name="Loại", value=ticket_type)
+    embed.add_field(name="Số lượng", value=amount)
+
+    await channel.send(f"<@&{SUPPORT_ROLE_ID}> có khách", embed=embed, view=TicketButtons())
+
+    await interaction.response.send_message(f"✅ Ticket của bạn đã được tạo: {channel.mention}", ephemeral=True)
+
+class TicketButtons(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔒 Đóng ticket", style=discord.ButtonStyle.red, custom_id="ticket_close")
+    async def close(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Bạn không có quyền đóng ticket", ephemeral=True)
+
+        messages = []
+        async for msg in interaction.channel.history(limit=None):
+            time = msg.created_at.strftime("%H:%M")
+            messages.append(f"<p><b>[{time}] {msg.author}</b>: {msg.content}</p>")
+
+        html = f"<html><body><h2>Transcript {interaction.channel.name}</h2>{''.join(messages[::-1])}</body></html>"
+
+        file = discord.File(io.BytesIO(html.encode()), filename="transcript.html")
+        log = bot.get_channel(LOG_CHANNEL)
+        if log:
+            await log.send(f"📄 Transcript {interaction.channel.name}", file=file)
+
+        await interaction.channel.delete()
 
 # ================= COMMANDS =================
 @bot.command()
