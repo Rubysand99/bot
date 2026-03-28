@@ -26,8 +26,9 @@ SUPPORT_ROLE_ID = 1474572393908404305
 # ===== EarnPoint API =====
 API = "https://website-kiemtien.onrender.com"
 
+# ================= CẤU HÌNH PREFIX =================
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix=["!", "."], intents=intents)   # ← Đã thêm "." ở đây
 
 session = None
 
@@ -237,8 +238,7 @@ async def on_ready():
     bot.add_view(TicketButtons())
     print(f"Bot online: {bot.user}")
 
-# ================= ON MESSAGE - EarnPoint & System Commands =================
-# ================= ON MESSAGE - EarnPoint & System Commands =================
+# ================= ON MESSAGE =================
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -248,7 +248,7 @@ async def on_message(message):
 
     # ================= CODE CHANNEL - CHỈ XỬ LÝ CODE EP- =================
     if message.channel.id == CODE_CHANNEL_ID:
-        if message.content.strip().startswith("EP-"):   # dùng message.content gốc để kiểm tra EP-
+        if message.content.strip().startswith("EP-"):
             data = await api_post(f"{API}/check-code", {
                 "code": message.content.strip(),
                 "discordId": str(message.author.id)
@@ -264,12 +264,9 @@ async def on_message(message):
                 await message.reply("⏱️ code hết hạn")
             elif status == "ok":
                 await message.reply(f"code hợp lệ ✔️ +1 point\n💰 Tổng: {data.get('points', 0)}")
-            # Các tin nhắn khác → im lặng, không reply
+        return   # Không xử lý thêm gì trong kênh code
 
-        return   # ← Quan trọng: Kết thúc luôn, không xử lý gì thêm trong kênh code
-
-    # ================= XỬ LÝ LỆNH HỆ THỐNG (point, point lb, !panel, ...) =================
-    # point và point lb (không có dấu !)
+    # ================= XỬ LÝ LỆNH HỆ THỐNG (point, point lb) =================
     if content.startswith("point"):
         parts = content.split()
 
@@ -303,8 +300,9 @@ async def on_message(message):
         await message.reply(embed=embed, view=WithdrawView())
         return
 
-    # Nếu là lệnh có prefix "!" (như !panel) thì mới cho process_commands chạy
-    if message.content.startswith(bot.command_prefix):
+    # Nếu là lệnh có prefix ! hoặc . thì xử lý command
+    if message.content.startswith(("!", ".")):
         await bot.process_commands(message)
+
 # ================= RUN =================
 bot.run(TOKEN)
