@@ -238,18 +238,19 @@ async def on_ready():
     print(f"Bot online: {bot.user}")
 
 # ================= ON MESSAGE - EarnPoint & System Commands =================
+# ================= ON MESSAGE - EarnPoint & System Commands =================
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    content = message.content.strip()
+    content = message.content.strip().lower()
 
     # ================= CODE CHANNEL - CHỈ XỬ LÝ CODE EP- =================
     if message.channel.id == CODE_CHANNEL_ID:
-        if content.startswith("EP-"):
+        if message.content.strip().startswith("EP-"):   # dùng message.content gốc để kiểm tra EP-
             data = await api_post(f"{API}/check-code", {
-                "code": content,
+                "code": message.content.strip(),
                 "discordId": str(message.author.id)
             })
 
@@ -263,12 +264,47 @@ async def on_message(message):
                 await message.reply("⏱️ code hết hạn")
             elif status == "ok":
                 await message.reply(f"code hợp lệ ✔️ +1 point\n💰 Tổng: {data.get('points', 0)}")
-            # Không reply gì nếu không phải EP- (theo yêu cầu của bạn)
+            # Các tin nhắn khác → im lặng, không reply
 
-        # Các tin nhắn khác trong kênh này sẽ bị bỏ qua hoàn toàn
+        return   # ← Quan trọng: Kết thúc luôn, không xử lý gì thêm trong kênh code
 
     # ================= XỬ LÝ LỆNH HỆ THỐNG (point, point lb, !panel, ...) =================
-    await bot.process_commands(message)
+    # point và point lb (không có dấu !)
+    if content.startswith("point"):
+        parts = content.split()
 
+        # point lb
+        if len(parts) >= 2 and parts[1] == "lb":
+            await message.reply("⏳ Đang tải leaderboard...")
+            lb = await build_leaderboard(message.guild)
+
+            text = "\n".join([f"{i}. {member.mention} - {points} point" 
+                            for i, (member, points) in enumerate(lb, start=1)])
+
+            embed = discord.Embed(
+                title="🏆 Leaderboard",
+                description=text or "Không có dữ liệu",
+                color=discord.Color.green()
+            )
+            await message.channel.send(embed=embed)
+            return
+
+        # point (xem point cá nhân)
+        data = await get_points(message.author.id)
+        points = data.get("points", 0) if data is not None else 0
+
+        embed = discord.Embed(
+            title="💰 Thông tin point",
+            color=discord.Color.gold()
+        )
+        embed.add_field(name="👤 User", value=message.author.mention, inline=False)
+        embed.add_field(name="💎 Point", value=str(points), inline=False)
+
+        await message.reply(embed=embed, view=WithdrawView())
+        return
+
+    # Nếu là lệnh có prefix "!" (như !panel) thì mới cho process_commands chạy
+    if message.content.startswith(bot.command_prefix):
+        await bot.process_commands(message)
 # ================= RUN =================
 bot.run(TOKEN)
