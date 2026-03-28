@@ -15,7 +15,7 @@ ADMIN_IDS = [
 ]
 
 # ================= CONFIG =================
-CODE_CHANNEL_ID = 1486967511839801414
+CODE_CHANNEL_ID = 1486967511839801414      # Kênh chính để nhập lệnh
 LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
 SUPPORT_ROLE_ID = 1474572393908404305
@@ -45,7 +45,7 @@ async def get_ticket_number(guild):
     data = load_data()
     data["ticket"] += 1
     save_data(data)
-    return f"{data['ticket']:03d}"   # ← Đã sửa lỗi ở đây
+    return f"{data['ticket']:03d}"
 
 async def has_ticket(guild, user):
     for channel in guild.text_channels:
@@ -307,7 +307,7 @@ async def on_ready():
     bot.add_view(WithdrawView())
     print(f"Bot online: {bot.user}")
 
-# ================= ON MESSAGE =================
+# ================= ON MESSAGE - CHO PHÉP TẤT CẢ LỆNH TRONG KÊNH CODE =================
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -315,6 +315,7 @@ async def on_message(message):
 
     original_content = message.content.strip()
 
+    # ================= XỬ LÝ CODE EP- =================
     if message.channel.id == CODE_CHANNEL_ID:
         if original_content.startswith("EP-"):
             data = await api_post(f"{API}/check-code", {
@@ -330,8 +331,9 @@ async def on_message(message):
                 await message.reply("⏱️ code hết hạn")
             elif status == "ok":
                 await message.reply(f"code hợp lệ ✔️ +1 point\n💰 Tổng: {data.get('points', 0)}")
-        return
+            # Không return ở đây nữa → cho phép chạy lệnh tiếp theo
 
+    # Cho phép tất cả lệnh (.point, .help, .panel, ...) hoạt động trong mọi kênh, bao gồm kênh code
     await bot.process_commands(message)
 
 # ================= RUN =================
