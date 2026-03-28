@@ -21,7 +21,7 @@ CODE_CHANNEL_ID = 1486967511839801414
 # ===== Ticket Config =====
 LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
-SUPPORT_ROLE_ID = 1474572393908404305  # Role ping khi có ticket mới
+SUPPORT_ROLE_ID = 1474572393908404305
 
 # ===== EarnPoint API =====
 API = "https://website-kiemtien.onrender.com"
@@ -102,7 +102,6 @@ class TicketPanel(View):
     async def create(self, interaction: discord.Interaction, button: Button):
         if await has_ticket(interaction.guild, interaction.user):
             return await interaction.response.send_message("❌ Bạn đã có ticket đang mở", ephemeral=True)
-
         await interaction.response.send_modal(MinecraftModal())
 
 class MinecraftModal(Modal, title="Thông tin khách hàng"):
@@ -201,15 +200,12 @@ class TicketButtons(View):
         if interaction.user.id not in ADMIN_IDS:
             return await interaction.response.send_message("❌ Bạn không có quyền đóng ticket", ephemeral=True)
 
-        # Tạo transcript
         messages = []
         async for msg in interaction.channel.history(limit=None):
             time = msg.created_at.strftime("%H:%M")
             messages.append(f"<p><b>[{time}] {msg.author}</b>: {msg.content}</p>")
 
-        html = f"""
-        <html><body><h2>Transcript {interaction.channel.name}</h2>{''.join(messages[::-1])}</body></html>
-        """
+        html = f"<html><body><h2>Transcript {interaction.channel.name}</h2>{''.join(messages[::-1])}</body></html>"
 
         file = discord.File(io.BytesIO(html.encode()), filename="transcript.html")
         log = bot.get_channel(LOG_CHANNEL)
@@ -241,36 +237,37 @@ async def on_ready():
     bot.add_view(TicketButtons())
     print(f"Bot online: {bot.user}")
 
-# ================= ON MESSAGE - EarnPoint =================
+# ================= ON MESSAGE - EarnPoint & System Commands =================
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # EarnPoint Code Channel
+    content = message.content.strip()
+
+    # ================= CODE CHANNEL - CHỈ XỬ LÝ CODE EP- =================
     if message.channel.id == CODE_CHANNEL_ID:
-        code = message.content.strip()
-        if not code.startswith("EP-"):
-            return await message.reply("code không hợp lệ ❌")
+        if content.startswith("EP-"):
+            data = await api_post(f"{API}/check-code", {
+                "code": content,
+                "discordId": str(message.author.id)
+            })
 
-        data = await api_post(f"{API}/check-code", {
-            "code": code,
-            "discordId": str(message.author.id)
-        })
+            if not data:
+                return await message.reply("❌ lỗi server")
 
-        if not data:
-            return await message.reply("❌ lỗi server")
+            status = data.get("status")
+            if status in ["invalid", "used"]:
+                await message.reply("code không hợp lệ ❌")
+            elif status == "expired":
+                await message.reply("⏱️ code hết hạn")
+            elif status == "ok":
+                await message.reply(f"code hợp lệ ✔️ +1 point\n💰 Tổng: {data.get('points', 0)}")
+            # Không reply gì nếu không phải EP- (theo yêu cầu của bạn)
 
-        status = data.get("status")
-        if status in ["invalid", "used"]:
-            await message.reply("code không hợp lệ ❌")
-        elif status == "expired":
-            await message.reply("⏱️ code hết hạn")
-        elif status == "ok":
-            await message.reply(f"code hợp lệ ✔️ +1 point\n💰 Tổng: {data.get('points', 0)}")
-        return
+        # Các tin nhắn khác trong kênh này sẽ bị bỏ qua hoàn toàn
 
-    # Xử lý command prefix
+    # ================= XỬ LÝ LỆNH HỆ THỐNG (point, point lb, !panel, ...) =================
     await bot.process_commands(message)
 
 # ================= RUN =================
