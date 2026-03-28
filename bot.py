@@ -28,7 +28,7 @@ API = "https://website-kiemtien.onrender.com"
 
 # ================= CẤU HÌNH PREFIX =================
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=["!", "."], intents=intents)   # ← Đã thêm "." ở đây
+bot = commands.Bot(command_prefix=".", intents=intents)   # Chỉ dùng prefix "."
 
 session = None
 
@@ -245,12 +245,13 @@ async def on_message(message):
         return
 
     content = message.content.strip().lower()
+    original_content = message.content.strip()
 
     # ================= CODE CHANNEL - CHỈ XỬ LÝ CODE EP- =================
     if message.channel.id == CODE_CHANNEL_ID:
-        if message.content.strip().startswith("EP-"):
+        if original_content.startswith("EP-"):
             data = await api_post(f"{API}/check-code", {
-                "code": message.content.strip(),
+                "code": original_content,
                 "discordId": str(message.author.id)
             })
 
@@ -264,13 +265,13 @@ async def on_message(message):
                 await message.reply("⏱️ code hết hạn")
             elif status == "ok":
                 await message.reply(f"code hợp lệ ✔️ +1 point\n💰 Tổng: {data.get('points', 0)}")
-        return   # Không xử lý thêm gì trong kênh code
+        return
 
     # ================= XỬ LÝ LỆNH HỆ THỐNG (point, point lb) =================
     if content.startswith("point"):
         parts = content.split()
 
-        # point lb
+        # .point lb
         if len(parts) >= 2 and parts[1] == "lb":
             await message.reply("⏳ Đang tải leaderboard...")
             lb = await build_leaderboard(message.guild)
@@ -286,7 +287,7 @@ async def on_message(message):
             await message.channel.send(embed=embed)
             return
 
-        # point (xem point cá nhân)
+        # .point (xem point cá nhân)
         data = await get_points(message.author.id)
         points = data.get("points", 0) if data is not None else 0
 
@@ -300,9 +301,8 @@ async def on_message(message):
         await message.reply(embed=embed, view=WithdrawView())
         return
 
-    # Nếu là lệnh có prefix ! hoặc . thì xử lý command
-    if message.content.startswith(("!", ".")):
-        await bot.process_commands(message)
+    # Xử lý command thật với prefix "."
+    await bot.process_commands(message)
 
 # ================= RUN =================
 bot.run(TOKEN)
