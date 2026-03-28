@@ -180,6 +180,28 @@ async def on_message(message):
                 return
 
             # ===== POINT =====
+            # Trong on_message
+async def on_message(self, message):
+    if message.author.bot:  # Bỏ qua tin nhắn của bot
+        return
+
+    # ... code xử lý lệnh của bạn ...
+
+    try:
+        # Phần code lấy data từ API hoặc DB của hệ thống EarnPoint
+        data = await get_points_data(...)  # hàm bạn đang gọi
+
+        if data is None:
+            # Xử lý trường hợp không có data (có thể log hoặc bỏ qua)
+            print(f"[DEBUG] Data is None for message: {message.content}")
+            return  # hoặc await message.channel.send("Không tìm thấy dữ liệu...")
+
+        points = data.get("points", 0)
+        # ... tiếp tục code của bạn
+
+    except Exception as e:
+        print(f"[ERROR] Lỗi xử lý on_message: {e}")
+        # Không raise lại để bot không crash
             data = await get_points(message.author.id)
             points = data.get("points", 0)
 
