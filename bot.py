@@ -103,7 +103,11 @@ class WithdrawView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="💸 Rút point", style=discord.ButtonStyle.green)
+    @discord.ui.button(
+        label="💸 Rút point",
+        style=discord.ButtonStyle.green,
+        custom_id="withdraw_point"  # 🔥 BẮT BUỘC
+    )
     async def withdraw(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(WithdrawModal())
 
