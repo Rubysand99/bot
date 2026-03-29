@@ -43,8 +43,8 @@ class WithdrawModal(Modal, title="Rút Point"):
         except:
             return await interaction.response.send_message("❌ Số không hợp lệ", ephemeral=True)
 
-        if amount < 5:
-            return await interaction.response.send_message("❌ Tối thiểu 5 point", ephemeral=True)
+        if amount < 2:
+            return await interaction.response.send_message("❌ Tối thiểu 2 point", ephemeral=True)
 
         current = await get_points(interaction.user.id)
 
