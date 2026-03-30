@@ -4,6 +4,7 @@ from discord.ui import View, Button, Modal, TextInput
 import aiohttp
 import io
 import os
+import json
 
 TOKEN = os.getenv("TOKEN")
 
@@ -16,7 +17,6 @@ ADMIN_IDS = [
 LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
 SUPPORT_ROLE_ID = 1474572393908404305
-
 CODE_CHANNEL_ID = 1486967511839801414
 
 API = "https://website-kiemtien.onrender.com"
@@ -25,6 +25,24 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 
 session = None
+
+# ================= DATA =================
+def load_data():
+    try:
+        with open("data.json", "r") as f:
+            return json.load(f)
+    except:
+        return {"ticket": 0}
+
+def save_data(data):
+    with open("data.json", "w") as f:
+        json.dump(data, f, indent=4)
+
+def get_ticket_number():
+    data = load_data()
+    data["ticket"] += 1
+    save_data(data)
+    return f"{data['ticket']:03d}"
 
 # ================= API =================
 async def api_get(url):
@@ -86,6 +104,7 @@ class TicketPanel(View):
         await interaction.response.defer(ephemeral=True)
 
         guild = interaction.guild
+        number = get_ticket_number()
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -100,13 +119,13 @@ class TicketPanel(View):
         category = discord.utils.get(guild.categories, id=TICKET_CATEGORY_ID)
 
         channel = await guild.create_text_channel(
-            name=f"ticket-{interaction.user.name}",
+            name=f"ticket-{number}",
             overwrites=overwrites,
             category=category
         )
 
         embed = discord.Embed(
-            title="🎫 Ticket",
+            title=f"🎫 Ticket #{number}",
             description=f"{interaction.user.mention} đã tạo ticket",
             color=discord.Color.green()
         )
@@ -184,13 +203,12 @@ async def close(ctx):
 
     await ctx.channel.delete()
 
-# ================= ON MESSAGE (NHẬP CODE) =================
+# ================= ON MESSAGE =================
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # chỉ xử lý code trong kênh code
     if message.channel.id == CODE_CHANNEL_ID:
         if message.content.startswith("EP-"):
             data = await api_post(f"{API}/check-code", {
@@ -201,9 +219,7 @@ async def on_message(message):
             if not data:
                 return await message.reply("❌ lỗi server")
 
-            status = data.get("status")
-
-            if status == "ok":
+            if data.get("status") == "ok":
                 await message.reply(f"✔️ +1 point\n💰 Tổng: {data.get('points', 0)}")
             else:
                 await message.reply("❌ code sai")
