@@ -44,6 +44,13 @@ def get_ticket_number():
     save_data(data)
     return f"{data['ticket']:03d}"
 
+# ================= CHECK TICKET =================
+async def has_ticket(guild, user):
+    for channel in guild.text_channels:
+        if channel.topic and str(user.id) in channel.topic:
+            return True
+    return False
+
 # ================= API =================
 async def api_get(url):
     async with session.get(url) as res:
@@ -93,17 +100,18 @@ class WithdrawView(View):
     async def withdraw(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(WithdrawModal())
 
-# ================= TICKET =================
-class TicketPanel(View):
-    def __init__(self):
-        super().__init__(timeout=None)
+# ================= MODAL NHẬP MINECRAFT =================
+class MinecraftModal(Modal, title="Nhập thông tin"):
+    mc_name = TextInput(label="Tên Minecraft", placeholder="Ví dụ: quannmc")
 
-    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green, custom_id="create_ticket")
-    async def create_ticket(self, interaction: discord.Interaction, button: Button):
-
-        await interaction.response.defer(ephemeral=True)
+    async def on_submit(self, interaction: discord.Interaction):
 
         guild = interaction.guild
+
+        # check đã có ticket chưa
+        if await has_ticket(guild, interaction.user):
+            return await interaction.response.send_message("❌ Bạn đã có ticket rồi", ephemeral=True)
+
         number = get_ticket_number()
 
         overwrites = {
@@ -124,17 +132,33 @@ class TicketPanel(View):
             category=category
         )
 
+        # lưu info vào topic
+        channel.topic = f"{interaction.user.id}|{self.mc_name.value}"
+
         embed = discord.Embed(
             title=f"🎫 Ticket #{number}",
-            description=f"{interaction.user.mention} đã tạo ticket",
             color=discord.Color.green()
         )
+
+        embed.add_field(name="👤 User", value=interaction.user.mention, inline=False)
+        embed.add_field(name="🎮 Minecraft", value=self.mc_name.value, inline=False)
 
         await channel.send(
             f"<@&{SUPPORT_ROLE_ID}>",
             embed=embed,
             view=TicketButtons()
         )
+
+        await interaction.response.send_message("✅ Đã tạo ticket!", ephemeral=True)
+
+# ================= TICKET =================
+class TicketPanel(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green, custom_id="create_ticket")
+    async def create_ticket(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(MinecraftModal())
 
 class TicketButtons(View):
     def __init__(self):
