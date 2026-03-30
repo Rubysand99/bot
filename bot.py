@@ -1,9 +1,8 @@
 import discord
 from discord.ext import commands
-from discord.ui import View, Button, Modal, TextInput, Select
+from discord.ui import View, Button, Modal, TextInput
 import aiohttp
 import os
-import json
 
 TOKEN = os.getenv("TOKEN")
 
@@ -14,6 +13,7 @@ ADMIN_IDS = [
 CODE_CHANNEL_ID = 1486967511839801414
 LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
+SUPPORT_ROLE_ID = 1474572393908404305
 
 API = "https://website-kiemtien.onrender.com"
 
@@ -90,6 +90,18 @@ async def has_ticket(guild, user):
             return True
     return False
 
+class TicketCloseView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔒 Đóng Ticket", style=discord.ButtonStyle.red, custom_id="close_ticket")
+    async def close(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Không có quyền", ephemeral=True)
+
+        await interaction.response.send_message("🔒 Đang đóng ticket...", ephemeral=True)
+        await interaction.channel.delete()
+
 class TicketPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -113,7 +125,6 @@ class MinecraftModal(Modal, title="Thông tin"):
 async def create_ticket(interaction, mc):
 
     guild = interaction.guild
-
     category = discord.utils.get(guild.categories, id=TICKET_CATEGORY_ID)
 
     if not category:
@@ -140,13 +151,15 @@ async def create_ticket(interaction, mc):
 
     channel.topic = str(interaction.user.id)
 
-    embed = discord.Embed(title="🎫 Ticket", color=discord.Color.green())
-    embed.add_field(name="User", value=interaction.user.mention)
-    embed.add_field(name="Minecraft", value=mc)
+    embed = discord.Embed(title="🎫 Ticket Support", color=discord.Color.green())
+    embed.add_field(name="👤 User", value=interaction.user.mention, inline=False)
+    embed.add_field(name="🎮 Minecraft", value=mc, inline=False)
 
-    await channel.send(embed=embed)
-
-    await interaction.followup.send(f"✅ Ticket: {channel.mention}")
+    await channel.send(
+        content=f"<@&{SUPPORT_ROLE_ID}> có ticket mới!",
+        embed=embed,
+        view=TicketCloseView()
+    )
 
 # ================= COMMAND =================
 @bot.command()
@@ -176,6 +189,7 @@ async def on_ready():
 
     bot.add_view(TicketPanel())
     bot.add_view(WithdrawView())
+    bot.add_view(TicketCloseView())
 
     print("Bot online:", bot.user)
 
@@ -184,7 +198,6 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # nhập code
     if message.channel.id == CODE_CHANNEL_ID:
         if message.content.startswith("EP-"):
             data = await api_post(f"{API}/check-code", {
@@ -193,7 +206,7 @@ async def on_message(message):
             })
 
             if not data:
-                return await message.reply("❌ lỗi")
+                return await message.reply("❌ lỗi server")
 
             if data["status"] == "ok":
                 await message.reply(f"✔️ +1 point | Tổng: {data['points']}")
