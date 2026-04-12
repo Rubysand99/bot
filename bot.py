@@ -1,10 +1,11 @@
 import discord
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput
-import aiohttp
 import io
 import os
 import json
+import asyncio
+import aiohttp
 
 TOKEN = os.getenv("TOKEN")
 
@@ -17,12 +18,14 @@ ADMIN_IDS = [
 LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
 SUPPORT_ROLE_ID = 1474572393908404305
-CODE_CHANNEL_ID = 1486967511839801414
 
-API = "https://website-kiemtien.onrender.com"
+# 🔴 TikTok config
+TIKTOK_USERNAME = "tuytam156"
+LIVE_CHANNEL_ID = 1486967511839801414
+PING_ROLE_ID = 1464411190808805540
 
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 session = None
 
@@ -44,211 +47,156 @@ def get_ticket_number():
     save_data(data)
     return f"{data['ticket']:03d}"
 
-# ================= CHECK TICKET =================
+# ================= LIVE SAVE =================
+def load_live():
+    try:
+        with open("live.json", "r") as f:
+            return json.load(f)
+    except:
+        return {"live": False}
+
+def save_live(data):
+    with open("live.json", "w") as f:
+        json.dump(data, f)
+
+# ================= API LIVE =================
+async def get_live_data():
+    try:
+        async with session.get(f"https://tiktok-live-checker.onrender.com/live/{TIKTOK_USERNAME}") as res:
+            data = await res.json()
+            return {
+                "live": data.get("live", False),
+                "title": data.get("title", "Đang livestream...")
+            }
+    except:
+        pass
+
+    try:
+        async with session.get(f"https://tiktok-api.vercel.app/live/{TIKTOK_USERNAME}") as res:
+            data = await res.json()
+            return {
+                "live": data.get("live", False),
+                "title": data.get("title", "Đang livestream...")
+            }
+    except:
+        pass
+
+    return {"live": False, "title": ""}
+
+# ================= EMBED =================
+def create_live_embed(title):
+    embed = discord.Embed(
+        title="🔴 LIVESTREAM ĐANG DIỄN RA!",
+        description=f"**{TIKTOK_USERNAME} đang phát trực tiếp**\n\n🎯 {title}",
+        color=discord.Color.red()
+    )
+
+    embed.add_field(
+        name="📺 Xem ngay",
+        value=f"[👉 Click vào đây để xem LIVE](https://www.tiktok.com/@{TIKTOK_USERNAME}/live)",
+        inline=False
+    )
+
+    embed.add_field(name="🔥 Trạng thái", value="Đang trực tiếp 🔴")
+    embed.add_field(name="👤 Creator", value=f"@{TIKTOK_USERNAME}")
+
+    embed.set_thumbnail(url=f"https://unavatar.io/tiktok/{TIKTOK_USERNAME}")
+    embed.set_footer(text="🚀 Nhấn để tham gia ngay!")
+
+    return embed
+
+# ================= TIKTOK CHECK =================
+async def check_tiktok_live():
+    await bot.wait_until_ready()
+
+    data_live = load_live()
+    is_live = data_live.get("live", False)
+
+    while not bot.is_closed():
+        try:
+            data = await get_live_data()
+            live_now = data["live"]
+            title = data["title"]
+
+            channel = bot.get_channel(LIVE_CHANNEL_ID)
+
+            if live_now and not is_live:
+                is_live = True
+                save_live({"live": True})
+
+                if channel:
+                    embed = create_live_embed(title)
+                    await channel.send(content=f"<@&{PING_ROLE_ID}> 🔔", embed=embed)
+
+            elif not live_now and is_live:
+                is_live = False
+                save_live({"live": False})
+
+                if channel:
+                    embed = discord.Embed(
+                        title="⛔ Livestream đã kết thúc",
+                        description=f"{TIKTOK_USERNAME} đã offline.",
+                        color=discord.Color.dark_gray()
+                    )
+                    await channel.send(embed=embed)
+
+        except Exception as e:
+            print("TikTok error:", e)
+
+        await asyncio.sleep(60)
+
+# ================= TICKET =================
 async def has_ticket(guild, user):
     for channel in guild.text_channels:
         if channel.topic and str(user.id) in channel.topic:
             return True
     return False
 
-# ================= API =================
-async def api_get(url):
-    async with session.get(url) as res:
-        return await res.json()
-
-async def api_post(url, data):
-    async with session.post(url, json=data) as res:
-        return await res.json()
-
-async def get_points(user_id):
-    data = await api_get(f"{API}/points/{user_id}")
-    return data if data else {"points": 0}
-
-# ================= WITHDRAW =================
-class WithdrawModal(Modal, title="Rút Point"):
-    amount = TextInput(label="Nhập số point", placeholder="Tối thiểu 2")
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            amount = int(self.amount.value)
-        except:
-            return await interaction.response.send_message("❌ Số không hợp lệ", ephemeral=True)
-
-        if amount < 2:
-            return await interaction.response.send_message("❌ Tối thiểu 2 point", ephemeral=True)
-
-        data = await get_points(interaction.user.id)
-        if amount > data["points"]:
-            return await interaction.response.send_message("❌ Không đủ point", ephemeral=True)
-
-        await api_post(f"{API}/remove-point", {
-            "discordId": str(interaction.user.id),
-            "amount": amount
-        })
-
-        log = bot.get_channel(LOG_CHANNEL)
-        if log:
-            await log.send(f"💸 {interaction.user} rút {amount} point")
-
-        await interaction.response.send_message(f"✅ Đã rút {amount} point", ephemeral=True)
-
-class WithdrawView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="💸 Rút point", style=discord.ButtonStyle.green, custom_id="withdraw_btn")
-    async def withdraw(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(WithdrawModal())
-
-# ================= MODAL NHẬP MINECRAFT =================
 class MinecraftModal(Modal, title="Nhập thông tin"):
-    mc_name = TextInput(label="Tên Minecraft", placeholder="Ví dụ: quannmc")
+    mc_name = TextInput(label="Tên Minecraft")
 
     async def on_submit(self, interaction: discord.Interaction):
-
-        guild = interaction.guild
-
-        # check đã có ticket chưa
-        if await has_ticket(guild, interaction.user):
-            return await interaction.response.send_message("❌ Bạn đã có ticket rồi", ephemeral=True)
+        if await has_ticket(interaction.guild, interaction.user):
+            return await interaction.response.send_message("❌ Bạn đã có ticket", ephemeral=True)
 
         number = get_ticket_number()
 
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(view_channel=True)
         }
 
-        for admin_id in ADMIN_IDS:
-            member = guild.get_member(admin_id)
-            if member:
-                overwrites[member] = discord.PermissionOverwrite(view_channel=True)
+        category = discord.utils.get(interaction.guild.categories, id=TICKET_CATEGORY_ID)
 
-        category = discord.utils.get(guild.categories, id=TICKET_CATEGORY_ID)
-
-        channel = await guild.create_text_channel(
+        channel = await interaction.guild.create_text_channel(
             name=f"ticket-{number}",
             overwrites=overwrites,
             category=category
         )
 
-        # lưu info vào topic
-        channel.topic = f"{interaction.user.id}|{self.mc_name.value}"
+        channel.topic = str(interaction.user.id)
 
-        embed = discord.Embed(
-            title=f"🎫 Ticket #{number}",
-            color=discord.Color.green()
-        )
+        await channel.send(f"<@&{SUPPORT_ROLE_ID}> Ticket mới!")
 
-        embed.add_field(name="👤 User", value=interaction.user.mention, inline=False)
-        embed.add_field(name="🎮 Minecraft", value=self.mc_name.value, inline=False)
+        await interaction.response.send_message("✅ Đã tạo ticket", ephemeral=True)
 
-        await channel.send(
-            f"<@&{SUPPORT_ROLE_ID}>",
-            embed=embed,
-            view=TicketButtons()
-        )
-
-        await interaction.response.send_message("✅ Đã tạo ticket!", ephemeral=True)
-
-# ================= TICKET =================
 class TicketPanel(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green, custom_id="create_ticket")
+    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green)
     async def create_ticket(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(MinecraftModal())
 
-class TicketButtons(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="🔒 Đóng ticket", style=discord.ButtonStyle.red, custom_id="close_ticket")
-    async def close_ticket(self, interaction: discord.Interaction, button: Button):
-
-        if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Không có quyền", ephemeral=True)
-
-        await interaction.response.defer()
-
-        messages = []
-        async for msg in interaction.channel.history(limit=None):
-            messages.append(f"<p><b>{msg.author}</b>: {msg.content}</p>")
-
-        html = f"<html><body>{''.join(messages[::-1])}</body></html>"
-
-        file = discord.File(io.BytesIO(html.encode()), filename="transcript.html")
-
-        log = bot.get_channel(LOG_CHANNEL)
-        if log:
-            await log.send(f"📄 Transcript {interaction.channel.name}", file=file)
-
-        await interaction.channel.delete()
-
 # ================= COMMAND =================
-@bot.command()
-async def point(ctx):
-    data = await get_points(ctx.author.id)
-
-    embed = discord.Embed(title="💰 Point", color=discord.Color.gold())
-    embed.add_field(name="User", value=ctx.author.mention)
-    embed.add_field(name="Point", value=data["points"])
-
-    await ctx.reply(embed=embed, view=WithdrawView())
-
 @bot.command()
 async def panel(ctx):
     if ctx.author.id not in ADMIN_IDS:
         return
+    await ctx.send("🎫 Tạo ticket", view=TicketPanel())
 
-    embed = discord.Embed(title="🎫 Tạo Ticket", color=discord.Color.blue())
-    await ctx.send(embed=embed, view=TicketPanel())
-
+# 🧪 TEST COMMAND
 @bot.command()
-async def close(ctx):
-    if ctx.author.id not in ADMIN_IDS:
-        return await ctx.reply("❌ Bạn không có quyền")
-
-    if not ctx.channel.name.startswith("ticket"):
-        return await ctx.reply("❌ Không phải kênh ticket")
-
-    messages = []
-    async for msg in ctx.channel.history(limit=None):
-        messages.append(f"<p><b>{msg.author}</b>: {msg.content}</p>")
-
-    html = f"<html><body>{''.join(messages[::-1])}</body></html>"
-
-    file = discord.File(io.BytesIO(html.encode()), filename="transcript.html")
-
-    log = bot.get_channel(LOG_CHANNEL)
-    if log:
-        await log.send(f"📄 Transcript {ctx.channel.name}", file=file)
-
-    await ctx.channel.delete()
-
-# ================= ON MESSAGE =================
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-
-    if message.channel.id == CODE_CHANNEL_ID:
-        if message.content.startswith("EP-"):
-            data = await api_post(f"{API}/check-code", {
-                "code": message.content,
-                "discordId": str(message.author.id)
-            })
-
-            if not data:
-                return await message.reply("❌ lỗi server")
-
-            if data.get("status") == "ok":
-                await message.reply(f"✔️ +1 point\n💰 Tổng: {data.get('points', 0)}")
-            else:
-                await message.reply("❌ code sai")
-
-    await bot.process_commands(message)
+async def test(ctx):
+    embed = create_live_embed("Đây là test livestream 🔥")
+    await ctx.send(content=f"<@&{PING_ROLE_ID}> 🔔", embed=embed)
 
 # ================= READY =================
 @bot.event
@@ -257,8 +205,7 @@ async def on_ready():
     session = aiohttp.ClientSession()
 
     bot.add_view(TicketPanel())
-    bot.add_view(TicketButtons())
-    bot.add_view(WithdrawView())
+    bot.loop.create_task(check_tiktok_live())
 
     print(f"Bot online: {bot.user}")
 
