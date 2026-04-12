@@ -6,6 +6,8 @@ import os
 import json
 import asyncio
 import aiohttp
+import time
+import matplotlib.pyplot as plt
 
 TOKEN = os.getenv("TOKEN")
 
@@ -16,10 +18,10 @@ ADMIN_IDS = [
 ]
 
 LOG_CHANNEL = 1482234024868053083
+LIVE_LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
 SUPPORT_ROLE_ID = 1474572393908404305
 
-# 🔴 TikTok config
 TIKTOK_USERNAME = "tuytam156"
 LIVE_CHANNEL_ID = 1486967511839801414
 PING_ROLE_ID = 1464411190808805540
@@ -28,6 +30,10 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 session = None
+live_message_id = None
+
+viewer_history = []
+time_history = []
 
 # ================= DATA =================
 def load_data():
@@ -47,7 +53,6 @@ def get_ticket_number():
     save_data(data)
     return f"{data['ticket']:03d}"
 
-# ================= LIVE SAVE =================
 def load_live():
     try:
         with open("live.json", "r") as f:
@@ -59,14 +64,15 @@ def save_live(data):
     with open("live.json", "w") as f:
         json.dump(data, f)
 
-# ================= API LIVE =================
+# ================= API =================
 async def get_live_data():
     try:
         async with session.get(f"https://tiktok-live-checker.onrender.com/live/{TIKTOK_USERNAME}") as res:
             data = await res.json()
             return {
                 "live": data.get("live", False),
-                "title": data.get("title", "Đang livestream...")
+                "title": data.get("title", "Đang livestream..."),
+                "viewers": data.get("viewers", 0)
             }
     except:
         pass
@@ -76,137 +82,142 @@ async def get_live_data():
             data = await res.json()
             return {
                 "live": data.get("live", False),
-                "title": data.get("title", "Đang livestream...")
+                "title": data.get("title", "Đang livestream..."),
+                "viewers": data.get("viewers", 0)
             }
     except:
         pass
 
-    return {"live": False, "title": ""}
+    return {"live": False, "title": "", "viewers": 0}
 
 # ================= EMBED =================
-def create_live_embed(title):
+def create_live_embed(title, viewers):
     embed = discord.Embed(
         title="🔴 LIVESTREAM ĐANG DIỄN RA!",
-        description=f"**{TIKTOK_USERNAME} đang phát trực tiếp**\n\n🎯 {title}",
+        description=f"🎯 {title}",
         color=discord.Color.red()
     )
 
+    embed.add_field(name="👀 Người xem", value=str(viewers))
     embed.add_field(
         name="📺 Xem ngay",
-        value=f"[👉 Click vào đây để xem LIVE](https://www.tiktok.com/@{TIKTOK_USERNAME}/live)",
+        value=f"https://www.tiktok.com/@{TIKTOK_USERNAME}/live",
         inline=False
     )
 
-    embed.add_field(name="🔥 Trạng thái", value="Đang trực tiếp 🔴")
-    embed.add_field(name="👤 Creator", value=f"@{TIKTOK_USERNAME}")
-
     embed.set_thumbnail(url=f"https://unavatar.io/tiktok/{TIKTOK_USERNAME}")
-    embed.set_footer(text="🚀 Nhấn để tham gia ngay!")
+    embed.set_footer(text="Auto update mỗi 10s")
 
     return embed
 
-# ================= TIKTOK CHECK =================
+# ================= LIVE =================
 async def check_tiktok_live():
+    global live_message_id
+
     await bot.wait_until_ready()
 
     data_live = load_live()
     is_live = data_live.get("live", False)
 
     while not bot.is_closed():
+        await process_live_check(is_live)
+        data_live = load_live()
+        is_live = data_live.get("live", False)
+        await asyncio.sleep(10)
+
+async def process_live_check(is_live):
+    global live_message_id
+
+    data = await get_live_data()
+    channel = bot.get_channel(LIVE_CHANNEL_ID)
+    log_channel = bot.get_channel(LIVE_LOG_CHANNEL)
+
+    live_now = data["live"]
+    title = data["title"]
+    viewers = data["viewers"]
+
+    # START LIVE
+    if live_now and not is_live:
+        save_live({"live": True})
+
+        embed = create_live_embed(title, viewers)
+        msg = await channel.send(content=f"<@&{PING_ROLE_ID}> 🔔", embed=embed)
+        live_message_id = msg.id
+
+        if log_channel:
+            await log_channel.send(f"🔴 START LIVE\nTitle: {title}")
+
+    # UPDATE
+    elif live_now and is_live and live_message_id:
+        viewer_history.append(viewers)
+        time_history.append(int(time.time()))
+
         try:
-            data = await get_live_data()
-            live_now = data["live"]
-            title = data["title"]
+            msg = await channel.fetch_message(live_message_id)
+            embed = create_live_embed(title, viewers)
+            await msg.edit(embed=embed)
+        except:
+            pass
 
-            channel = bot.get_channel(LIVE_CHANNEL_ID)
+    # OFFLINE
+    elif not live_now and is_live:
+        save_live({"live": False})
 
-            if live_now and not is_live:
-                is_live = True
-                save_live({"live": True})
+        await channel.send(embed=discord.Embed(
+            title="⛔ Livestream đã kết thúc",
+            color=discord.Color.dark_gray()
+        ))
 
-                if channel:
-                    embed = create_live_embed(title)
-                    await channel.send(content=f"<@&{PING_ROLE_ID}> 🔔", embed=embed)
+        # chart
+        try:
+            plt.figure()
+            plt.plot(viewer_history)
+            plt.xlabel("Time (10s)")
+            plt.ylabel("Viewer")
+            plt.title("Viewer Chart")
 
-            elif not live_now and is_live:
-                is_live = False
-                save_live({"live": False})
+            file_path = "chart.png"
+            plt.savefig(file_path)
+            plt.close()
 
-                if channel:
-                    embed = discord.Embed(
-                        title="⛔ Livestream đã kết thúc",
-                        description=f"{TIKTOK_USERNAME} đã offline.",
-                        color=discord.Color.dark_gray()
-                    )
-                    await channel.send(embed=embed)
-
+            if log_channel:
+                await log_channel.send(file=discord.File(file_path))
         except Exception as e:
-            print("TikTok error:", e)
+            print("Chart error:", e)
 
-        await asyncio.sleep(60)
-
-# ================= TICKET =================
-async def has_ticket(guild, user):
-    for channel in guild.text_channels:
-        if channel.topic and str(user.id) in channel.topic:
-            return True
-    return False
-
-class MinecraftModal(Modal, title="Nhập thông tin"):
-    mc_name = TextInput(label="Tên Minecraft")
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if await has_ticket(interaction.guild, interaction.user):
-            return await interaction.response.send_message("❌ Bạn đã có ticket", ephemeral=True)
-
-        number = get_ticket_number()
-
-        overwrites = {
-            interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(view_channel=True)
-        }
-
-        category = discord.utils.get(interaction.guild.categories, id=TICKET_CATEGORY_ID)
-
-        channel = await interaction.guild.create_text_channel(
-            name=f"ticket-{number}",
-            overwrites=overwrites,
-            category=category
-        )
-
-        channel.topic = str(interaction.user.id)
-
-        await channel.send(f"<@&{SUPPORT_ROLE_ID}> Ticket mới!")
-
-        await interaction.response.send_message("✅ Đã tạo ticket", ephemeral=True)
-
-class TicketPanel(View):
-    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green)
-    async def create_ticket(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(MinecraftModal())
+        viewer_history.clear()
+        time_history.clear()
+        live_message_id = None
 
 # ================= COMMAND =================
 @bot.command()
-async def panel(ctx):
-    if ctx.author.id not in ADMIN_IDS:
-        return
-    await ctx.send("🎫 Tạo ticket", view=TicketPanel())
-
-# 🧪 TEST COMMAND
-@bot.command()
 async def test(ctx):
-    embed = create_live_embed("Đây là test livestream 🔥")
+    embed = create_live_embed("Test livestream", 999)
     await ctx.send(content=f"<@&{PING_ROLE_ID}> 🔔", embed=embed)
+
+@bot.command()
+async def status(ctx):
+    data = await get_live_data()
+    await ctx.send(f"Live: {data['live']}\nViewer: {data['viewers']}\nTitle: {data['title']}")
+
+@bot.command()
+async def forcecheck(ctx):
+    await process_live_check(load_live().get("live", False))
+    await ctx.send("✅ Checked")
+
+@bot.command()
+async def chart(ctx):
+    if os.path.exists("chart.png"):
+        await ctx.send(file=discord.File("chart.png"))
+    else:
+        await ctx.send("❌ Chưa có dữ liệu")
 
 # ================= READY =================
 @bot.event
 async def on_ready():
     global session
     session = aiohttp.ClientSession()
-
-    bot.add_view(TicketPanel())
     bot.loop.create_task(check_tiktok_live())
-
     print(f"Bot online: {bot.user}")
 
 # ================= RUN =================
