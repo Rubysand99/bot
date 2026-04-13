@@ -7,7 +7,7 @@ import json
 import asyncio
 import aiohttp
 import time
-import matplotlib.pyplot as plt
+import requests
 
 TOKEN = os.getenv("TOKEN")
 
@@ -18,7 +18,6 @@ ADMIN_IDS = [
 ]
 
 LOG_CHANNEL = 1482234024868053083
-LIVE_LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
 SUPPORT_ROLE_ID = 1474572393908404305
 
@@ -33,7 +32,6 @@ session = None
 live_message_id = None
 
 viewer_history = []
-time_history = []
 
 # ================= DATA =================
 def load_data():
@@ -68,27 +66,9 @@ def save_live(data):
 async def get_live_data():
     try:
         async with session.get(f"https://tiktok-live-checker.onrender.com/live/{TIKTOK_USERNAME}") as res:
-            data = await res.json()
-            return {
-                "live": data.get("live", False),
-                "title": data.get("title", "Đang livestream..."),
-                "viewers": data.get("viewers", 0)
-            }
+            return await res.json()
     except:
-        pass
-
-    try:
-        async with session.get(f"https://tiktok-api.vercel.app/live/{TIKTOK_USERNAME}") as res:
-            data = await res.json()
-            return {
-                "live": data.get("live", False),
-                "title": data.get("title", "Đang livestream..."),
-                "viewers": data.get("viewers", 0)
-            }
-    except:
-        pass
-
-    return {"live": False, "title": "", "viewers": 0}
+        return {"live": False}
 
 # ================= EMBED =================
 def create_live_embed(title, viewers):
@@ -103,9 +83,32 @@ def create_live_embed(title, viewers):
         value=f"https://www.tiktok.com/@{TIKTOK_USERNAME}/live",
         inline=False
     )
-    embed.set_thumbnail(url=f"https://unavatar.io/tiktok/{TIKTOK_USERNAME}")
-    embed.set_footer(text="Auto update mỗi 10s")
+    embed.set_footer(text="Update mỗi 10s")
     return embed
+
+# ================= CHART (NO MATPLOTLIB) =================
+def create_chart():
+    if not viewer_history:
+        return None
+
+    chart_url = "https://quickchart.io/chart"
+
+    data = {
+        "type": "line",
+        "data": {
+            "labels": list(range(len(viewer_history))),
+            "datasets": [{
+                "label": "Viewer",
+                "data": viewer_history
+            }]
+        }
+    }
+
+    try:
+        res = requests.post(chart_url, json={"chart": data})
+        return io.BytesIO(res.content)
+    except:
+        return None
 
 # ================= TICKET =================
 async def has_ticket(guild, user):
@@ -139,38 +142,45 @@ class MinecraftModal(Modal, title="Nhập thông tin"):
         channel.topic = str(interaction.user.id)
 
         await channel.send(f"<@&{SUPPORT_ROLE_ID}> Ticket mới!")
-
         await interaction.response.send_message("✅ Đã tạo ticket", ephemeral=True)
 
 class TicketPanel(View):
-    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green)
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="🎫 Tạo Ticket",
+        style=discord.ButtonStyle.green,
+        custom_id="create_ticket"
+    )
     async def create_ticket(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(MinecraftModal())
 
 # ================= LIVE =================
-async def process_live_check(is_live):
+async def process_live():
     global live_message_id
 
     data = await get_live_data()
     channel = bot.get_channel(LIVE_CHANNEL_ID)
-    log_channel = bot.get_channel(LIVE_LOG_CHANNEL)
 
-    live_now = data["live"]
-    title = data["title"]
-    viewers = data["viewers"]
+    live = data.get("live", False)
+    title = data.get("title", "Đang livestream")
+    viewers = data.get("viewers", 0)
 
-    if live_now and not is_live:
+    saved = load_live()
+
+    if live and not saved["live"]:
         save_live({"live": True})
-        embed = create_live_embed(title, viewers)
-        msg = await channel.send(content=f"<@&{PING_ROLE_ID}> 🔔", embed=embed)
+        viewer_history.clear()
+
+        msg = await channel.send(
+            content=f"<@&{PING_ROLE_ID}> 🔔",
+            embed=create_live_embed(title, viewers)
+        )
         live_message_id = msg.id
 
-        if log_channel:
-            await log_channel.send(f"🔴 START LIVE: {title}")
-
-    elif live_now and is_live and live_message_id:
+    elif live and saved["live"] and live_message_id:
         viewer_history.append(viewers)
-        time_history.append(int(time.time()))
 
         try:
             msg = await channel.fetch_message(live_message_id)
@@ -178,7 +188,7 @@ async def process_live_check(is_live):
         except:
             pass
 
-    elif not live_now and is_live:
+    elif not live and saved["live"]:
         save_live({"live": False})
 
         await channel.send(embed=discord.Embed(
@@ -186,30 +196,20 @@ async def process_live_check(is_live):
             color=discord.Color.dark_gray()
         ))
 
-        try:
-            plt.figure()
-            plt.plot(viewer_history)
-            plt.xlabel("Time (10s)")
-            plt.ylabel("Viewer")
-            plt.title("Viewer Chart")
-
-            file_path = "chart.png"
-            plt.savefig(file_path)
-            plt.close()
-
-            if log_channel:
-                await log_channel.send(file=discord.File(file_path))
-        except:
-            pass
+        chart = create_chart()
+        if chart:
+            await bot.get_channel(LOG_CHANNEL).send(
+                "📊 Biểu đồ viewer",
+                file=discord.File(chart, filename="chart.png")
+            )
 
         viewer_history.clear()
-        time_history.clear()
         live_message_id = None
 
-async def check_tiktok_live():
+async def live_loop():
     await bot.wait_until_ready()
-    while not bot.is_closed():
-        await process_live_check(load_live().get("live", False))
+    while True:
+        await process_live()
         await asyncio.sleep(10)
 
 # ================= COMMAND =================
@@ -225,7 +225,7 @@ async def close(ctx):
         return await ctx.reply("❌ Không có quyền")
 
     if not ctx.channel.name.startswith("ticket"):
-        return await ctx.reply("❌ Không phải kênh ticket")
+        return await ctx.reply("❌ Không phải ticket")
 
     messages = []
     async for msg in ctx.channel.history(limit=None):
@@ -243,24 +243,15 @@ async def close(ctx):
 
 @bot.command()
 async def test(ctx):
-    await ctx.send(content=f"<@&{PING_ROLE_ID}> 🔔", embed=create_live_embed("Test livestream", 36))
-
-@bot.command()
-async def status(ctx):
-    data = await get_live_data()
-    await ctx.send(f"Live: {data['live']} | Viewer: {data['viewers']}")
+    await ctx.send(
+        content=f"<@&{PING_ROLE_ID}> 🔔",
+        embed=create_live_embed("Test livestream", 999)
+    )
 
 @bot.command()
 async def check(ctx):
-    await process_live_check(load_live().get("live", False))
+    await process_live()
     await ctx.send("✅ Checked")
-
-@bot.command()
-async def chart(ctx):
-    if os.path.exists("chart.png"):
-        await ctx.send(file=discord.File("chart.png"))
-    else:
-        await ctx.send("❌ Chưa có dữ liệu")
 
 @bot.command()
 async def help(ctx):
@@ -268,9 +259,7 @@ async def help(ctx):
     embed.add_field(name=".panel", value="Tạo ticket", inline=False)
     embed.add_field(name=".close", value="Đóng ticket + lưu transcript", inline=False)
     embed.add_field(name=".test", value="Test live", inline=False)
-    embed.add_field(name=".status", value="Trạng thái live", inline=False)
-    embed.add_field(name=".check", value="Check ngay", inline=False)
-    embed.add_field(name=".chart", value="Xem biểu đồ", inline=False)
+    embed.add_field(name=".check", value="Check live", inline=False)
     await ctx.send(embed=embed)
 
 # ================= READY =================
@@ -279,13 +268,8 @@ async def on_ready():
     global session
     session = aiohttp.ClientSession()
     bot.add_view(TicketPanel())
-    bot.loop.create_task(check_tiktok_live())
+    bot.loop.create_task(live_loop())
     print(f"Bot online: {bot.user}")
-
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound):
-        return
 
 # ================= RUN =================
 bot.run(TOKEN)
