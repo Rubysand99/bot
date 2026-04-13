@@ -6,7 +6,6 @@ import os
 import json
 import asyncio
 import aiohttp
-import time
 import requests
 
 TOKEN = os.getenv("TOKEN")
@@ -30,7 +29,6 @@ bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 
 session = None
 live_message_id = None
-
 viewer_history = []
 
 # ================= DATA =================
@@ -70,28 +68,10 @@ async def get_live_data():
     except:
         return {"live": False}
 
-# ================= EMBED =================
-def create_live_embed(title, viewers):
-    embed = discord.Embed(
-        title="🔴 LIVESTREAM ĐANG DIỄN RA!",
-        description=f"🎯 {title}",
-        color=discord.Color.red()
-    )
-    embed.add_field(name="👀 Người xem", value=str(viewers))
-    embed.add_field(
-        name="📺 Xem ngay",
-        value=f"https://www.tiktok.com/@{TIKTOK_USERNAME}/live",
-        inline=False
-    )
-    embed.set_footer(text="Update mỗi 10s")
-    return embed
-
-# ================= CHART (NO MATPLOTLIB) =================
-def create_chart():
-    if not viewer_history:
+# ================= CHART =================
+def create_chart_url():
+    if len(viewer_history) < 2:
         return None
-
-    chart_url = "https://quickchart.io/chart"
 
     data = {
         "type": "line",
@@ -104,11 +84,30 @@ def create_chart():
         }
     }
 
-    try:
-        res = requests.post(chart_url, json={"chart": data})
-        return io.BytesIO(res.content)
-    except:
-        return None
+    return f"https://quickchart.io/chart?c={json.dumps(data)}"
+
+# ================= EMBED =================
+def create_live_embed(title, viewers):
+    embed = discord.Embed(
+        title="🔴 LIVESTREAM ĐANG DIỄN RA!",
+        description=f"🎯 {title}",
+        color=discord.Color.red()
+    )
+
+    embed.add_field(name="👀 Người xem", value=str(viewers))
+
+    chart_url = create_chart_url()
+    if chart_url:
+        embed.set_image(url=chart_url)
+
+    embed.add_field(
+        name="📺 Xem ngay",
+        value=f"https://www.tiktok.com/@{TIKTOK_USERNAME}/live",
+        inline=False
+    )
+
+    embed.set_footer(text="Update mỗi 10s")
+    return embed
 
 # ================= TICKET =================
 async def has_ticket(guild, user):
@@ -148,11 +147,7 @@ class TicketPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="🎫 Tạo Ticket",
-        style=discord.ButtonStyle.green,
-        custom_id="create_ticket"
-    )
+    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green, custom_id="create_ticket")
     async def create_ticket(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(MinecraftModal())
 
@@ -164,13 +159,20 @@ async def process_live():
     channel = bot.get_channel(LIVE_CHANNEL_ID)
 
     live = data.get("live", False)
-    title = data.get("title", "Đang livestream")
+    title = data.get("title", "Livestream")
     viewers = data.get("viewers", 0)
 
     saved = load_live()
 
-    if live and not saved["live"]:
-        save_live({"live": True})
+    print(f"[LIVE] {live} | {title} | {viewers}")
+
+    if live and not saved.get("live"):
+        save_live({
+            "live": True,
+            "title": title,
+            "viewers": viewers
+        })
+
         viewer_history.clear()
 
         msg = await channel.send(
@@ -179,7 +181,13 @@ async def process_live():
         )
         live_message_id = msg.id
 
-    elif live and saved["live"] and live_message_id:
+    elif live and saved.get("live"):
+        save_live({
+            "live": True,
+            "title": title,
+            "viewers": viewers
+        })
+
         viewer_history.append(viewers)
 
         try:
@@ -188,20 +196,17 @@ async def process_live():
         except:
             pass
 
-    elif not live and saved["live"]:
-        save_live({"live": False})
+    elif not live and saved.get("live"):
+        save_live({
+            "live": False,
+            "title": "",
+            "viewers": 0
+        })
 
         await channel.send(embed=discord.Embed(
             title="⛔ Livestream đã kết thúc",
             color=discord.Color.dark_gray()
         ))
-
-        chart = create_chart()
-        if chart:
-            await bot.get_channel(LOG_CHANNEL).send(
-                "📊 Biểu đồ viewer",
-                file=discord.File(chart, filename="chart.png")
-            )
 
         viewer_history.clear()
         live_message_id = None
@@ -213,6 +218,11 @@ async def live_loop():
         await asyncio.sleep(10)
 
 # ================= COMMAND =================
+@bot.command()
+async def ping(ctx):
+    latency = round(bot.latency * 1000)
+    await ctx.send(f"🏓 Pong! `{latency}ms`")
+
 @bot.command()
 async def panel(ctx):
     if ctx.author.id not in ADMIN_IDS:
@@ -256,6 +266,7 @@ async def check(ctx):
 @bot.command()
 async def help(ctx):
     embed = discord.Embed(title="📖 Help", color=discord.Color.blue())
+    embed.add_field(name=".ping", value="Xem độ trễ bot", inline=False)
     embed.add_field(name=".panel", value="Tạo ticket", inline=False)
     embed.add_field(name=".close", value="Đóng ticket + lưu transcript", inline=False)
     embed.add_field(name=".test", value="Test live", inline=False)
@@ -267,8 +278,11 @@ async def help(ctx):
 async def on_ready():
     global session
     session = aiohttp.ClientSession()
+
     bot.add_view(TicketPanel())
+
     bot.loop.create_task(live_loop())
+
     print(f"Bot online: {bot.user}")
 
 # ================= RUN =================
