@@ -1,37 +1,51 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import View, Button, Modal, TextInput
-import io
-import os
-import json
-import asyncio
 import aiohttp
-import requests
+import asyncio
+import json
+import os
+import io
+import websockets
 
 TOKEN = os.getenv("TOKEN")
 
-ADMIN_IDS = [
-    846332174734983219,
-    1464961078042689588,
-    1438384178755276923
-]
-
+# ===== CONFIG =====
+ADMIN_IDS = [846332174734983219]
 LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
 SUPPORT_ROLE_ID = 1474572393908404305
 
-TIKTOK_USERNAME = "tuytam156"
 LIVE_CHANNEL_ID = 1486967511839801414
 PING_ROLE_ID = 1464411190808805540
+
+TIKTOK_USER = "tuytam156"
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 
 session = None
-live_message_id = None
-viewer_history = []
 
-# ================= DATA =================
+# ===== WEBSOCKET =====
+clients = set()
+
+async def ws_handler(websocket):
+    clients.add(websocket)
+    try:
+        async for _ in websocket:
+            pass
+    finally:
+        clients.remove(websocket)
+
+async def send_ws(data):
+    if clients:
+        await asyncio.gather(*[c.send(data) for c in clients])
+
+async def start_ws():
+    server = await websockets.serve(ws_handler, "0.0.0.0", 8765)
+    print("WebSocket chạy port 8765")
+
+# ===== DATA =====
 def load_data():
     try:
         with open("data.json", "r") as f:
@@ -49,79 +63,20 @@ def get_ticket_number():
     save_data(data)
     return f"{data['ticket']:03d}"
 
-def load_live():
-    try:
-        with open("live.json", "r") as f:
-            return json.load(f)
-    except:
-        return {"live": False}
-
-def save_live(data):
-    with open("live.json", "w") as f:
-        json.dump(data, f)
-
-# ================= API =================
-async def get_live_data():
-    try:
-        async with session.get(f"https://tiktok-live-checker.onrender.com/live/{TIKTOK_USERNAME}") as res:
-            return await res.json()
-    except:
-        return {"live": False}
-
-# ================= CHART =================
-def create_chart_url():
-    if len(viewer_history) < 2:
-        return None
-
-    data = {
-        "type": "line",
-        "data": {
-            "labels": list(range(len(viewer_history))),
-            "datasets": [{
-                "label": "Viewer",
-                "data": viewer_history
-            }]
-        }
-    }
-
-    return f"https://quickchart.io/chart?c={json.dumps(data)}"
-
-# ================= EMBED =================
-def create_live_embed(title, viewers):
-    embed = discord.Embed(
-        title="🔴 LIVESTREAM ĐANG DIỄN RA!",
-        description=f"🎯 {title}",
-        color=discord.Color.red()
-    )
-
-    embed.add_field(name="👀 Người xem", value=str(viewers))
-
-    chart_url = create_chart_url()
-    if chart_url:
-        embed.set_image(url=chart_url)
-
-    embed.add_field(
-        name="📺 Xem ngay",
-        value=f"https://www.tiktok.com/@{TIKTOK_USERNAME}/live",
-        inline=False
-    )
-
-    embed.set_footer(text="Update mỗi 10s")
-    return embed
-
-# ================= TICKET =================
+# ===== CHECK TICKET =====
 async def has_ticket(guild, user):
-    for channel in guild.text_channels:
-        if channel.topic and str(user.id) in channel.topic:
+    for ch in guild.text_channels:
+        if ch.topic and str(user.id) in ch.topic:
             return True
     return False
 
+# ===== TICKET =====
 class MinecraftModal(Modal, title="Nhập thông tin"):
     mc_name = TextInput(label="Tên Minecraft")
 
     async def on_submit(self, interaction: discord.Interaction):
         if await has_ticket(interaction.guild, interaction.user):
-            return await interaction.response.send_message("❌ Bạn đã có ticket", ephemeral=True)
+            return await interaction.response.send_message("❌ Đã có ticket", ephemeral=True)
 
         number = get_ticket_number()
 
@@ -130,119 +85,78 @@ class MinecraftModal(Modal, title="Nhập thông tin"):
             interaction.user: discord.PermissionOverwrite(view_channel=True)
         }
 
+        for admin in ADMIN_IDS:
+            member = interaction.guild.get_member(admin)
+            if member:
+                overwrites[member] = discord.PermissionOverwrite(view_channel=True)
+
         category = discord.utils.get(interaction.guild.categories, id=TICKET_CATEGORY_ID)
 
         channel = await interaction.guild.create_text_channel(
-            name=f"ticket-{number}",
+            f"ticket-{number}",
             overwrites=overwrites,
             category=category
         )
 
-        channel.topic = str(interaction.user.id)
+        await channel.edit(topic=f"{interaction.user.id}|{self.mc_name.value}")
 
-        await channel.send(f"<@&{SUPPORT_ROLE_ID}> Ticket mới!")
+        embed = discord.Embed(title=f"🎫 Ticket #{number}", color=0x00ffff)
+        embed.add_field(name="User", value=interaction.user.mention)
+        embed.add_field(name="Minecraft", value=self.mc_name.value)
+
+        await channel.send(f"<@&{SUPPORT_ROLE_ID}>", embed=embed, view=TicketButtons())
         await interaction.response.send_message("✅ Đã tạo ticket", ephemeral=True)
 
 class TicketPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green, custom_id="create_ticket")
-    async def create_ticket(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="🎫 Tạo Ticket", style=discord.ButtonStyle.green, custom_id="ticket_btn")
+    async def create(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(MinecraftModal())
 
-# ================= LIVE =================
-async def process_live():
-    global live_message_id
+class TicketButtons(View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
-    data = await get_live_data()
-    channel = bot.get_channel(LIVE_CHANNEL_ID)
+    @discord.ui.button(label="🔒 Đóng", style=discord.ButtonStyle.red, custom_id="close_btn")
+    async def close(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Không có quyền", ephemeral=True)
 
-    live = data.get("live", False)
-    title = data.get("title", "Livestream")
-    viewers = data.get("viewers", 0)
+        await interaction.response.defer()
 
-    saved = load_live()
+        messages = []
+        async for msg in interaction.channel.history(limit=None):
+            messages.append(f"<p><b>{msg.author}</b>: {msg.content}</p>")
 
-    print(f"[LIVE] {live} | {title} | {viewers}")
+        html = f"<html><body>{''.join(messages[::-1])}</body></html>"
+        file = discord.File(io.BytesIO(html.encode()), filename="transcript.html")
 
-    if live and not saved.get("live"):
-        save_live({
-            "live": True,
-            "title": title,
-            "viewers": viewers
-        })
+        log = bot.get_channel(LOG_CHANNEL)
+        if log:
+            await log.send(f"📄 Transcript {interaction.channel.name}", file=file)
 
-        viewer_history.clear()
+        await interaction.channel.delete()
 
-        msg = await channel.send(
-            content=f"<@&{PING_ROLE_ID}> 🔔",
-            embed=create_live_embed(title, viewers)
-        )
-        live_message_id = msg.id
-
-    elif live and saved.get("live"):
-        save_live({
-            "live": True,
-            "title": title,
-            "viewers": viewers
-        })
-
-        viewer_history.append(viewers)
-
-        try:
-            msg = await channel.fetch_message(live_message_id)
-            await msg.edit(embed=create_live_embed(title, viewers))
-        except:
-            pass
-
-    elif not live and saved.get("live"):
-        save_live({
-            "live": False,
-            "title": "",
-            "viewers": 0
-        })
-
-        await channel.send(embed=discord.Embed(
-            title="⛔ Livestream đã kết thúc",
-            color=discord.Color.dark_gray()
-        ))
-
-        viewer_history.clear()
-        live_message_id = None
-
-async def live_loop():
-    await bot.wait_until_ready()
-    while True:
-        await process_live()
-        await asyncio.sleep(10)
-
-# ================= COMMAND =================
-@bot.command()
-async def ping(ctx):
-    latency = round(bot.latency * 1000)
-    await ctx.send(f"🏓 Pong! `{latency}ms`")
-
+# ===== COMMAND =====
 @bot.command()
 async def panel(ctx):
     if ctx.author.id not in ADMIN_IDS:
-        return await ctx.send("❌ Không có quyền")
-    await ctx.send("🎫 Tạo ticket", view=TicketPanel())
+        return
+    embed = discord.Embed(title="🎫 Ticket", color=0x00ffff)
+    await ctx.send(embed=embed, view=TicketPanel())
 
 @bot.command()
 async def close(ctx):
     if ctx.author.id not in ADMIN_IDS:
-        return await ctx.reply("❌ Không có quyền")
-
-    if not ctx.channel.name.startswith("ticket"):
-        return await ctx.reply("❌ Không phải ticket")
+        return
 
     messages = []
     async for msg in ctx.channel.history(limit=None):
         messages.append(f"<p><b>{msg.author}</b>: {msg.content}</p>")
 
     html = f"<html><body>{''.join(messages[::-1])}</body></html>"
-
     file = discord.File(io.BytesIO(html.encode()), filename="transcript.html")
 
     log = bot.get_channel(LOG_CHANNEL)
@@ -252,38 +166,70 @@ async def close(ctx):
     await ctx.channel.delete()
 
 @bot.command()
-async def test(ctx):
-    await ctx.send(
-        content=f"<@&{PING_ROLE_ID}> 🔔",
-        embed=create_live_embed("Test livestream", 999)
-    )
-
-@bot.command()
-async def check(ctx):
-    await process_live()
-    await ctx.send("✅ Checked")
+async def ping(ctx):
+    await ctx.reply(f"🏓 {round(bot.latency*1000)}ms")
 
 @bot.command()
 async def help(ctx):
-    embed = discord.Embed(title="📖 Help", color=discord.Color.blue())
-    embed.add_field(name=".ping", value="Xem độ trễ bot", inline=False)
-    embed.add_field(name=".panel", value="Tạo ticket", inline=False)
-    embed.add_field(name=".close", value="Đóng ticket + lưu transcript", inline=False)
-    embed.add_field(name=".test", value="Test live", inline=False)
-    embed.add_field(name=".check", value="Check live", inline=False)
+    embed = discord.Embed(title="📜 Command", color=0x00ffff)
+    embed.add_field(name=".panel", value="Tạo ticket")
+    embed.add_field(name=".close", value="Đóng ticket")
+    embed.add_field(name=".ping", value="Ping bot")
     await ctx.send(embed=embed)
 
-# ================= READY =================
+# ===== TIKTOK CHECK (GIẢ LẬP DEMO) =====
+is_live = False
+
+@tasks.loop(seconds=10)
+async def check_live():
+    global is_live
+
+    # ⚠️ demo (bạn thay API thật)
+    import random
+    live = random.choice([True, False])
+    viewer = random.randint(10, 200)
+
+    channel = bot.get_channel(LIVE_CHANNEL_ID)
+
+    if live:
+        await send_ws(json.dumps({
+            "live": True,
+            "viewer": viewer
+        }))
+
+        if not is_live:
+            is_live = True
+            embed = discord.Embed(
+                title="🔴 ĐANG LIVE",
+                description=f"👀 {viewer} viewer",
+                color=0x00ffff
+            )
+            embed.add_field(name="Xem ngay", value=f"https://tiktok.com/@{TIKTOK_USER}")
+
+            await channel.send(f"<@&{PING_ROLE_ID}>", embed=embed)
+
+    else:
+        await send_ws(json.dumps({
+            "live": False,
+            "viewer": 0
+        }))
+
+        if is_live:
+            is_live = False
+            await channel.send("⚫ Đã offline")
+
+# ===== READY =====
 @bot.event
 async def on_ready():
     global session
     session = aiohttp.ClientSession()
 
     bot.add_view(TicketPanel())
+    bot.add_view(TicketButtons())
 
-    bot.loop.create_task(live_loop())
+    bot.loop.create_task(start_ws())
+    check_live.start()
 
     print(f"Bot online: {bot.user}")
 
-# ================= RUN =================
 bot.run(TOKEN)
