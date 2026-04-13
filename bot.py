@@ -243,7 +243,7 @@ async def close(ctx):
 
 @bot.command()
 async def test(ctx):
-    await ctx.send(content=f"<@&{PING_ROLE_ID}> 🔔", embed=create_live_embed("Test livestream", 999))
+    await ctx.send(content=f"<@&{PING_ROLE_ID}> 🔔", embed=create_live_embed("Test livestream", viewers))
 
 @bot.command()
 async def status(ctx):
