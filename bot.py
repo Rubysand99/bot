@@ -28,13 +28,13 @@ bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 PRICE_TABLE = {
     "sell": {
         "money":    {"label": "💰 Money",    "unit": "1m",    "price": "950đ"},
-        "skeleton": {"label": "💀 Skeleton", "unit": "5m",    "price": "4.000đ"},
-        "elytra":   {"label": "🪂 Elytra",   "unit": "1 cái", "price": "330.000đ"},
+        "skeleton": {"label": "🦴 Skeleton", "unit": "5m",    "price": "4.000đ"},
+        "elytra":   {"label": "🪽 Elytra",   "unit": "1 cái", "price": "330.000đ"},
     },
     "buy": {
         "money":    {"label": "💰 Money",    "unit": "1m",    "price": "700đ"},
-        "skeleton": {"label": "💀 Skeleton", "unit": "1 cái", "price": "3.200đ hoặc 3,5m ingame"},
-        "elytra":   {"label": "🪂 Elytra",   "unit": "1 cái", "price": "300.000đ"},
+        "skeleton": {"label": "🦴 Skeleton", "unit": "1 cái", "price": "3.200đ hoặc 3,5m ingame"},
+        "elytra":   {"label": "🪽 Elytra",   "unit": "1 cái", "price": "300.000đ"},
     }
 }
 
