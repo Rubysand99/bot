@@ -44,6 +44,7 @@ PRICE_TABLE = {
 
 PAYMENT_INFO = """
 > 💳 **Thẻ siêu rẻ:** `ruby197` — `Khấu trừ 2,000 vnd cho mỗi lần chuyển`
+> 📱 **Thẻ Viettel:** Bị trừ thêm **18% thuế** trên tổng tiền nạp
 > 🏦 **Ngân hàng:** `0702557706` — MB Bank — HOVANBUT
 > ⚠️ Ghi rõ nội dung: `[tên tài khoản Minecraft] mua [item]`
 """
@@ -95,6 +96,15 @@ def get_panel_channel_id():
 def save_panel_channel_id(channel_id: int):
     data = load_data()
     data["panel_channel_id"] = channel_id
+    save_data(data)
+
+def get_qr_path():
+    data = load_data()
+    return data.get("qr_path", None)
+
+def save_qr_path(path: str):
+    data = load_data()
+    data["qr_path"] = path
     save_data(data)
 
 def save_rating(ticket_name, user_id, stars):
@@ -537,245 +547,7 @@ class ItemSelect(Select):
             )
             for key, info in PRICE_TABLE[trade_type].items()
         ]
-        super().__init__(
-            placeholder=f"Chọn item bạn muốn {action}...",
-            options=options,
-            custom_id=f"item_select_{trade_type}"
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-                "❌ Số sao không hợp lệ! Nhập từ 1 đến 5.", ephemeral=True
-            )
-
-        save_rating(self.ticket_name, self.user_id, stars)
-        star_display = "⭐" * stars + "☆" * (5 - stars)
-
-        log = bot.get_channel(LOG_CHANNEL)
-        if log:
-            embed = discord.Embed(
-                title="⭐ Đánh Giá Mới",
-                color=0xF1C40F,
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed.add_field(name="Ticket", value=f"`{self.ticket_name}`", inline=True)
-            embed.add_field(name="User", value=f"<@{self.user_id}>", inline=True)
-            embed.add_field(name="Đánh giá", value=star_display, inline=True)
-            if self.comment.value:
-                embed.add_field(name="Nhận xét", value=self.comment.value, inline=False)
-            await log.send(embed=embed)
-
-        await interaction.response.send_message(
-            f"✅ Cảm ơn bạn đã đánh giá! {star_display}", ephemeral=True
-        )
-
-class RatingView(View):
-    def __init__(self, ticket_name: str, user_id: int):
-        super().__init__(timeout=300)
-        self.ticket_name = ticket_name
-        self.user_id = user_id
-
-    @discord.ui.button(label="⭐ Đánh giá dịch vụ", style=discord.ButtonStyle.blurple)
-    async def rate(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("❌ Chỉ người tạo ticket mới được đánh giá.", ephemeral=True)
-        await interaction.response.send_modal(RatingModal(self.ticket_name, self.user_id))
-
-# ================= ADD STAFF MODAL =================
-class AddStaffModal(Modal):
-    def __init__(self):
-        super().__init__(title="📎 Thêm Staff vào Ticket")
-
-    user_id_input = TextInput(
-        label="ID của Staff",
-        placeholder="Nhập User ID (click chuột phải → Copy ID)",
-        min_length=15,
-        max_length=20
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            uid = int(self.user_id_input.value.strip())
-            member = interaction.guild.get_member(uid)
-            if not member:
-                return await interaction.response.send_message("❌ Không tìm thấy member này.", ephemeral=True)
-
-            overwrite = discord.PermissionOverwrite(
-                view_channel=True, send_messages=True,
-                read_message_history=True, manage_messages=True
-            )
-            await interaction.channel.set_permissions(member, overwrite=overwrite)
-            await interaction.response.send_message(
-                f"✅ Đã thêm {member.mention} vào ticket!", ephemeral=False
-            )
-        except ValueError:
-            await interaction.response.send_message("❌ ID không hợp lệ!", ephemeral=True)
-
-# ================= NOTE MODAL =================
-class NoteModal(Modal):
-    def __init__(self, channel_id: int):
-        super().__init__(title="📝 Thêm Ghi Chú Nội Bộ")
-        self.channel_id = channel_id
-
-    note_input = TextInput(
-        label="Nội dung ghi chú",
-        placeholder="Ghi chú chỉ staff thấy...",
-        style=discord.TextStyle.paragraph,
-        max_length=500
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        add_ticket_note(self.channel_id, str(interaction.user), self.note_input.value)
-        embed = discord.Embed(
-            title="📝 Ghi Chú Nội Bộ",
-            description=self.note_input.value,
-            color=0xFEE75C,
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.set_footer(text=f"Bởi {interaction.user} • Chỉ staff thấy")
-        await interaction.response.send_message(embed=embed)
-
-# ================= ORDER MODAL =================
-class OrderModal(Modal):
-    mc_name = TextInput(
-        label="Tên Minecraft của bạn",
-        placeholder="Ví dụ: quannmc",
-        min_length=2, max_length=32
-    )
-    amount = TextInput(
-        label="Số lượng",
-        placeholder="Ví dụ: 10m / 5 cái / 100",
-        min_length=1, max_length=50
-    )
-    note = TextInput(
-        label="Ghi chú (tuỳ chọn)",
-        placeholder="Ví dụ: thanh toán MoMo, cần gấp...",
-        style=discord.TextStyle.paragraph,
-        required=False, max_length=200
-    )
-
-    def __init__(self, trade_type: str, item_key: str):
-        item_info = PRICE_TABLE[trade_type][item_key]
-        action = "Mua" if trade_type == "sell" else "Bán"
-        super().__init__(title=f"{action} {item_info['label']}")
-        self.trade_type = trade_type
-        self.item_key = item_key
-
-    async def on_submit(self, interaction: discord.Interaction):
-        guild = interaction.guild
-
-        if await has_ticket(guild, interaction.user):
-            return await interaction.response.send_message(
-                "❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.",
-                ephemeral=True
-            )
-
-        number = get_ticket_number()
-        item_info = PRICE_TABLE[self.trade_type][self.item_key]
-        created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
-
-        if self.trade_type == "sell":
-            color = 0x57F287
-            type_label = "🛒 MUA HÀNG"
-            channel_prefix = f"mua-{self.item_key}"
-        else:
-            color = 0xFEE75C
-            type_label = "💸 BÁN HÀNG"
-            channel_prefix = f"ban-{self.item_key}"
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, read_message_history=True
-            )
-        }
-        for admin_id in ADMIN_IDS:
-            m = guild.get_member(admin_id)
-            if m:
-                overwrites[m] = discord.PermissionOverwrite(
-                    view_channel=True, send_messages=True,
-                    read_message_history=True, manage_messages=True
-                )
-
-        category = discord.utils.get(guild.categories, id=TICKET_CATEGORY_ID)
-        channel = await guild.create_text_channel(
-            name=f"{channel_prefix}-{number}",
-            overwrites=overwrites,
-            category=category,
-            topic=f"{interaction.user.id}|{self.mc_name.value}|{self.trade_type}|{self.item_key}"
-        )
-
-        embed = discord.Embed(
-            title=f"{type_label}  •  {item_info['label']}  •  #{number}",
-            description=(
-                f"Xin chào {interaction.user.mention}! 👋\n"
-                f"Staff sẽ xử lý giao dịch của bạn sớm nhất có thể."
-            ),
-            color=color,
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.add_field(name="👤  Người dùng",    value=interaction.user.mention,  inline=True)
-        embed.add_field(name="🎮  Tên Minecraft", value=f"`{self.mc_name.value}`", inline=True)
-        embed.add_field(name="🕐  Thời gian",     value=created_at,                inline=True)
-        embed.add_field(name="📦  Item",          value=item_info["label"],        inline=True)
-        embed.add_field(name="🔢  Số lượng",      value=self.amount.value,         inline=True)
-        embed.add_field(
-            name="💲  Giá tham khảo",
-            value=f"`{item_info['price']}` / {item_info['unit']}",
-            inline=True
-        )
-        if self.note.value:
-            embed.add_field(name="📝  Ghi chú", value=self.note.value, inline=False)
-
-        embed.set_thumbnail(url=interaction.user.display_avatar.url)
-        embed.set_footer(
-            text="TuyTam Store  •  Ticket System",
-            icon_url=guild.icon.url if guild.icon else None
-        )
-
-        msg = await channel.send(
-            f"<@&{SUPPORT_ROLE_ID}> | {interaction.user.mention}",
-            embed=embed,
-            view=TicketButtons()
-        )
-
-        await interaction.response.send_message(
-            f"✅ Ticket đã tạo! Vào đây: {channel.mention}",
-            ephemeral=True
-        )
-
-        # Auto-ping nếu không có ai claim sau 5 phút
-        await asyncio.sleep(300)
-        # Kiểm tra channel vẫn còn tồn tại
-        ch = guild.get_channel(channel.id)
-        if ch is None:
-            return
-        # Kiểm tra xem đã có ai claim chưa bằng cách xem lịch sử tin nhắn
-        claimed = False
-        async for m in ch.history(limit=20):
-            if m.author == guild.me and "đã nhận ticket" in m.content.lower():
-                claimed = True
-                break
-        if not claimed:
-            await ch.send(
-                f"⏰ <@&{SUPPORT_ROLE_ID}> Ticket **#{number}** chưa có staff nhận sau 5 phút! Vui lòng xử lý sớm."
-            )
-
-# ================= SELECT ITEM =================
-class ItemSelect(Select):
-    def __init__(self, trade_type: str):
-        self.trade_type = trade_type
-        action = "mua" if trade_type == "sell" else "bán"
-        options = [
-            discord.SelectOption(
-                label=info["label"],
-                value=key,
-                description=f"Giá: {info['price']} / {info['unit']}",
-                emoji=info["label"].split()[0]
-            )
-            for key, info in PRICE_TABLE[trade_type].items()
-        ]
-        super().__init__(
+        super().__init_(
             placeholder=f"Chọn item bạn muốn {action}...",
             options=options,
             custom_id=f"item_select_{trade_type}"
@@ -1032,7 +804,8 @@ async def help_cmd(ctx):
         name="⚙️  Cài đặt",
         value=(
             "`.setpanel #kênh` — Chỉ định kênh chứa panel *(admin)*\n"
-            "`.settings` — Xem cấu hình hiện tại *(admin)*"
+            "`.settings` — Xem cấu hình & đổi QR *(admin)*\n"
+            "`.qr` — Gửi mã QR thanh toán"
         ),
         inline=False
     )
@@ -1113,6 +886,30 @@ async def setpanel(ctx, channel: discord.TextChannel = None):
     await ctx.reply(embed=embed)
 
 
+# ================= SETTINGS VIEW =================
+class SettingsView(View):
+    def __init__(self):
+        super().__init__(timeout=120)
+
+    @discord.ui.button(label="📱 Đổi QR", style=discord.ButtonStyle.blurple)
+    async def change_qr(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin mới được đổi QR.", ephemeral=True)
+        await interaction.response.send_modal(SetQRModal())
+
+    @discord.ui.button(label="👁️ Xem QR hiện tại", style=discord.ButtonStyle.grey)
+    async def view_qr(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        qr_path = get_qr_path()
+        if not qr_path or not os.path.exists(qr_path):
+            return await interaction.response.send_message("❌ Chưa có QR nào được lưu.", ephemeral=True)
+        file = discord.File(qr_path, filename="qr.png")
+        embed = discord.Embed(title="📱 QR Hiện Tại", color=0x5865F2)
+        embed.set_image(url="attachment://qr.png")
+        await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
+
+
 @bot.command()
 async def settings(ctx):
     if ctx.author.id not in ADMIN_IDS:
@@ -1124,17 +921,21 @@ async def settings(ctx):
     else:
         panel_value = "Chưa cài — dùng `.setpanel #kênh`"
 
+    qr_path = get_qr_path()
+    qr_value = f"✅ Đã có QR (`{qr_path}`)" if qr_path and os.path.exists(qr_path) else "❌ Chưa có — nhấn nút **Đổi QR** bên dưới"
+
     embed = discord.Embed(
         title="⚙️  Cấu Hình Hiện Tại",
         color=0x5865F2,
         timestamp=datetime.now(timezone.utc)
     )
-    embed.add_field(name="📌  Panel Channel", value=panel_value, inline=False)
+    embed.add_field(name="📌  Panel Channel",   value=panel_value,              inline=False)
     embed.add_field(name="📋  Log Channel",      value=f"<#{LOG_CHANNEL}>",          inline=True)
     embed.add_field(name="📂  Ticket Category",  value=f"<#{TICKET_CATEGORY_ID}>",   inline=True)
     embed.add_field(name="🛡️  Support Role",     value=f"<@&{SUPPORT_ROLE_ID}>",     inline=True)
+    embed.add_field(name="📱  Mã QR Thanh Toán", value=qr_value,                 inline=False)
     embed.set_footer(text="TuyTam Store  •  Ticket System")
-    await ctx.reply(embed=embed)
+    await ctx.reply(embed=embed, view=SettingsView())
 
 
 @bot.command()
@@ -1202,6 +1003,108 @@ async def ratings_cmd(ctx):
     embed.add_field(name="Trung bình", value=f"{avg:.1f} ⭐", inline=True)
     embed.add_field(name="Phân bố", value=f"```{bar}```", inline=False)
     await ctx.reply(embed=embed)
+
+
+@bot.command(name="qr")
+async def qr_cmd(ctx):
+    qr_path = get_qr_path()
+    if not qr_path or not os.path.exists(qr_path):
+        embed = discord.Embed(
+            title="❌  Chưa Có Mã QR",
+            description="Admin chưa cài mã QR.\nDùng `.settings` để thêm QR thanh toán.",
+            color=0xED4245
+        )
+        return await ctx.reply(embed=embed)
+
+    embed = discord.Embed(
+        title="📱  Mã QR Thanh Toán",
+        description=(
+            "Quét mã bên dưới để thanh toán.\n"
+            "> 🏦 **MB Bank** — HOVANBUT\n"
+            "> 📱 **Thẻ Viettel** bị trừ thêm **18% thuế**\n"
+            "> ⚠️ Ghi rõ nội dung: `[tên MC] mua [item]`"
+        ),
+        color=0x57F287,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_footer(text="TuyTam Store  •  Quét QR để thanh toán")
+    file = discord.File(qr_path, filename="qr.png")
+    embed.set_image(url="attachment://qr.png")
+    await ctx.reply(embed=embed, file=file)
+
+
+class SetQRModal(Modal):
+    def __init__(self):
+        super().__init__(title="🖼️ Cập Nhật Ảnh QR")
+
+    url_input = TextInput(
+        label="URL ảnh QR (để trống nếu đính kèm file)",
+        placeholder="https://i.imgur.com/abc123.png",
+        required=False,
+        max_length=500
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Nếu nhập URL
+        url = self.url_input.value.strip()
+        if url:
+            import urllib.request
+            try:
+                qr_path = "qr_code.png"
+                urllib.request.urlretrieve(url, qr_path)
+                save_qr_path(qr_path)
+                embed = discord.Embed(
+                    title="✅  Đã Cập Nhật QR",
+                    description="Mã QR mới đã được lưu từ URL.",
+                    color=0x57F287,
+                    timestamp=datetime.now(timezone.utc)
+                )
+                embed.set_image(url=url)
+                embed.set_footer(text=f"Cập nhật bởi {interaction.user}")
+                return await interaction.response.send_message(embed=embed, ephemeral=True)
+            except Exception as e:
+                return await interaction.response.send_message(
+                    f"❌ Không tải được ảnh từ URL: `{e}`", ephemeral=True
+                )
+
+        await interaction.response.send_message(
+            "📎 Hãy **đính kèm ảnh QR** vào tin nhắn tiếp theo trong vòng **60 giây**.",
+            ephemeral=True
+        )
+
+        def check(m):
+            return (
+                m.author.id == interaction.user.id
+                and m.channel.id == interaction.channel.id
+                and len(m.attachments) > 0
+            )
+
+        try:
+            msg = await bot.wait_for("message", check=check, timeout=60)
+            attachment = msg.attachments[0]
+            if not attachment.content_type or not attachment.content_type.startswith("image/"):
+                return await interaction.followup.send("❌ File không phải ảnh!", ephemeral=True)
+
+            qr_path = "qr_code.png"
+            await attachment.save(qr_path)
+            save_qr_path(qr_path)
+
+            try:
+                await msg.delete()
+            except:
+                pass
+
+            embed = discord.Embed(
+                title="✅  Đã Cập Nhật QR",
+                description="Mã QR mới đã được lưu thành công!\nDùng `.qr` để kiểm tra.",
+                color=0x57F287,
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.set_footer(text=f"Cập nhật bởi {interaction.user}")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Hết thời gian! Không nhận được ảnh.", ephemeral=True)
 
 
 # ================= ERROR HANDLER =================
