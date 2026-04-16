@@ -1,6 +1,3 @@
-from dotenv import load_dotenv
-load_dotenv()
-
 import discord
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput, Select
