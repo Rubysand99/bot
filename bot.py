@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 
 TOKEN = os.getenv("TOKEN")
 
+print(f"[DEBUG] TOKEN loaded: {'OK' if TOKEN else 'MISSING'}")
+
 ADMIN_IDS = [
     846332174734983219,
     1464961078042689588,
