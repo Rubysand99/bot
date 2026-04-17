@@ -179,7 +179,7 @@ def build_panel_embed(guild: discord.Guild) -> discord.Embed:
         timestamp=datetime.now(timezone.utc)
     )
     embed.add_field(
-        name="🛒  Dịch vụ",
+        name="📝  Menu",
         value="› Mua / Bán Money, Skeleton, Elytra\n› 🏯 Order Base\n› ⚡ Mod Fix Lag\n› 🎁 Nhận Giveaway\n› 🆘 Hỗ Trợ",
         inline=True
     )
