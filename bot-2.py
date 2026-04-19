@@ -27,8 +27,8 @@ ADMIN_IDS = [
 LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
 SUPPORT_ROLE_ID = 1474572393908404305
-COUNTER_CHANNEL_ID = 0  # ← Thay bằng ID kênh lưu counter của bạn
-AI_CHANNEL_ID = 0        # ← Thay bằng ID kênh chat AI của bạn
+COUNTER_CHANNEL_ID = 1495055958827602092  # ← Thay bằng ID kênh lưu counter của bạn
+AI_CHANNEL_ID = 1495234134212083884        # ← Thay bằng ID kênh chat AI của bạn
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
