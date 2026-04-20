@@ -25,7 +25,7 @@ ADMIN_IDS = [
 LOG_CHANNEL = 1482234024868053083
 TICKET_CATEGORY_ID = 1464426174611456195
 SUPPORT_ROLE_ID = 1474572393908404305
-COUNTER_CHANNEL_ID = 0  # ← Thay bằng ID kênh lưu counter của bạn
+COUNTER_CHANNEL_ID = 1495055958827602092 # ← Thay bằng ID kênh lưu counter của bạn
 
 # ── Getter động — đọc từ data.json nếu admin đã đổi qua .settings ──
 def get_cfg_log_channel() -> int:
