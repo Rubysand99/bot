@@ -28,7 +28,7 @@ SUPPORT_ROLE_ID = 1474572393908404305
 COUNTER_CHANNEL_ID = 0  # ← Thay bằng ID kênh lưu counter của bạn
 
 # ── ID kênh dùng làm "database" Discord ──
-DATA_CHANNEL_ID = 1495055958827602092
+DATA_CHANNEL_ID = 1496994486927229018
 
 # ── Getter động — đọc từ data.json nếu admin đã đổi qua .settings ──
 def get_cfg_log_channel() -> int:
