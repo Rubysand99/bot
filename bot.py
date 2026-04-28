@@ -1441,7 +1441,7 @@ def parse_latest_video(rss_text):
 
     return None
 
-=================
+
 async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
     # ── Đọc thông tin từ topic: user_id|mc_name|trade_type|item|status ──
     user_id    = None
