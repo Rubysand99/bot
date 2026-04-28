@@ -5,9 +5,8 @@ import asyncio
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 async def _tiktok_monitor_loop():
-
-if os.path.exists(".env"):
-    load_dotenv()
+    if os.path.exists(".env"):
+        load_dotenv()
 
 import discord
 from discord import app_commands
