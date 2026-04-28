@@ -3,7 +3,8 @@ import io
 import json
 import asyncio
 from datetime import datetime, timezone
-froasync def _tiktok_monitor_loop():m dotenv import load_dotenv
+froasync def _tiktok_monitor_loop():
+from dotenv import load_dotenv
 
 if os.path.exists(".env"):
     load_dotenv()
