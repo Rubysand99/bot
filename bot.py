@@ -1,0 +1,4702 @@
+import os
+import io
+import json
+import asyncio
+from datetime import datetime, timezone
+from dotenv import load_dotenv
+
+if os.path.exists(".env"):
+    load_dotenv()
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+from discord.ui import View, Button, Modal, TextInput, Select
+
+TOKEN = os.getenv("TOKEN")
+print(f"[DEBUG] TOKEN loaded: {'OK' if TOKEN else 'MISSING'}")
+
+ADMIN_IDS = [
+    846332174734983219,
+    1464961078042689588,
+    1438384178755276923
+]
+
+LOG_CHANNEL = 1482234024868053083
+TICKET_CATEGORY_ID = 1464426174611456195
+SUPPORT_ROLE_ID = 1474572393908404305
+COUNTER_CHANNEL_ID = 0  # ← Thay bằng ID kênh lưu counter của bạn
+LEGIT_CHANNEL_ID = 0   # ← Thay bằng ID kênh ✅•𝐋𝐞𝐠𝐢𝐭-XX của bạn
+VOUCH_CHANNEL_ID = 1469647159560241318  # kênh vouch tự động +1
+
+# ── ID kênh dùng làm "database" Discord ──
+DATA_CHANNEL_ID    = 1496994486927229018   # kênh lưu data JSON chính
+TICKET_DATA_CH_ID  = 1495055958827602092   # kênh lưu ticket counter
+PRICE_CHANNEL_ID   = 1483465495486398681   # kênh hiển thị bảng giá (auto-update)
+BALANCE_CHANNEL_ID = 1464999465294369035   # kênh balance mặc định
+
+# ── Getter động — đọc từ data.json nếu admin đã đổi qua .settings ──
+def get_cfg_log_channel() -> int:
+    return load_data().get("cfg_log_channel", LOG_CHANNEL)
+
+def get_cfg_category() -> int:
+    return load_data().get("cfg_ticket_category", TICKET_CATEGORY_ID)
+
+def get_cfg_support_role() -> int:
+    return load_data().get("cfg_support_role", SUPPORT_ROLE_ID)
+
+def get_cfg_counter_channel() -> int:
+    return load_data().get("cfg_counter_channel", COUNTER_CHANNEL_ID)
+
+def get_cfg_balance_channel() -> int:
+    return load_data().get("cfg_balance_channel", BALANCE_CHANNEL_ID)
+
+def get_cfg_legit_channel() -> int:
+    return load_data().get("cfg_legit_channel", LEGIT_CHANNEL_ID)
+
+def get_cfg_price_channel() -> int:
+    return load_data().get("cfg_price_channel", PRICE_CHANNEL_ID)
+
+def save_cfg(key: str, value: int):
+    data = load_data()
+    data[key] = value
+    save_data(data)
+
+# ── Số dư & thống kê kênh balance ──
+def get_balance_data() -> dict:
+    data = load_data()
+    if "balance" not in data:
+        data["balance"] = {
+            "current": 0,
+            "total_in": 0,
+            "total_fee": 0,
+            "total_out": 0,
+            "tx_count": 0,
+            "history": []   # [{"type": "+/-", "raw": int, "fee": int, "net": int, "user": str, "time": str}]
+        }
+        save_data(data)
+    return data["balance"]
+
+def save_balance_data(bal: dict):
+    data = load_data()
+    data["balance"] = bal
+    save_data(data)
+
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
+tree = bot.tree
+
+# ================= BẢNG GIÁ =================
+PRICE_TABLE = {
+    "sell": {
+        "money":    {"label": "💰 Money",    "unit": "1m",    "price": "950đ",     "note": "Tối thiểu 10m"},
+        "skeleton": {"label": "🦴 Skeleton", "unit": "5m",    "price": "4.000đ",   "note": ""},
+        "elytra":   {"label": "🪽 Elytra",   "unit": "1 cái", "price": "330.000đ", "note": "Liên hệ trước"},
+    },
+    "buy": {
+        "money":    {"label": "💰 Money",    "unit": "1m",    "price": "700đ",                     "note": ""},
+        "skeleton": {"label": "🦴 Skeleton", "unit": "1 cái", "price": "3.200đ hoặc 3,5m ingame", "note": ""},
+        "elytra":   {"label": "🪽 Elytra",   "unit": "1 cái", "price": "300.000đ",                "note": ""},
+    }
+}
+
+# Dịch vụ không có giá — tạo ticket thẳng, không qua modal
+SERVICE_TABLE = {
+    "orderbase": {"label": "🏯 Order Base",    "note": "Đặt thiết kế base theo yêu cầu",  "color": 0xE67E22, "type_label": "🏯 ORDER BASE",    "channel_prefix": "base"},
+    "modfixlag": {"label": "⚡ Mod Fix Lag",   "note": "Hỗ trợ cài mod tối ưu FPS",       "color": 0x1ABC9C, "type_label": "⚡ MOD FIX LAG",   "channel_prefix": "mod"},
+    "giveaway":  {"label": "🎁 Nhận Giveaway", "note": "Xác nhận & nhận thưởng giveaway", "color": 0xF1C40F, "type_label": "🎁 NHẬN GIVEAWAY",  "channel_prefix": "ticket"},
+    "support":   {"label": "🆘 Hỗ Trợ",        "note": "Hỗ trợ mọi vấn đề",              "color": 0x3498DB, "type_label": "🆘 HỖ TRỢ",         "channel_prefix": "ticket"},
+}
+
+NO_PRICE_KEYS = set(SERVICE_TABLE.keys())
+
+PAYMENT_INFO = """
+> 💳 **Thẻ siêu rẻ:** `ruby197` — `Khấu trừ 2,000 vnd cho mỗi lần chuyển`
+> 📱 **Thẻ Viettel:** Bị trừ thêm **18% thuế** trên tổng tiền nạp
+> 🏦 **Ngân hàng:** `0702557706` — MB Bank — HOVANBUT
+> ⚠️ Ghi rõ nội dung: `[tên tài khoản Minecraft] mua [item]`
+"""
+
+# ================= DATA (Discord Channel Storage) =================
+# Toàn bộ data lưu trong 1 tin nhắn JSON ở kênh DATA_CHANNEL_ID
+# Không cần file data.json — không bị mất khi redeploy
+
+QR_FILE = "/data/qr_code.png" if os.path.isdir("/data") else "./qr_code.png"
+
+_DATA_MSG_ID: int | None = None   # cache message ID sau lần đầu tìm thấy
+
+DEFAULT_DATA = {
+    "ticket": 0,
+    "stock": {
+        "money": "Chưa cập nhật",
+        "skeleton": "Chưa cập nhật",
+        "elytra": "Chưa cập nhật"
+    },
+    "panel_channel_id": None,
+    "ratings": [],
+    "ticket_notes": {},
+    # ── Cấu hình — lưu vào Discord để không mất khi redeploy ──
+    "cfg_log_channel":     LOG_CHANNEL,
+    "cfg_ticket_category": TICKET_CATEGORY_ID,
+    "cfg_support_role":    SUPPORT_ROLE_ID,
+    "cfg_counter_channel": COUNTER_CHANNEL_ID,
+    "cfg_balance_channel": BALANCE_CHANNEL_ID,
+    "cfg_legit_channel":   LEGIT_CHANNEL_ID,
+    "cfg_price_channel":   PRICE_CHANNEL_ID,
+    "qr_path":             None,
+    "balance": {
+        "current": 0, "total_in": 0, "total_fee": 0,
+        "total_out": 0, "tx_count": 0, "history": []
+    },
+    # ── TikTok Monitor ──
+    "tiktok_notify_channel": None,   # ID kênh thông báo TikTok
+    "tiktok_accounts": [],           # ["username1", "username2", ...]
+    "tiktok_last_video": {},         # {username: video_id}
+    "tiktok_live_status": {},        # {username: True/False}
+}
+
+def _default_data() -> dict:
+    import copy
+    return copy.deepcopy(DEFAULT_DATA)
+
+# ── Cache in-memory (tránh gọi Discord API liên tục) ──
+_data_cache: dict | None = None
+_cache_dirty: bool = False
+
+async def _get_data_channel():
+    ch = bot.get_channel(DATA_CHANNEL_ID)
+    if ch is None:
+        try:
+            ch = await bot.fetch_channel(DATA_CHANNEL_ID)
+        except Exception as e:
+            print(f"[DATA] Không lấy được kênh data: {e}")
+    return ch
+
+async def _find_data_message():
+    """Tìm tin nhắn JSON duy nhất trong kênh (do bot gửi, bắt đầu bằng DATA:)."""
+    global _DATA_MSG_ID
+    if _DATA_MSG_ID:
+        return _DATA_MSG_ID
+    ch = await _get_data_channel()
+    if not ch:
+        return None
+    try:
+        async for msg in ch.history(limit=50):
+            if msg.author == bot.user and msg.content.startswith("DATA:"):
+                _DATA_MSG_ID = msg.id
+                return _DATA_MSG_ID
+    except Exception as e:
+        print(f"[DATA] Lỗi khi tìm message: {e}")
+    return None
+
+async def load_data_async() -> dict:
+    """Đọc data từ Discord channel (có cache)."""
+    global _data_cache
+    if _data_cache is not None:
+        return _data_cache
+
+    msg_id = await _find_data_message()
+    if not msg_id:
+        _data_cache = _default_data()
+        return _data_cache
+
+    ch = await _get_data_channel()
+    if not ch:
+        _data_cache = _default_data()
+        return _data_cache
+
+    try:
+        msg = await ch.fetch_message(msg_id)
+        raw = msg.content[len("DATA:"):]
+        _data_cache = json.loads(raw)
+        # Đảm bảo các key mặc định luôn có — nếu có key mới thì lưu lại Discord
+        added = False
+        for k, v in _default_data().items():
+            if k not in _data_cache:
+                _data_cache[k] = v
+                added = True
+        if added:
+            asyncio.ensure_future(save_data_async(_data_cache))
+            print("[DATA] 🔄 Đã thêm key mới vào data và lưu lại Discord")
+        return _data_cache
+    except discord.NotFound:
+        # Tin nhắn bị xoá — reset ID cache, dùng default rồi tạo tin nhắn mới
+        global _DATA_MSG_ID
+        print("[DATA] ⚠️ Tin nhắn data không còn tồn tại, sẽ tạo mới khi save.")
+        _DATA_MSG_ID = None
+        _data_cache = _default_data()
+        asyncio.ensure_future(save_data_async(_data_cache))
+        return _data_cache
+    except Exception as e:
+        print(f"[DATA] Lỗi đọc data message: {e}")
+        _data_cache = _default_data()
+        return _data_cache
+
+async def save_data_async(data: dict):
+    """Ghi data lên Discord channel (edit tin nhắn cũ hoặc tạo mới nếu bị xoá)."""
+    global _DATA_MSG_ID, _data_cache
+    _data_cache = data
+
+    ch = await _get_data_channel()
+    if not ch:
+        print("[DATA] ❌ Không lưu được — kênh không tồn tại!")
+        return
+
+    payload = "DATA:" + json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+
+    async def _send_new():
+        """Tạo tin nhắn DATA mới."""
+        global _DATA_MSG_ID
+        sent = await ch.send(payload)
+        _DATA_MSG_ID = sent.id
+        print(f"[DATA] 🆕 Đã tạo tin nhắn data mới (ID: {sent.id})")
+
+    msg_id = await _find_data_message()
+    if msg_id:
+        try:
+            msg = await ch.fetch_message(msg_id)
+            await msg.edit(content=payload)
+        except discord.NotFound:
+            # Tin nhắn đã bị xoá — reset cache và tạo lại
+            print("[DATA] ⚠️ Tin nhắn data bị xoá, đang tạo lại...")
+            _DATA_MSG_ID = None
+            await _send_new()
+        except Exception as e:
+            print(f"[DATA] ❌ Lỗi ghi data: {e}")
+    else:
+        try:
+            await _send_new()
+        except Exception as e:
+            print(f"[DATA] ❌ Lỗi tạo tin nhắn data: {e}")
+
+# ── Wrapper đồng bộ (để không phải sửa toàn bộ code gọi load_data/save_data) ──
+# Các hàm đồng bộ sẽ dùng cache in-memory; việc sync lên Discord do _flush_task xử lý.
+
+_flush_lock = asyncio.Lock()
+
+def load_data() -> dict:
+    """Đọc từ cache (nếu chưa có → trả default, sẽ được sync khi bot ready)."""
+    if _data_cache is not None:
+        return _data_cache
+    return _default_data()
+
+def save_data(data: dict):
+    """Lưu vào cache và lên lịch flush lên Discord."""
+    global _data_cache, _cache_dirty
+    _data_cache = data
+    _cache_dirty = True
+    # Tạo task flush bất đồng bộ nếu bot đã chạy
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(_flush_to_discord())
+    except Exception:
+        pass
+
+async def _flush_to_discord():
+    """Đẩy cache lên Discord (gọi tự động sau save_data)."""
+    global _cache_dirty
+    async with _flush_lock:
+        if not _cache_dirty:
+            return
+        _cache_dirty = False
+        if _data_cache is not None:
+            await save_data_async(_data_cache)
+
+async def init_data_cache():
+    """Gọi khi bot ready — tải data từ Discord lần đầu."""
+    global _data_cache
+    _data_cache = None   # xoá cache cũ để buộc đọc lại
+    data = await load_data_async()
+    print(f"[DATA] ✅ Đã tải data từ Discord — ticket#{data.get('ticket', 0):03d}")
+
+def get_ticket_number():
+    """Lấy số ticket tiếp theo từ data.json (fallback khi chưa sync được channel)."""
+    data = load_data()
+    data["ticket"] = data.get("ticket", 0) + 1
+    save_data(data)
+    return f"{data['ticket']:03d}"
+
+async def read_counter_from_channel() -> int:
+    """Đọc số ticket hiện tại từ kênh counter trên Discord."""
+    if not get_cfg_counter_channel():
+        return 0
+    channel = bot.get_channel(get_cfg_counter_channel())
+    if not channel:
+        return 0
+    try:
+        async for msg in channel.history(limit=1):
+            # Tin nhắn có dạng: "ticket:007"
+            if msg.content.startswith("ticket:"):
+                return int(msg.content.split(":")[1])
+    except:
+        pass
+    return 0
+
+async def write_counter_to_channel(number: int):
+    """Ghi số ticket mới nhất vào kênh counter."""
+    if not get_cfg_counter_channel():
+        return
+    channel = bot.get_channel(get_cfg_counter_channel())
+    if not channel:
+        return
+    try:
+        # Xoá tin nhắn cũ và ghi mới
+        await channel.purge(limit=5)
+        await channel.send(f"ticket:{number:03d}")
+    except:
+        pass
+
+async def get_next_ticket_number() -> str:
+    """
+    Lấy số ticket tiếp theo từ kênh Discord.
+    Nếu kênh chưa có → đọc từ data.json.
+    Sau đó ghi số mới vào cả hai nơi.
+    """
+    channel_num = await read_counter_from_channel()
+    data = load_data()
+    file_num = data.get("ticket", 0)
+
+    # Lấy số cao hơn để tránh trùng
+    current = max(channel_num, file_num)
+    next_num = current + 1
+
+    # Lưu vào cả data.json lẫn kênh Discord
+    data["ticket"] = next_num
+    save_data(data)
+    asyncio.create_task(write_counter_to_channel(next_num))
+
+    return f"{next_num:03d}"
+
+async def sync_ticket_counter(guild: discord.Guild):
+    """
+    Khi bot khởi động: đồng bộ counter từ kênh Discord + quét channel thực tế.
+    Lấy số cao nhất trong 3 nguồn: data.json, kênh counter, channel tên ticket-XXX.
+    """
+    # Nguồn 1: data.json
+    data = load_data()
+    max_num = data.get("ticket", 0)
+
+    # Nguồn 2: kênh counter Discord
+    channel_num = await read_counter_from_channel()
+    if channel_num > max_num:
+        max_num = channel_num
+
+    # Nguồn 3: quét tên channel thực tế
+    for channel in guild.text_channels:
+        if channel.name.startswith("ticket-"):
+            try:
+                num = int(channel.name.split("-")[-1])
+                if num > max_num:
+                    max_num = num
+            except ValueError:
+                continue
+
+    # Cập nhật nếu cần
+    if max_num > data.get("ticket", 0):
+        data["ticket"] = max_num
+        save_data(data)
+        asyncio.create_task(write_counter_to_channel(max_num))
+        print(f"[SYNC] Ticket counter đồng bộ → {max_num:03d}")
+
+def get_stock():
+    data = load_data()
+    return data.get("stock", {
+        "money": "Chưa cập nhật",
+        "skeleton": "Chưa cập nhật",
+        "elytra": "Chưa cập nhật"
+    })
+
+def save_stock(stock: dict):
+    data = load_data()
+    data["stock"] = stock
+    save_data(data)
+
+def get_panel_channel_id():
+    return load_data().get("panel_channel_id")
+
+def save_panel_channel_id(channel_id: int):
+    data = load_data()
+    data["panel_channel_id"] = channel_id
+    save_data(data)
+
+def get_qr_path():
+    data = load_data()
+    return data.get("qr_path", None)
+
+def save_qr_path(path: str):
+    data = load_data()
+    data["qr_path"] = path
+    save_data(data)
+
+def save_rating(ticket_name, user_id, stars):
+    data = load_data()
+    if "ratings" not in data:
+        data["ratings"] = []
+    data["ratings"].append({
+        "ticket": ticket_name,
+        "user_id": user_id,
+        "stars": stars,
+        "time": datetime.now(timezone.utc).isoformat()
+    })
+    save_data(data)
+
+def get_ticket_note(channel_id):
+    data = load_data()
+    return data.get("ticket_notes", {}).get(str(channel_id), [])
+
+def add_ticket_note(channel_id, author, note):
+    data = load_data()
+    if "ticket_notes" not in data:
+        data["ticket_notes"] = {}
+    key = str(channel_id)
+    if key not in data["ticket_notes"]:
+        data["ticket_notes"][key] = []
+    data["ticket_notes"][key].append({
+        "author": author,
+        "note": note,
+        "time": datetime.now(timezone.utc).isoformat()
+    })
+    save_data(data)
+
+# ================= CHECK TICKET =================
+async def has_ticket(guild, user):
+    for channel in guild.text_channels:
+        if channel.topic and str(user.id) in channel.topic:
+            return True
+    return False
+
+# ================= BUILD PANEL EMBED =================
+def build_panel_embed(guild: discord.Guild) -> discord.Embed:
+    embed = discord.Embed(
+        title="🏪  TuyTam Store",
+        description=(
+            "Chào mừng đến với **TuyTam Store**!\n"
+            "Nhấn nút bên dưới để tạo ticket giao dịch.\n"
+            "Dùng lệnh `.price` để xem bảng giá chi tiết."
+        ),
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(
+        name="🛒  Dịch vụ",
+        value="› Mua / Bán Money, Skeleton, Elytra\n› 🏯 Order Base\n› ⚡ Mod Fix Lag\n› 🎁 Nhận Giveaway\n› 🆘 Hỗ Trợ",
+        inline=True
+    )
+    embed.add_field(
+        name="📋  Ticket bao gồm",
+        value="› Tạo kênh riêng tư\n› Staff hỗ trợ 24/7\n› Transcript sau giao dịch",
+        inline=True
+    )
+    embed.add_field(
+        name="⚠️  Lưu ý",
+        value="› Không spam ticket\n› Ghi rõ số lượng & item\n› Thanh toán đúng giá niêm yết",
+        inline=False
+    )
+    embed.set_footer(
+        text="TuyTam Store  •  Ticket System",
+        icon_url=guild.icon.url if guild.icon else None
+    )
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    return embed
+
+# Các mục không hiển thị giá trong bảng giá
+NO_PRICE_KEYS = {"modfixlag", "giveaway", "orderbase", "support"}
+
+# ================= BUILD PRICE EMBED =================
+def build_price_embed(guild: discord.Guild) -> discord.Embed:
+    embed = discord.Embed(
+        title="💰  Bảng Giá TuyTam Store",
+        description="Giá cập nhật mới nhất. Liên hệ ticket để giao dịch.",
+        color=0xF1C40F,
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    # Shop bán — chỉ hiện item có giá
+    sell_lines = ""
+    service_lines = ""
+    for k, info in PRICE_TABLE["sell"].items():
+        note = f" *({info['note']})*" if info["note"] else ""
+        if k in NO_PRICE_KEYS:
+            service_lines += f"{info['label']}{note}\n"
+        else:
+            sell_lines += f"{info['label']}\n┣ Giá: **{info['price']}** / {info['unit']}{note}\n\n"
+
+    if sell_lines:
+        embed.add_field(name="🛒  Shop Bán — Bạn Mua", value=sell_lines.strip(), inline=False)
+    if service_lines:
+        embed.add_field(name="🎮  Dịch Vụ Khác", value=service_lines.strip(), inline=False)
+
+    # Shop mua
+    buy_lines = ""
+    for k, info in PRICE_TABLE["buy"].items():
+        note = f" *({info['note']})*" if info["note"] else ""
+        buy_lines += f"{info['label']}\n┣ Giá thu: **{info['price']}** / {info['unit']}{note}\n\n"
+    embed.add_field(name="💸  Shop Mua — Bạn Bán", value=buy_lines.strip(), inline=False)
+
+    # Thanh toán
+    embed.add_field(name="💳  Thanh Toán", value=PAYMENT_INFO, inline=False)
+
+    embed.set_footer(
+        text="TuyTam Store  •  Giá có thể thay đổi, vui lòng hỏi staff trước khi giao dịch",
+        icon_url=guild.icon.url if guild.icon else None
+    )
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    return embed
+
+# ================= CẬP NHẬT PANEL =================
+async def update_panel_message(guild: discord.Guild):
+    panel_channel_id = get_panel_channel_id()
+    if panel_channel_id:
+        channel = guild.get_channel(panel_channel_id)
+        if not channel:
+            return
+        try:
+            async for msg in channel.history(limit=50):
+                if (
+                    msg.author == guild.me
+                    and msg.embeds
+                    and msg.embeds[0].title == "🏪  TuyTam Store"
+                ):
+                    await msg.edit(embed=build_panel_embed(guild))
+                    return
+        except (discord.Forbidden, discord.HTTPException):
+            return
+    else:
+        for channel in guild.text_channels:
+            if channel.topic and "|" in channel.topic:
+                continue
+            try:
+                async for msg in channel.history(limit=50):
+                    if (
+                        msg.author == guild.me
+                        and msg.embeds
+                        and msg.embeds[0].title == "🏪  TuyTam Store"
+                    ):
+                        await msg.edit(embed=build_panel_embed(guild))
+                        return
+            except (discord.Forbidden, discord.HTTPException):
+                continue
+
+# ================= CẬP NHẬT BẢNG GIÁ =================
+async def update_price_message(guild: discord.Guild):
+    """Tìm và edit tin nhắn bảng giá trong kênh price channel."""
+    price_ch_id = get_cfg_price_channel()
+    channel = guild.get_channel(price_ch_id) if price_ch_id else None
+    if not channel:
+        return
+    try:
+        async for msg in channel.history(limit=50):
+            if (
+                msg.author == guild.me
+                and msg.embeds
+                and msg.embeds[0].title == "💰  Bảng Giá TuyTam Store"
+            ):
+                await msg.edit(embed=build_price_embed(guild))
+                return
+        # Chưa có tin nhắn nào → gửi mới
+        await channel.send(embed=build_price_embed(guild))
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
+# ================= TRANSCRIPT =================
+def build_transcript_html(channel_name, messages, info: dict = None):
+    """
+    info dict (tuỳ chọn):
+      created_by_name, created_by_id, created_by_avatar,
+      closed_by_name,  closed_by_id,
+      created_at,      closed_at,
+      ticket_type,     mc_name,  item, trade_type
+    """
+    info = info or {}
+    close_time_str = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC")
+
+    # ── Các dòng thông tin trong header ──
+    def row(icon, label, value):
+        return f'<div class="info-row"><span class="info-icon">{icon}</span><span class="info-label">{label}</span><span class="info-value">{value}</span></div>'
+
+    info_rows = ""
+    if info.get("created_by_name"):
+        avatar_url = info.get("created_by_avatar", "")
+        avatar_tag = f'<img src="{avatar_url}" class="info-avatar" onerror="this.style.display=\'none\'">' if avatar_url else ""
+        info_rows += f'<div class="info-row"><span class="info-icon">👤</span><span class="info-label">Người tạo</span><span class="info-value">{avatar_tag} {info["created_by_name"]} <span class="uid">(ID: {info.get("created_by_id","")})</span></span></div>'
+    if info.get("closed_by_name"):
+        info_rows += row("🔒", "Người đóng", f'{info["closed_by_name"]} <span class="uid">(ID: {info.get("closed_by_id","")})</span>')
+    if info.get("ticket_type"):
+        info_rows += row("🏷️", "Loại ticket", info["ticket_type"])
+    if info.get("mc_name"):
+        info_rows += row("🎮", "Tên Minecraft", info["mc_name"])
+    if info.get("item"):
+        action = "Mua" if info.get("trade_type") == "sell" else ("Bán" if info.get("trade_type") == "buy" else "")
+        info_rows += row("📦", "Giao dịch", f'{action} {info["item"]}' if action else info["item"])
+    if info.get("created_at"):
+        info_rows += row("🕐", "Thời gian tạo", info["created_at"])
+    info_rows += row("🕑", "Thời gian đóng", close_time_str)
+    info_rows += row("💬", "Số tin nhắn", f"{len(messages)} tin nhắn")
+
+    # ── Render từng tin nhắn ──
+    rows = ""
+    for msg in messages:
+        avatar = msg.author.display_avatar.url if msg.author.display_avatar else ""
+        raw = msg.content or ""
+        content = discord.utils.escape_mentions(raw).replace("<", "&lt;").replace(">", "&gt;") if raw else "<i style='color:#72767d'>(không có nội dung)</i>"
+        # Attachments
+        attach_html = ""
+        for att in msg.attachments:
+            if att.content_type and att.content_type.startswith("image/"):
+                attach_html += f'<br><img src="{att.url}" class="attach-img" onerror="this.style.display=\'none\'">'
+            else:
+                attach_html += f'<br><a href="{att.url}" class="attach-link" target="_blank">📎 {att.filename}</a>'
+        time_str = msg.created_at.strftime("%d/%m/%Y %H:%M:%S")
+        is_bot = "bot-msg" if msg.author.bot else ""
+        rows += f"""
+        <div class="message {is_bot}">
+            <img class="avatar" src="{avatar}" onerror="this.style.display='none'">
+            <div class="content">
+                <div class="msg-header">
+                    <span class="author">{msg.author.display_name}</span>
+                    <span class="username">@{msg.author}</span>
+                    {"<span class='bot-badge'>BOT</span>" if msg.author.bot else ""}
+                    <span class="time">{time_str} UTC</span>
+                </div>
+                <div class="text">{content}{attach_html}</div>
+            </div>
+        </div>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transcript – {channel_name}</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: #313338; font-family: 'Segoe UI', Arial, sans-serif; color: #dcddde; padding: 0; }}
+
+  /* ── HEADER ── */
+  .header {{ background: #1e1f22; border-bottom: 2px solid #5865F2; padding: 24px 32px; }}
+  .header-title {{ display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }}
+  .header-title h1 {{ color: #fff; font-size: 22px; }}
+  .ticket-badge {{ background: #5865F2; color: #fff; font-size: 12px; padding: 3px 10px; border-radius: 12px; font-weight: 600; }}
+
+  .info-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }}
+  .info-row {{ display: flex; align-items: center; gap: 8px; background: #2b2d31; border-radius: 8px; padding: 8px 12px; }}
+  .info-icon {{ font-size: 16px; flex-shrink: 0; }}
+  .info-label {{ color: #a3a6aa; font-size: 12px; width: 110px; flex-shrink: 0; }}
+  .info-value {{ color: #fff; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }}
+  .uid {{ color: #a3a6aa; font-size: 11px; font-weight: 400; }}
+  .info-avatar {{ width: 20px; height: 20px; border-radius: 50%; }}
+
+  /* ── MESSAGES ── */
+  .messages {{ padding: 16px 32px; }}
+  .divider {{ text-align: center; color: #a3a6aa; font-size: 11px; margin: 12px 0; border-top: 1px solid #3f4147; padding-top: 8px; }}
+  .message {{ display: flex; gap: 14px; padding: 6px 10px; border-radius: 8px; margin-bottom: 1px; }}
+  .message:hover {{ background: #2e3035; }}
+  .bot-msg {{ opacity: 0.85; }}
+  .avatar {{ width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; margin-top: 2px; }}
+  .content {{ display: flex; flex-direction: column; gap: 2px; min-width: 0; }}
+  .msg-header {{ display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }}
+  .author {{ font-weight: 700; color: #fff; font-size: 14px; }}
+  .username {{ color: #a3a6aa; font-size: 11px; }}
+  .bot-badge {{ background: #5865F2; color: #fff; font-size: 10px; padding: 1px 5px; border-radius: 4px; font-weight: 600; }}
+  .time {{ color: #a3a6aa; font-size: 11px; }}
+  .text {{ font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: #dcddde; }}
+  .attach-img {{ max-width: 320px; max-height: 240px; border-radius: 6px; margin-top: 6px; }}
+  .attach-link {{ color: #00aff4; text-decoration: none; font-size: 13px; }}
+  .attach-link:hover {{ text-decoration: underline; }}
+
+  /* ── FOOTER ── */
+  .footer {{ text-align: center; color: #4f545c; font-size: 12px; padding: 20px; border-top: 1px solid #3f4147; margin-top: 16px; }}
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-title">
+      <h1>📄 Transcript</h1>
+      <span class="ticket-badge">#{channel_name}</span>
+    </div>
+    <div class="info-grid">
+      {info_rows}
+    </div>
+  </div>
+  <div class="messages">
+    <div class="divider">— Bắt đầu lịch sử tin nhắn —</div>
+    {rows}
+    <div class="divider">— Kết thúc — {len(messages)} tin nhắn —</div>
+  </div>
+  <div class="footer">TuyTam Store • Ticket System • Xuất lúc {close_time_str}</div>
+</body>
+</html>"""
+
+# ================= RATING MODAL =================
+class RatingModal(Modal):
+    def __init__(self, ticket_name: str, user_id: int):
+        super().__init__(title="⭐ Đánh Giá Dịch Vụ")
+        self.ticket_name = ticket_name
+        self.user_id = user_id
+
+    stars_input = TextInput(
+        label="Số sao (1-5)",
+        placeholder="Nhập số từ 1 đến 5",
+        min_length=1,
+        max_length=1
+    )
+    comment = TextInput(
+        label="Nhận xét (tuỳ chọn)",
+        placeholder="Dịch vụ tốt, staff nhiệt tình...",
+        style=discord.TextStyle.paragraph,
+        required=False,
+        max_length=200
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            stars = int(self.stars_input.value)
+            if stars < 1 or stars > 5:
+                raise ValueError
+        except ValueError:
+            return await interaction.response.send_message(
+                "❌ Số sao không hợp lệ! Nhập từ 1 đến 5.", ephemeral=True
+            )
+
+        save_rating(self.ticket_name, self.user_id, stars)
+        star_display = "⭐" * stars + "☆" * (5 - stars)
+
+        log = bot.get_channel(get_cfg_log_channel())
+        if log:
+            embed = discord.Embed(
+                title="⭐ Đánh Giá Mới",
+                color=0xF1C40F,
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(name="Ticket", value=f"`{self.ticket_name}`", inline=True)
+            embed.add_field(name="User", value=f"<@{self.user_id}>", inline=True)
+            embed.add_field(name="Đánh giá", value=star_display, inline=True)
+            if self.comment.value:
+                embed.add_field(name="Nhận xét", value=self.comment.value, inline=False)
+            await log.send(embed=embed)
+
+        await interaction.response.send_message(
+            f"✅ Cảm ơn bạn đã đánh giá! {star_display}", ephemeral=True
+        )
+
+class RatingView(View):
+    def __init__(self, ticket_name: str, user_id: int):
+        super().__init__(timeout=300)
+        self.ticket_name = ticket_name
+        self.user_id = user_id
+
+    @discord.ui.button(label="⭐ Đánh giá dịch vụ", style=discord.ButtonStyle.blurple)
+    async def rate(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("❌ Chỉ người tạo ticket mới được đánh giá.", ephemeral=True)
+        await interaction.response.send_modal(RatingModal(self.ticket_name, self.user_id))
+
+# ================= ADD STAFF MODAL =================
+class AddStaffModal(Modal):
+    def __init__(self):
+        super().__init__(title="📎 Thêm Staff vào Ticket")
+
+    user_id_input = TextInput(
+        label="ID của Staff",
+        placeholder="Nhập User ID (click chuột phải → Copy ID)",
+        min_length=15,
+        max_length=20
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            uid = int(self.user_id_input.value.strip())
+            member = interaction.guild.get_member(uid)
+            if not member:
+                return await interaction.response.send_message("❌ Không tìm thấy member này.", ephemeral=True)
+
+            overwrite = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True,
+                read_message_history=True, manage_messages=True
+            )
+            await interaction.channel.set_permissions(member, overwrite=overwrite)
+            await interaction.response.send_message(
+                f"✅ Đã thêm {member.mention} vào ticket!", ephemeral=False
+            )
+        except ValueError:
+            await interaction.response.send_message("❌ ID không hợp lệ!", ephemeral=True)
+
+# ================= NOTE MODAL =================
+class NoteModal(Modal):
+    def __init__(self, channel_id: int):
+        super().__init__(title="📝 Thêm Ghi Chú Nội Bộ")
+        self.channel_id = channel_id
+
+    note_input = TextInput(
+        label="Nội dung ghi chú",
+        placeholder="Ghi chú chỉ staff thấy...",
+        style=discord.TextStyle.paragraph,
+        max_length=500
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        add_ticket_note(self.channel_id, str(interaction.user), self.note_input.value)
+        embed = discord.Embed(
+            title="📝 Ghi Chú Nội Bộ",
+            description=self.note_input.value,
+            color=0xFEE75C,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.set_footer(text=f"Bởi {interaction.user} • Chỉ staff thấy")
+        await interaction.response.send_message(embed=embed)
+
+# ================= ORDER MODAL =================
+async def create_service_ticket(interaction: discord.Interaction, service_key: str):
+    """Tạo ticket dịch vụ thẳng không qua modal. Interaction đã được defer trước."""
+    guild = interaction.guild
+    try:
+        if await has_ticket(guild, interaction.user):
+            return await interaction.followup.send(
+                "❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.", ephemeral=True
+            )
+
+        info = SERVICE_TABLE[service_key]
+        number = await get_next_ticket_number()
+        created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user: discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True
+            )
+        }
+        for admin_id in ADMIN_IDS:
+            m = guild.get_member(admin_id)
+            if m:
+                overwrites[m] = discord.PermissionOverwrite(
+                    view_channel=True, send_messages=True,
+                    read_message_history=True, manage_messages=True
+                )
+        support_role = guild.get_role(get_cfg_support_role())
+        if support_role:
+            overwrites[support_role] = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True,
+                read_message_history=True, manage_messages=True
+            )
+
+        category = discord.utils.get(guild.categories, id=get_cfg_category())
+        channel = await guild.create_text_channel(
+            name=f"ticket-{number}",
+            overwrites=overwrites,
+            category=category,
+            topic=f"{interaction.user.id}||service|{service_key}|open"
+        )
+
+        embed = discord.Embed(
+            title=f"{info['type_label']}  •  #{number}",
+            description=(
+                f"Xin chào {interaction.user.mention}! 👋\n"
+                f"Staff sẽ hỗ trợ bạn sớm nhất có thể.\n"
+                f"🟡 **Trạng thái:** Đang chờ staff nhận"
+            ),
+            color=info["color"],
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="👤  Người dùng", value=interaction.user.mention, inline=True)
+        embed.add_field(name="🕐  Thời gian",  value=created_at,               inline=True)
+        embed.add_field(name="📦  Dịch vụ",   value=info["label"],             inline=True)
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_footer(
+            text="TuyTam Store  •  Ticket System",
+            icon_url=guild.icon.url if guild.icon else None
+        )
+
+        await channel.send(
+            f"<@&{get_cfg_support_role()}> | {interaction.user.mention}",
+            embed=embed,
+            view=TicketButtons()
+        )
+
+        await interaction.followup.send(
+            f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True
+        )
+
+        # Auto-ping chạy nền, không block
+
+    except Exception as e:
+        try:
+            await interaction.followup.send(
+                f"❌ Có lỗi xảy ra khi tạo ticket: `{e}`\nVui lòng thử lại hoặc liên hệ admin.", ephemeral=True
+            )
+        except:
+            pass
+
+
+class OrderModal(Modal):
+    def __init__(self, trade_type: str, item_key: str):
+        item_info = PRICE_TABLE[trade_type][item_key]
+        action = "Mua" if trade_type == "sell" else "Bán"
+        super().__init__(title=f"{action} {item_info['label']}")
+        self.trade_type = trade_type
+        self.item_key = item_key
+
+        self.mc_name = TextInput(
+            label="Tên Minecraft của bạn",
+            placeholder="Ví dụ: quannmc",
+            min_length=2, max_length=32
+        )
+        self.add_item(self.mc_name)
+        self.amount = TextInput(
+            label="Số lượng",
+            placeholder="Ví dụ: 10m / 5 cái / 100",
+            min_length=1, max_length=50
+        )
+        self.add_item(self.amount)
+        self.payment = TextInput(
+            label="Phương thức thanh toán",
+            placeholder="MB Bank / Thẻ cào / Thẻ Viettel (+18% thuế) / Ingame",
+            min_length=2, max_length=100
+        )
+        self.add_item(self.payment)
+        self.note = TextInput(
+            label="Ghi chú (tuỳ chọn)",
+            placeholder="Ví dụ: cần gấp, giao hàng online...",
+            style=discord.TextStyle.paragraph,
+            required=False, max_length=200
+        )
+        self.add_item(self.note)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        try:
+            if await has_ticket(guild, interaction.user):
+                return await interaction.response.send_message(
+                    "❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.",
+                    ephemeral=True
+                )
+
+            number = await get_next_ticket_number()
+            item_info = PRICE_TABLE[self.trade_type][self.item_key]
+            created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+
+            if self.trade_type == "sell":
+                color = 0x57F287
+                type_label = "🛒 MUA HÀNG"
+            else:
+                color = 0xFEE75C
+                type_label = "💸 BÁN HÀNG"
+
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                interaction.user: discord.PermissionOverwrite(
+                    view_channel=True, send_messages=True, read_message_history=True
+                )
+            }
+            for admin_id in ADMIN_IDS:
+                m = guild.get_member(admin_id)
+                if m:
+                    overwrites[m] = discord.PermissionOverwrite(
+                        view_channel=True, send_messages=True,
+                        read_message_history=True, manage_messages=True
+                    )
+            support_role = guild.get_role(get_cfg_support_role())
+            if support_role:
+                overwrites[support_role] = discord.PermissionOverwrite(
+                    view_channel=True, send_messages=True,
+                    read_message_history=True, manage_messages=True
+                )
+
+            category = discord.utils.get(guild.categories, id=get_cfg_category())
+            channel = await guild.create_text_channel(
+                name=f"ticket-{number}",
+                overwrites=overwrites,
+                category=category,
+                topic=f"{interaction.user.id}|{self.mc_name.value}|{self.trade_type}|{self.item_key}|open"
+            )
+
+            embed = discord.Embed(
+                title=f"{type_label}  •  {item_info['label']}  •  #{number}",
+                description=(
+                    f"Xin chào {interaction.user.mention}! 👋\n"
+                    f"Staff sẽ xử lý giao dịch sớm nhất có thể.\n"
+                    f"🟡 **Trạng thái:** Đang chờ staff nhận"
+                ),
+                color=color,
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(name="👤  Người dùng",    value=interaction.user.mention,  inline=True)
+            embed.add_field(name="🎮  Tên Minecraft", value=f"`{self.mc_name.value}`", inline=True)
+            embed.add_field(name="🕐  Thời gian",     value=created_at,                inline=True)
+            embed.add_field(name="📦  Item",          value=item_info["label"],        inline=True)
+            embed.add_field(name="🔢  Số lượng",      value=self.amount.value,         inline=True)
+            embed.add_field(name="💳  Thanh toán",    value=self.payment.value,        inline=True)
+            if "viettel" in self.payment.value.lower():
+                embed.add_field(
+                    name="⚠️  Lưu ý Viettel",
+                    value="Thẻ Viettel bị trừ thêm **18% thuế**, giá thực tế sẽ cao hơn!",
+                    inline=False
+                )
+            if self.note.value:
+                embed.add_field(name="📝  Ghi chú", value=self.note.value, inline=False)
+            embed.set_thumbnail(url=interaction.user.display_avatar.url)
+            embed.set_footer(
+                text="TuyTam Store  •  Ticket System",
+                icon_url=guild.icon.url if guild.icon else None
+            )
+
+            await channel.send(
+                f"<@&{get_cfg_support_role()}> | {interaction.user.mention}",
+                embed=embed,
+                view=TicketButtons()
+            )
+
+            await interaction.response.send_message(
+                f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True
+            )
+
+            # Auto-ping chạy nền, không block
+
+        except Exception as e:
+            try:
+                await interaction.response.send_message(
+                    f"❌ Có lỗi xảy ra khi tạo ticket: `{e}`\nVui lòng thử lại hoặc liên hệ admin.",
+                    ephemeral=True
+                )
+            except:
+                pass
+
+async def create_order_ticket(interaction: discord.Interaction, trade_type: str, item_key: str):
+    """Tạo ticket mua/bán thẳng không qua modal. Interaction đã được defer trước."""
+    guild = interaction.guild
+    try:
+        if await has_ticket(guild, interaction.user):
+            return await interaction.followup.send(
+                "❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.", ephemeral=True
+            )
+
+        number    = await get_next_ticket_number()
+        item_info = PRICE_TABLE[trade_type][item_key]
+        created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+
+        if trade_type == "sell":
+            color      = 0x57F287
+            type_label = "🛒 MUA HÀNG"
+        else:
+            color      = 0xFEE75C
+            type_label = "💸 BÁN HÀNG"
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user:   discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True
+            )
+        }
+        for admin_id in ADMIN_IDS:
+            m = guild.get_member(admin_id)
+            if m:
+                overwrites[m] = discord.PermissionOverwrite(
+                    view_channel=True, send_messages=True,
+                    read_message_history=True, manage_messages=True
+                )
+        support_role = guild.get_role(get_cfg_support_role())
+        if support_role:
+            overwrites[support_role] = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True,
+                read_message_history=True, manage_messages=True
+            )
+
+        category = discord.utils.get(guild.categories, id=get_cfg_category())
+        channel  = await guild.create_text_channel(
+            name=f"ticket-{number}",
+            overwrites=overwrites,
+            category=category,
+            topic=f"{interaction.user.id}||{trade_type}|{item_key}|open"
+        )
+
+        embed = discord.Embed(
+            title=f"{type_label}  •  {item_info['label']}  •  #{number}",
+            description=(
+                f"Xin chào {interaction.user.mention}! 👋\n"
+                f"Staff sẽ xử lý giao dịch sớm nhất có thể.\n"
+                f"🟡 **Trạng thái:** Đang chờ staff nhận"
+            ),
+            color=color,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="👤  Người dùng", value=interaction.user.mention, inline=True)
+        embed.add_field(name="🕐  Thời gian",  value=created_at,               inline=True)
+        embed.add_field(name="📦  Item",        value=item_info["label"],       inline=True)
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_footer(
+            text="TuyTam Store  •  Ticket System",
+            icon_url=guild.icon.url if guild.icon else None
+        )
+
+        await channel.send(
+            f"<@&{get_cfg_support_role()}> | {interaction.user.mention}",
+            embed=embed,
+            view=TicketButtons()
+        )
+
+        await interaction.followup.send(
+            f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True
+        )
+
+    except Exception as e:
+        try:
+            await interaction.followup.send(
+                f"❌ Có lỗi xảy ra khi tạo ticket: `{e}`\nVui lòng thử lại hoặc liên hệ admin.",
+                ephemeral=True
+            )
+        except:
+            pass
+
+# ================= SELECT ITEM =================
+class ItemSelect(Select):
+    def __init__(self, trade_type: str):
+        self.trade_type = trade_type
+        action = "mua" if trade_type == "sell" else "bán"
+        options = [
+            discord.SelectOption(
+                label=info["label"],
+                value=key,
+                description=info["note"] if key in NO_PRICE_KEYS else f"Giá: {info['price']} / {info['unit']}",
+                emoji=info["label"].split()[0]
+            )
+            for key, info in PRICE_TABLE[trade_type].items()
+        ]
+        super().__init__(
+            placeholder=f"Chọn item bạn muốn {action}...",
+            options=options,
+            custom_id=f"item_select_{trade_type}"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            await create_order_ticket(interaction, trade_type=self.trade_type, item_key=self.values[0])
+        except Exception as e:
+            try:
+                await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except:
+                pass
+
+class ItemSelectView(View):
+    def __init__(self, trade_type: str):
+        super().__init__(timeout=60)
+        self.add_item(ItemSelect(trade_type))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+# ================= SERVICE SELECT =================
+class ServiceSelect(Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(
+                label=info["label"],
+                value=key,
+                description=info["note"],
+                emoji=info["label"].split()[0]
+            )
+            for key, info in SERVICE_TABLE.items()
+        ]
+        super().__init__(
+            placeholder="Chọn dịch vụ bạn cần...",
+            options=options,
+            custom_id="service_select"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            await create_service_ticket(interaction, self.values[0])
+        except Exception as e:
+            try:
+                await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except:
+                pass
+
+class ServiceSelectView(View):
+    def __init__(self):
+        super().__init__(timeout=60)
+        self.add_item(ServiceSelect())
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+# ================= PANEL VIEW =================
+class TicketPanel(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Mua hàng",
+        emoji="🛒",
+        style=discord.ButtonStyle.green,
+        custom_id="panel_buy"
+    )
+    async def buy(self, interaction: discord.Interaction, button: Button):
+        try:
+            await interaction.response.send_message(
+                "🛒 **Bạn muốn mua item nào?**",
+                view=ItemSelectView(trade_type="sell"),
+                ephemeral=True
+            )
+        except Exception as e:
+            try:
+                await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except:
+                pass
+
+    @discord.ui.button(
+        label="Bán hàng",
+        emoji="💸",
+        style=discord.ButtonStyle.blurple,
+        custom_id="panel_sell"
+    )
+    async def sell(self, interaction: discord.Interaction, button: Button):
+        try:
+            await interaction.response.send_message(
+                "💸 **Bạn muốn bán item nào?**",
+                view=ItemSelectView(trade_type="buy"),
+                ephemeral=True
+            )
+        except Exception as e:
+            try:
+                await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except:
+                pass
+
+    @discord.ui.button(
+        label="Dịch Vụ",
+        emoji="🎮",
+        style=discord.ButtonStyle.grey,
+        custom_id="panel_service"
+    )
+    async def service(self, interaction: discord.Interaction, button: Button):
+        try:
+            await interaction.response.send_message(
+                "🎮 **Bạn cần dịch vụ nào?**",
+                view=ServiceSelectView(),
+                ephemeral=True
+            )
+        except Exception as e:
+            try:
+                await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except:
+                pass
+
+    @discord.ui.button(
+        label="Xem giá",
+        emoji="📋",
+        style=discord.ButtonStyle.grey,
+        custom_id="panel_price"
+    )
+    async def view_price(self, interaction: discord.Interaction, button: Button):
+        embed = build_price_embed(interaction.guild)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ================= TICKET BUTTONS =================
+class TicketButtons(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Claim",
+        emoji="🙋",
+        style=discord.ButtonStyle.blurple,
+        custom_id="claim_ticket"
+    )
+    async def claim_ticket(self, interaction: discord.Interaction, button: Button):
+        support_role = interaction.guild.get_role(get_cfg_support_role())
+        has_role = support_role in interaction.user.roles if support_role else False
+        if not (interaction.user.id in ADMIN_IDS or has_role):
+            return await interaction.response.send_message("❌ Bạn không có quyền claim.", ephemeral=True)
+        try:
+            for item in self.children:
+                if item.custom_id == "claim_ticket":
+                    item.disabled = True
+                    item.label = f"Claimed: {interaction.user.display_name}"
+                    item.emoji = "✅"
+                    break
+            await interaction.response.defer()
+            await interaction.message.edit(view=self)
+            await interaction.followup.send(f"✅ {interaction.user.mention} đã nhận ticket này!")
+        except Exception as e:
+            try:
+                await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except:
+                pass
+
+    @discord.ui.button(
+        label="Add Staff",
+        emoji="📎",
+        style=discord.ButtonStyle.grey,
+        custom_id="add_staff"
+    )
+    async def add_staff(self, interaction: discord.Interaction, button: Button):
+        support_role = interaction.guild.get_role(get_cfg_support_role())
+        has_role = support_role in interaction.user.roles if support_role else False
+        if not (interaction.user.id in ADMIN_IDS or has_role):
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        try:
+            await interaction.response.send_modal(AddStaffModal())
+        except Exception as e:
+            try:
+                await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except:
+                pass
+
+    @discord.ui.button(
+        label="Ghi chú",
+        emoji="📝",
+        style=discord.ButtonStyle.grey,
+        custom_id="add_note"
+    )
+    async def add_note(self, interaction: discord.Interaction, button: Button):
+        support_role = interaction.guild.get_role(get_cfg_support_role())
+        has_role = support_role in interaction.user.roles if support_role else False
+        if not (interaction.user.id in ADMIN_IDS or has_role):
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        try:
+            await interaction.response.send_modal(NoteModal(interaction.channel.id))
+        except Exception as e:
+            try:
+                await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except:
+                pass
+
+    @discord.ui.button(
+        label="Đóng ticket",
+        emoji="🔒",
+        style=discord.ButtonStyle.red,
+        custom_id="close_ticket"
+    )
+    async def close_ticket(self, interaction: discord.Interaction, button: Button):
+        support_role = interaction.guild.get_role(get_cfg_support_role())
+        has_role = support_role in interaction.user.roles if support_role else False
+        if not (interaction.user.id in ADMIN_IDS or has_role):
+            return await interaction.response.send_message("❌ Không có quyền.", ephemeral=True)
+        try:
+            await interaction.response.defer()
+            await _close_ticket(interaction.channel, bot, closer=interaction.user)
+        except Exception as e:
+            try:
+                await interaction.followup.send(f"❌ Lỗi khi đóng ticket: `{e}`", ephemeral=True)
+            except:
+                pass
+
+    @discord.ui.button(
+        label="Gửi QR",
+        emoji="📱",
+        style=discord.ButtonStyle.green,
+        custom_id="send_qr"
+    )
+    async def send_qr(self, interaction: discord.Interaction, button: Button):
+        support_role = interaction.guild.get_role(get_cfg_support_role())
+        has_role = support_role in interaction.user.roles if support_role else False
+        if not (interaction.user.id in ADMIN_IDS or has_role):
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        try:
+            qr_path = get_qr_path()
+            if not qr_path or not os.path.exists(qr_path):
+                return await interaction.response.send_message(
+                    "❌ Chưa có QR! Admin cài QR qua `.settings` trước.", ephemeral=True
+                )
+            file = discord.File(qr_path, filename="qr.png")
+            embed = discord.Embed(
+                title="📱  Mã QR Thanh Toán",
+                description=(
+                    "> 🏦 **MB Bank** — `0702557706` — HOVANBUT\n"
+                    "> 📱 **Thẻ Viettel** bị trừ thêm **18% thuế**\n"
+                    "> ⚠️ Ghi rõ nội dung: `[tên MC] mua [item]`"
+                ),
+                color=0x57F287,
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.set_image(url="attachment://qr.png")
+            embed.set_footer(text=f"Gửi bởi {interaction.user.display_name}")
+            await interaction.response.send_message(embed=embed, file=file)
+        except Exception as e:
+            try:
+                await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except:
+                pass
+
+# ================= CLOSE LOGIC =================
+async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
+    # ── Đọc thông tin từ topic: user_id|mc_name|trade_type|item|status ──
+    user_id    = None
+    mc_name    = None
+    trade_type = None
+    item_key   = None
+    ticket_name = channel.name
+
+    if channel.topic:
+        parts = channel.topic.split("|")
+        try: user_id    = int(parts[0]) if parts[0].isdigit() else None
+        except: pass
+        mc_name    = parts[1] if len(parts) > 1 and parts[1] not in ("service", "") else None
+        trade_type = parts[2] if len(parts) > 2 else None
+        item_key   = parts[3] if len(parts) > 3 else None
+
+    # ── Lấy thông tin thành viên tạo ticket ──
+    guild = channel.guild
+    creator: discord.Member | None = guild.get_member(user_id) if user_id else None
+
+    # ── Tính thời gian tạo từ tin nhắn đầu tiên ──
+    messages = [msg async for msg in channel.history(limit=None, oldest_first=True)]
+    created_at_str = messages[0].created_at.strftime("%d/%m/%Y %H:%M:%S UTC") if messages else "Không rõ"
+
+    # ── Dịch item_key sang tên đọc được ──
+    item_label = None
+    if item_key and trade_type:
+        try:
+            item_label = PRICE_TABLE[trade_type][item_key]["label"]
+        except (KeyError, TypeError):
+            pass
+    if not item_label and item_key:
+        svc = SERVICE_TABLE.get(item_key)
+        item_label = svc["label"] if svc else item_key
+
+    # ── Dịch trade_type sang nhãn ticket ──
+    type_map = {"sell": "🛒 Mua Hàng", "buy": "💸 Bán Hàng", "service": "🎮 Dịch Vụ"}
+    ticket_type_label = type_map.get(trade_type, trade_type or "Ticket")
+
+    # ── Build transcript HTML với đầy đủ info ──
+    info = {
+        "created_by_name":   str(creator) if creator else (f"ID:{user_id}" if user_id else "Không rõ"),
+        "created_by_id":     str(user_id) if user_id else "",
+        "created_by_avatar": creator.display_avatar.url if creator else "",
+        "closed_by_name":    str(closer) if closer else "Hệ thống",
+        "closed_by_id":      str(closer.id) if closer else "",
+        "ticket_type":       ticket_type_label,
+        "mc_name":           mc_name,
+        "item":              item_label,
+        "trade_type":        trade_type,
+        "created_at":        created_at_str,
+    }
+
+    html = build_transcript_html(channel.name, messages, info)
+    file = discord.File(io.BytesIO(html.encode("utf-8")), filename=f"transcript-{channel.name}.html")
+
+    # ── Gửi embed log chi tiết ──
+    log = bot_instance.get_channel(get_cfg_log_channel())
+    if log:
+        close_time = datetime.now(timezone.utc)
+        # Tính thời lượng ticket
+        if messages:
+            duration = close_time - messages[0].created_at.replace(tzinfo=timezone.utc)
+            total_sec = int(duration.total_seconds())
+            h, m, s = total_sec // 3600, (total_sec % 3600) // 60, total_sec % 60
+            duration_str = f"{h}g {m}p {s}s" if h else f"{m}p {s}s"
+        else:
+            duration_str = "Không rõ"
+
+        embed = discord.Embed(
+            title="📄 Ticket Đã Đóng",
+            color=0xED4245,
+            timestamp=close_time
+        )
+        embed.add_field(name="🎫 Ticket",        value=f"`{ticket_name}`",                                    inline=True)
+        embed.add_field(name="🏷️ Loại",          value=ticket_type_label,                                     inline=True)
+        embed.add_field(name="💬 Tin nhắn",       value=f"**{len(messages)}**",                                inline=True)
+        embed.add_field(name="👤 Người tạo",      value=str(creator) if creator else f"`ID:{user_id}`",        inline=True)
+        embed.add_field(name="🔒 Người đóng",     value=closer.mention if closer else "Hệ thống",              inline=True)
+        embed.add_field(name="⏱️ Thời lượng",     value=duration_str,                                          inline=True)
+        embed.add_field(name="🕐 Thời gian tạo",  value=created_at_str,                                        inline=True)
+        embed.add_field(name="🕑 Thời gian đóng", value=close_time.strftime("%d/%m/%Y %H:%M:%S UTC"),          inline=True)
+        if mc_name:
+            embed.add_field(name="🎮 Minecraft",  value=f"`{mc_name}`",                                        inline=True)
+        if item_label:
+            embed.add_field(name="📦 Item",       value=item_label,                                            inline=True)
+        if creator:
+            embed.set_thumbnail(url=creator.display_avatar.url)
+        embed.set_footer(text="TuyTam Store • Ticket System")
+        await log.send(embed=embed, file=file)
+
+    # ── Ghi chú nội bộ ──
+    notes = get_ticket_note(channel.id)
+    if notes and log:
+        note_text = "\n".join([f"**{n['author']}:** {n['note']}" for n in notes])
+        note_embed = discord.Embed(
+            title="📝 Ghi Chú Nội Bộ",
+            description=note_text,
+            color=0xFEE75C,
+            timestamp=datetime.now(timezone.utc)
+        )
+        note_embed.set_footer(text=f"Ticket: {ticket_name}")
+        await log.send(embed=note_embed)
+
+    await channel.delete()
+
+    # ── Gửi DM đánh giá ──
+    if creator:
+        try:
+            rate_embed = discord.Embed(
+                title="⭐ Đánh Giá Dịch Vụ",
+                description=(
+                    f"Ticket `{ticket_name}` của bạn đã được đóng.\n"
+                    f"Hãy đánh giá dịch vụ để giúp chúng tôi cải thiện!"
+                ),
+                color=0xF1C40F,
+                timestamp=datetime.now(timezone.utc)
+            )
+            await creator.send(embed=rate_embed, view=RatingView(ticket_name, creator.id))
+        except discord.Forbidden:
+            pass
+
+# ================= COMMANDS =================
+@bot.command()
+async def ping(ctx):
+    latency = round(bot.latency * 1000)
+    if latency < 100:
+        color, status = 0x57F287, "Tốt 🟢"
+    elif latency < 200:
+        color, status = 0xFEE75C, "Bình thường 🟡"
+    else:
+        color, status = 0xED4245, "Chậm 🔴"
+    embed = discord.Embed(
+        title="🏓 Pong!",
+        description=f"Độ trễ: **{latency}ms** — {status}",
+        color=color
+    )
+    await ctx.reply(embed=embed)
+
+
+@bot.command(name="price")
+async def price_cmd(ctx):
+    embed = build_price_embed(ctx.guild)
+    await ctx.reply(embed=embed)
+
+
+HELP_CATEGORIES = {
+    "chung": {
+        "title": "🌐  Lệnh Chung",
+        "fields": [
+            ("`.ping`",                    "Kiểm tra độ trễ bot"),
+            ("`.price`",                   "Xem bảng giá cửa hàng"),
+            ("`.qr`",                      "Gửi mã QR thanh toán"),
+            ("`.botinfo` / `.bi`",         "Thông tin bot (version, ping, uptime)"),
+            ("`.serverinfo` / `.si`",      "Thông tin server Discord"),
+            ("`.userinfo [@user]` / `.ui`","Thông tin thành viên"),
+        ]
+    },
+    "ticket": {
+        "title": "🎫  Lệnh Ticket",
+        "fields": [
+            ("`.panel`",                   "Gửi panel tạo ticket *(admin)*"),
+            ("`.setpanel #kênh`",          "Chỉ định kênh đặt panel ticket *(admin)*"),
+            ("`.close`",                   "Đóng ticket hiện tại *(admin/staff)*"),
+            ("`.addnote <nội dung>`",      "Thêm ghi chú nội bộ vào ticket *(admin/staff)*"),
+            ("`.stock`",                   "Xem toàn bộ stock hiện tại"),
+            ("`.stock <item> <số lượng>`", "Cập nhật số lượng stock *(admin/staff)*"),
+            ("`.ratings`",                 "Xem thống kê đánh giá từ khách *(admin)*"),
+            ("`.orderbase`",               "Gửi bảng giá Order Base *(admin)*"),
+        ]
+    },
+    "mod": {
+        "title": "🛡️  Lệnh Kiểm Duyệt",
+        "fields": [
+            ("`.clear <số>` / `.purge`",         "Xoá tin nhắn trong kênh (1–100) *(admin/staff)*"),
+            ("`.addrole @user @role`",            "Thêm role cho thành viên *(admin)*"),
+            ("`.removerole @user @role`",         "Xoá role của thành viên *(admin)*"),
+            ("`.createchannel <tên> [text/voice]`\n`.cc`", "Tạo kênh text hoặc voice *(admin)*"),
+            ("`.deletechannel [#kênh]` / `.dc`",  "Xoá kênh (mặc định: kênh hiện tại) *(admin)*"),
+            ("`.rename #kênh <tên mới>`",         "Đổi tên kênh, giữ icon & số đếm *(admin)*"),
+            ("`.setperm #kênh @role xem=true ...`","Sửa quyền kênh nhanh *(admin)*"),
+            ("`.emoji`",                          "Lắng nghe 60s, thêm ảnh/GIF làm emoji *(admin)*"),
+            ("`.emoji <emoji>`",                  "Thêm emoji từ server khác *(admin)*"),
+        ]
+    },
+    "giveaway": {
+        "title": "🎉  Lệnh Giveaway",
+        "fields": [
+            ("`.gstart <time> <số người> <phần thưởng>`", "Tạo giveaway — VD: `.gstart 1h 2 100m` *(admin)*"),
+            ("`.gend <message_id>`",                       "Kết thúc giveaway sớm *(admin)*"),
+            ("`.greroll <message_id>`",                    "Quay lại người thắng *(admin)*"),
+            ("`/giveaway`",                                "Tạo giveaway qua slash command *(admin)*"),
+            ("`/gend`",                                    "Kết thúc giveaway qua slash command *(admin)*"),
+        ]
+    },
+    "balance": {
+        "title": "💰  Hệ Thống Số Dư",
+        "fields": [
+            ("`+ <số tiền>`",        "Nạp tiền vào (tự trừ phí 5%) — nhập trong kênh balance"),
+            ("`- <số tiền>`",        "Chi tiền ra (số dư có thể âm) — nhập trong kênh balance"),
+            ("`.balance` / `.bal`",  "Xem số dư & lịch sử giao dịch"),
+            ("`.balset <số>`",       "Đặt số dư về giá trị bất kỳ *(admin)*"),
+            ("`.balreset`",          "Reset toàn bộ số dư về 0 *(admin)*"),
+        ]
+    },
+    "caidat": {
+        "title": "⚙️  Lệnh Cài Đặt",
+        "fields": [
+            ("`.settings` / `.st`",  "Xem & cấu hình toàn bộ bot (kênh, QR, balance…) *(admin)*"),
+            ("`.setup`",             "Mở menu Setup Server nhanh *(admin)*"),
+            ("`.setpanel #kênh`",    "Chỉ định kênh panel ticket *(admin)*"),
+        ]
+    },
+    "tiktok": {
+        "title": "📱  TikTok Monitor",
+        "fields": [
+            ("`.tiktok`",                       "Xem hướng dẫn TikTok monitor"),
+            ("`.tiktok add <username>`",         "Thêm tài khoản TikTok cần theo dõi *(admin)*"),
+            ("`.tiktok remove <username>`",      "Xoá tài khoản khỏi danh sách *(admin)*"),
+            ("`.tiktok list`",                   "Danh sách tài khoản đang theo dõi & trạng thái LIVE *(admin)*"),
+            ("`.tiktok setchannel #kênh`",       "Đặt kênh nhận thông báo TikTok *(admin)*"),
+            ("`.tiktok status`",                 "Xem trạng thái đầy đủ: kênh, watcher, interval *(admin)*"),
+        ]
+    },
+}
+
+# Slash command equivalents (hiển thị trong help chung)
+_SLASH_SUMMARY = (
+    "`/ping` `/price` `/qr` `/stock` `/botinfo` `/serverinfo` `/userinfo`\n"
+    "`/clear` `/addrole` `/removerole` `/createchannel` `/deletechannel`\n"
+    "`/giveaway` `/gend`"
+)
+
+@bot.command(name="help")
+async def help_cmd(ctx, category: str = None):
+    if category is None:
+        embed = discord.Embed(
+            title="📋  Trợ Lý TuyTam Store — Danh Sách Lệnh",
+            description=(
+                "Dùng **`.help <mục>`** để xem chi tiết từng nhóm lệnh.\n"
+                "Slash commands `/` cũng khả dụng cho hầu hết lệnh!"
+            ),
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc)
+        )
+        cats = [
+            ("🌐 `.help chung`",    "`.ping` `.price` `.qr` `.botinfo` `.serverinfo` `.userinfo`"),
+            ("🎫 `.help ticket`",   "`.panel` `.close` `.addnote` `.stock` `.ratings` `.orderbase`"),
+            ("🛡️ `.help mod`",      "`.clear` `.addrole` `.removerole` `.createchannel` `.deletechannel` `.rename` `.setperm` `.emoji`"),
+            ("🎉 `.help giveaway`", "`.gstart` `.gend` `.greroll`  +  `/giveaway` `/gend`"),
+            ("💰 `.help balance`",  "`.balance` `.balset` `.balreset`  +  nạp/chi trong kênh balance"),
+            ("⚙️ `.help caidat`",   "`.settings` `.setup` `.setpanel`"),
+            ("📱 `.help tiktok`",   "`.tiktok add/remove/list/setchannel/status`"),
+        ]
+        for name, desc in cats:
+            embed.add_field(name=name, value=desc, inline=False)
+        embed.add_field(
+            name="⚡ Slash Commands",
+            value=_SLASH_SUMMARY,
+            inline=False
+        )
+        embed.set_footer(text="TuyTam Store  •  Prefix: .  |  Slash: /  |  *(admin)* = chỉ admin dùng được")
+        return await ctx.reply(embed=embed)
+
+    cat = category.lower()
+    if cat not in HELP_CATEGORIES:
+        keys = " / ".join(f"`{k}`" for k in HELP_CATEGORIES)
+        return await ctx.reply(f"❌ Mục không tồn tại! Chọn: {keys}")
+
+    data = HELP_CATEGORIES[cat]
+    embed = discord.Embed(
+        title=data["title"],
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    for cmd_str, desc in data["fields"]:
+        embed.add_field(name=cmd_str, value=desc, inline=False)
+    embed.set_footer(text="TuyTam Store  •  Dùng .help để xem tất cả mục  |  *(admin)* = chỉ admin")
+    await ctx.reply(embed=embed)
+
+
+# ================= MODERATION =================
+@bot.command(name="clear", aliases=["purge"])
+async def clear_cmd(ctx, amount: int = 10):
+    support_role = ctx.guild.get_role(get_cfg_support_role())
+    has_role = support_role in ctx.author.roles if support_role else False
+    if not (ctx.author.id in ADMIN_IDS or has_role):
+        return await ctx.reply("❌ Bạn không có quyền.", delete_after=3)
+    if not 1 <= amount <= 100:
+        return await ctx.reply("❌ Số tin cần xoá phải từ 1–100.", delete_after=3)
+    try:
+        await ctx.message.delete()
+        deleted = await ctx.channel.purge(limit=amount)
+        msg = await ctx.send(f"🗑️ Đã xoá **{len(deleted)}** tin nhắn.")
+        await asyncio.sleep(3)
+        await msg.delete()
+    except discord.Forbidden:
+        await ctx.reply("❌ Bot thiếu quyền `Manage Messages`.")
+    except Exception as e:
+        await ctx.reply(f"❌ Lỗi: `{e}`")
+
+
+@bot.command(name="addrole")
+async def addrole_cmd(ctx, member: discord.Member = None, role: discord.Role = None):
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới dùng được.")
+    if not member or not role:
+        return await ctx.reply("❌ Dùng: `.addrole @user @role`")
+    try:
+        await member.add_roles(role)
+        embed = discord.Embed(
+            title="✅  Đã Thêm Role",
+            description=f"Đã thêm {role.mention} cho {member.mention}",
+            color=0x57F287, timestamp=datetime.now(timezone.utc)
+        )
+        embed.set_footer(text=f"Bởi {ctx.author}")
+        await ctx.reply(embed=embed)
+    except discord.Forbidden:
+        await ctx.reply("❌ Bot thiếu quyền `Manage Roles` hoặc role cao hơn bot.")
+    except Exception as e:
+        await ctx.reply(f"❌ Lỗi: `{e}`")
+
+
+@bot.command(name="removerole")
+async def removerole_cmd(ctx, member: discord.Member = None, role: discord.Role = None):
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới dùng được.")
+    if not member or not role:
+        return await ctx.reply("❌ Dùng: `.removerole @user @role`")
+    try:
+        await member.remove_roles(role)
+        embed = discord.Embed(
+            title="✅  Đã Gỡ Role",
+            description=f"Đã gỡ {role.mention} khỏi {member.mention}",
+            color=0xED4245, timestamp=datetime.now(timezone.utc)
+        )
+        embed.set_footer(text=f"Bởi {ctx.author}")
+        await ctx.reply(embed=embed)
+    except discord.Forbidden:
+        await ctx.reply("❌ Bot thiếu quyền `Manage Roles` hoặc role cao hơn bot.")
+    except Exception as e:
+        await ctx.reply(f"❌ Lỗi: `{e}`")
+
+
+@bot.command(name="createchannel", aliases=["cc"])
+async def createchannel_cmd(ctx, name: str = None, ch_type: str = "text"):
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới dùng được.")
+    if not name:
+        return await ctx.reply("❌ Dùng: `.createchannel <tên> [text/voice]`")
+    try:
+        name = name.lower().replace(" ", "-")
+        if ch_type.lower() == "voice":
+            channel = await ctx.guild.create_voice_channel(name, category=ctx.channel.category)
+            icon = "🔊"
+        else:
+            channel = await ctx.guild.create_text_channel(name, category=ctx.channel.category)
+            icon = "💬"
+        embed = discord.Embed(
+            title="✅  Đã Tạo Kênh",
+            description=f"{icon} {channel.mention} đã được tạo!",
+            color=0x57F287, timestamp=datetime.now(timezone.utc)
+        )
+        embed.set_footer(text=f"Tạo bởi {ctx.author}")
+        await ctx.reply(embed=embed)
+    except discord.Forbidden:
+        await ctx.reply("❌ Bot thiếu quyền `Manage Channels`.")
+    except Exception as e:
+        await ctx.reply(f"❌ Lỗi: `{e}`")
+
+
+@bot.command(name="deletechannel", aliases=["dc"])
+async def deletechannel_cmd(ctx, channel: discord.TextChannel = None):
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới dùng được.")
+    target = channel or ctx.channel
+    try:
+        name = target.name
+        await target.delete()
+        if target != ctx.channel:
+            embed = discord.Embed(
+                title="✅  Đã Xoá Kênh",
+                description=f"Kênh `#{name}` đã bị xoá.",
+                color=0xED4245, timestamp=datetime.now(timezone.utc)
+            )
+            embed.set_footer(text=f"Xoá bởi {ctx.author}")
+            await ctx.reply(embed=embed)
+    except discord.Forbidden:
+        await ctx.reply("❌ Bot thiếu quyền `Manage Channels`.")
+    except Exception as e:
+        await ctx.reply(f"❌ Lỗi: `{e}`")
+
+
+# ================= GIVEAWAY =================
+import re as _re
+import random
+
+active_giveaways: dict[int, dict] = {}
+
+def parse_time(time_str: str) -> int:
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    match = _re.fullmatch(r"(\d+)([smhd])", time_str.lower())
+    if not match:
+        return 0
+    return int(match.group(1)) * units[match.group(2)]
+
+
+async def end_giveaway(message_id: int, channel: discord.TextChannel, winners_count: int, prize: str, host_id: int):
+    try:
+        msg = await channel.fetch_message(message_id)
+    except:
+        return
+    reaction = discord.utils.get(msg.reactions, emoji="🎉")
+    if not reaction:
+        return await channel.send("❌ Không có ai tham gia giveaway!")
+    entries = [u async for u in reaction.users() if not u.bot]
+    if not entries:
+        return await channel.send("❌ Không có người tham gia hợp lệ!")
+    count = min(winners_count, len(entries))
+    winners = random.sample(entries, count)
+    winner_mentions = ", ".join(w.mention for w in winners)
+    embed = discord.Embed(
+        title="🎉  Giveaway Kết Thúc!",
+        description=f"**Phần thưởng:** {prize}\n**🏆 Winner:** {winner_mentions}",
+        color=0xF1C40F, timestamp=datetime.now(timezone.utc)
+    )
+    host = channel.guild.get_member(host_id)
+    embed.set_footer(text=f"Host: {host.display_name if host else host_id}")
+    await msg.edit(embed=embed)
+    await channel.send(f"🎊 Chúc mừng {winner_mentions}! Bạn đã thắng **{prize}**!")
+    if message_id in active_giveaways:
+        active_giveaways[message_id]["ended"] = True
+        active_giveaways[message_id]["winner_ids"] = [w.id for w in winners]
+
+
+@bot.command(name="gstart")
+async def gstart_cmd(ctx, time_str: str = None, winners: str = None, *, prize: str = None):
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới dùng được.")
+    if not time_str or not winners or not prize:
+        return await ctx.reply("❌ Dùng: `.gstart <time> <winners> <prize>`\nVí dụ: `.gstart 10m 1 100m ingame`")
+    duration = parse_time(time_str)
+    if duration <= 0:
+        return await ctx.reply("❌ Thời gian không hợp lệ! Dùng: `30s`, `10m`, `1h`, `1d`")
+    try:
+        w_count = max(1, int(winners))
+    except ValueError:
+        return await ctx.reply("❌ Số người thắng phải là số!")
+    ends_at = int(datetime.now(timezone.utc).timestamp()) + duration
+    embed = discord.Embed(
+        title="🎉  GIVEAWAY",
+        description=(
+            f"**Phần thưởng:** {prize}\n\n"
+            f"React 🎉 để tham gia!\n"
+            f"⏰ Kết thúc: <t:{ends_at}:R>\n"
+            f"🏆 Số người thắng: **{w_count}**"
+        ),
+        color=0xF1C40F,
+        timestamp=datetime.fromtimestamp(ends_at, tz=timezone.utc)
+    )
+    embed.set_footer(text=f"Host: {ctx.author.display_name}  •  Kết thúc lúc")
+    msg = await ctx.send(embed=embed)
+    await msg.add_reaction("🎉")
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+    active_giveaways[msg.id] = {
+        "channel_id": ctx.channel.id, "winners": w_count,
+        "prize": prize, "host_id": ctx.author.id,
+        "ends_at": ends_at, "ended": False
+    }
+
+    async def _countdown():
+        await asyncio.sleep(duration)
+        if not active_giveaways.get(msg.id, {}).get("ended"):
+            await end_giveaway(msg.id, ctx.channel, w_count, prize, ctx.author.id)
+    asyncio.create_task(_countdown())
+
+
+@bot.command(name="greroll")
+async def greroll_cmd(ctx, message_id: int = None):
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới dùng được.")
+    if not message_id:
+        return await ctx.reply("❌ Dùng: `.greroll <message_id>`")
+    try:
+        msg = await ctx.channel.fetch_message(message_id)
+        reaction = discord.utils.get(msg.reactions, emoji="🎉")
+        if not reaction:
+            return await ctx.reply("❌ Không tìm thấy reaction 🎉!")
+        entries = [u async for u in reaction.users() if not u.bot]
+        if not entries:
+            return await ctx.reply("❌ Không có người tham gia hợp lệ!")
+        winner = random.choice(entries)
+        prize = active_giveaways.get(message_id, {}).get("prize", "phần thưởng")
+        await ctx.send(f"🎊 **Reroll!** Chúc mừng {winner.mention}! Bạn đã thắng **{prize}**!")
+    except discord.NotFound:
+        await ctx.reply("❌ Không tìm thấy tin nhắn!")
+    except Exception as e:
+        await ctx.reply(f"❌ Lỗi: `{e}`")
+
+
+@bot.command(name="gend")
+async def gend_cmd(ctx, message_id: int = None):
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới dùng được.")
+    if not message_id:
+        return await ctx.reply("❌ Dùng: `.gend <message_id>`")
+    gw = active_giveaways.get(message_id)
+    if not gw:
+        return await ctx.reply("❌ Không tìm thấy giveaway đang hoạt động!")
+    if gw.get("ended"):
+        return await ctx.reply("❌ Giveaway này đã kết thúc rồi!")
+    await end_giveaway(message_id, ctx.channel, gw["winners"], gw["prize"], gw["host_id"])
+    await ctx.reply("✅ Đã kết thúc giveaway sớm!")
+
+
+# ================= INFO COMMANDS =================
+@bot.command(name="botinfo", aliases=["bi"])
+async def botinfo_cmd(ctx):
+    import platform, sys, time
+    latency = round(bot.latency * 1000)
+    lat_status = "🟢 Tốt" if latency < 100 else ("🟡 Bình thường" if latency < 200 else "🔴 Chậm")
+
+    total_users  = sum(g.member_count or 0 for g in bot.guilds)
+    total_ch     = sum(len(g.channels) for g in bot.guilds)
+    total_roles  = sum(len(g.roles) for g in bot.guilds)
+    cmds_count   = len(bot.commands)
+
+    embed = discord.Embed(
+        title=f"🤖  {bot.user.name}",
+        description=f"Bot ticket & quản lý giao dịch của **TuyTam Store**",
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_thumbnail(url=bot.user.display_avatar.url)
+
+    # ── Thông tin cơ bản ──
+    embed.add_field(name="👤  Tag",          value=f"`{bot.user}`",                          inline=True)
+    embed.add_field(name="🆔  ID",           value=f"`{bot.user.id}`",                       inline=True)
+    embed.add_field(name="📅  Tạo lúc",      value=f"<t:{int(bot.user.created_at.timestamp())}:D>", inline=True)
+
+    # ── Hiệu suất ──
+    embed.add_field(name="🏓  Latency",      value=f"**{latency}ms** {lat_status}",          inline=True)
+    embed.add_field(name="🐍  Python",       value=f"`{platform.python_version()}`",         inline=True)
+    embed.add_field(name="📚  discord.py",   value=f"`{discord.__version__}`",               inline=True)
+
+    # ── Phạm vi hoạt động ──
+    embed.add_field(name="🌐  Servers",      value=f"**{len(bot.guilds)}** server",           inline=True)
+    embed.add_field(name="👥  Tổng users",   value=f"**{total_users:,}** người",             inline=True)
+    embed.add_field(name="💬  Tổng kênh",    value=f"**{total_ch}** kênh",                   inline=True)
+
+    # ── Tính năng ──
+    embed.add_field(name="🎭  Tổng roles",   value=f"**{total_roles}** roles",               inline=True)
+    embed.add_field(name="⌨️  Lệnh",         value=f"**{cmds_count}** prefix + slash",       inline=True)
+    embed.add_field(name="🖥️  OS",           value=f"`{platform.system()} {platform.release()}`", inline=True)
+
+    embed.set_footer(
+        text=f"TuyTam Store  •  Prefix: .  |  Được yêu cầu bởi {ctx.author.display_name}",
+        icon_url=ctx.author.display_avatar.url
+    )
+    await ctx.reply(embed=embed)
+
+
+@bot.command(name="serverinfo", aliases=["si"])
+async def serverinfo_cmd(ctx):
+    g = ctx.guild
+
+    # Thống kê member
+    bots    = sum(1 for m in g.members if m.bot)
+    humans  = (g.member_count or 0) - bots
+    online  = sum(1 for m in g.members if m.status != discord.Status.offline)
+
+    # Kênh
+    cats    = len(g.categories)
+    text_ch = len(g.text_channels)
+    voice_ch= len(g.voice_channels)
+    stage_ch= len(g.stage_channels)
+    forum_ch= len([c for c in g.channels if isinstance(c, discord.ForumChannel)])
+
+    # Xác minh
+    verify_map = {
+        discord.VerificationLevel.none:    "Không",
+        discord.VerificationLevel.low:     "Thấp",
+        discord.VerificationLevel.medium:  "Trung bình",
+        discord.VerificationLevel.high:    "Cao",
+        discord.VerificationLevel.highest: "Rất cao",
+    }
+    verify = verify_map.get(g.verification_level, str(g.verification_level))
+
+    # Ticket stats từ data
+    data   = load_data()
+    tickets_total = data.get("ticket", 0)
+
+    embed = discord.Embed(
+        title=f"🌐  {g.name}",
+        description=g.description or "",
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    if g.icon:
+        embed.set_thumbnail(url=g.icon.url)
+    if g.banner:
+        embed.set_image(url=g.banner.url)
+
+    # ── Tổng quan ──
+    embed.add_field(name="🆔  ID",              value=f"`{g.id}`",                                                       inline=True)
+    embed.add_field(name="👑  Owner",            value=g.owner.mention if g.owner else "N/A",                            inline=True)
+    embed.add_field(name="📅  Ngày tạo",         value=f"<t:{int(g.created_at.timestamp())}:F>",                         inline=True)
+
+    # ── Members ──
+    embed.add_field(
+        name="👥  Members",
+        value=f"**{g.member_count:,}** tổng\n🟢 Online: **{online}** | 👤 Người: **{humans}** | 🤖 Bot: **{bots}**",
+        inline=False
+    )
+
+    # ── Kênh ──
+    embed.add_field(
+        name="💬  Kênh",
+        value=f"📁 Categories: **{cats}** | 💬 Text: **{text_ch}** | 🔊 Voice: **{voice_ch}**"
+              + (f" | 🎭 Stage: **{stage_ch}**" if stage_ch else "")
+              + (f" | 📋 Forum: **{forum_ch}**" if forum_ch else ""),
+        inline=False
+    )
+
+    # ── Khác ──
+    embed.add_field(name="🎭  Roles",            value=f"**{len(g.roles)}** roles",                                      inline=True)
+    embed.add_field(name="😀  Emojis",           value=f"**{len(g.emojis)}** / {g.emoji_limit}",                        inline=True)
+    embed.add_field(name="🔒  Xác minh",         value=verify,                                                           inline=True)
+
+    # ── Boost ──
+    boost_bar = "⭐" * g.premium_tier if g.premium_tier else "—"
+    embed.add_field(
+        name="🚀  Nitro Boost",
+        value=f"Level **{g.premium_tier}** {boost_bar}\n💎 **{g.premium_subscription_count}** boosts",
+        inline=True
+    )
+
+    # ── Ticket stats ──
+    embed.add_field(name="🎫  Tổng ticket",      value=f"**{tickets_total}** đơn đã tạo",                               inline=True)
+    embed.add_field(name="🖼️  Features",          value=f"**{len(g.features)}** tính năng",                             inline=True)
+
+    embed.set_footer(
+        text=f"TuyTam Store  •  Được yêu cầu bởi {ctx.author.display_name}",
+        icon_url=ctx.author.display_avatar.url
+    )
+    await ctx.reply(embed=embed)
+
+
+@bot.command(name="userinfo", aliases=["ui"])
+async def userinfo_cmd(ctx, member: discord.Member = None):
+    member = member or ctx.author
+
+    # Roles (bỏ @everyone)
+    roles = [r for r in reversed(member.roles) if r != ctx.guild.default_role]
+    roles_str = " ".join(r.mention for r in roles[:15]) + (f"\n*...và {len(roles)-15} roles nữa*" if len(roles) > 15 else "")
+    roles_str = roles_str or "Không có"
+
+    # Permissions nổi bật
+    key_perms = []
+    if member.guild_permissions.administrator:        key_perms.append("👑 Administrator")
+    if member.guild_permissions.manage_guild:         key_perms.append("⚙️ Manage Server")
+    if member.guild_permissions.manage_channels:      key_perms.append("📁 Manage Channels")
+    if member.guild_permissions.manage_roles:         key_perms.append("🎭 Manage Roles")
+    if member.guild_permissions.manage_messages:      key_perms.append("🗑️ Manage Messages")
+    if member.guild_permissions.kick_members:         key_perms.append("👢 Kick")
+    if member.guild_permissions.ban_members:          key_perms.append("🔨 Ban")
+    if member.guild_permissions.moderate_members:     key_perms.append("🔇 Timeout")
+    perm_str = " | ".join(key_perms) if key_perms else "Không có quyền đặc biệt"
+
+    # Thống kê ticket của user từ data
+    data = load_data()
+    user_tickets = sum(
+        1 for t in data.get("ticket_notes", {}).values()
+        for note in t if note.get("author", "").startswith(str(member))
+    )
+
+    # Trạng thái & activity
+    status_map = {
+        discord.Status.online:    "🟢 Online",
+        discord.Status.idle:      "🟡 Idle",
+        discord.Status.dnd:       "🔴 Do Not Disturb",
+        discord.Status.offline:   "⚫ Offline",
+    }
+    status_str = status_map.get(member.status, str(member.status))
+
+    activity_str = "Không có"
+    if member.activities:
+        for act in member.activities:
+            if isinstance(act, discord.Game):
+                activity_str = f"🎮 Đang chơi **{act.name}**"
+                break
+            elif isinstance(act, discord.Streaming):
+                activity_str = f"📡 Stream: **{act.name}**"
+                break
+            elif isinstance(act, discord.CustomActivity) and act.name:
+                activity_str = f"💬 {act.name}"
+                break
+            elif isinstance(act, discord.Activity):
+                activity_str = f"▶️ {act.name}"
+                break
+
+    # Thời gian vào server
+    joined_str = f"<t:{int(member.joined_at.timestamp())}:F>" if member.joined_at else "N/A"
+
+    # Thứ tự vào server
+    sorted_members = sorted(
+        [m for m in ctx.guild.members if m.joined_at],
+        key=lambda m: m.joined_at
+    )
+    join_pos = next((i+1 for i, m in enumerate(sorted_members) if m.id == member.id), "?")
+
+    embed = discord.Embed(
+        title=f"👤  {member.display_name}",
+        description=f"{'🤖 Bot' if member.bot else '👤 Người dùng'} | {status_str}",
+        color=member.color if member.color.value else 0x5865F2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+
+    # ── Thông tin tài khoản ──
+    embed.add_field(name="🏷️  Tag",          value=f"`{member}`",                                              inline=True)
+    embed.add_field(name="🆔  ID",            value=f"`{member.id}`",                                          inline=True)
+    embed.add_field(name="🤖  Bot",           value="✅ Có" if member.bot else "❌ Không",                      inline=True)
+
+    embed.add_field(name="📅  Tạo tài khoản", value=f"<t:{int(member.created_at.timestamp())}:F>",             inline=True)
+    embed.add_field(name="📥  Vào server",    value=f"{joined_str}\n*(thứ **#{join_pos}** vào server)*",        inline=True)
+    embed.add_field(name="🎨  Màu role",      value=str(member.color) if member.color.value else "#mặc định",  inline=True)
+
+    # ── Hoạt động ──
+    embed.add_field(name="🎮  Hoạt động",     value=activity_str,                                               inline=False)
+
+    # ── Quyền ──
+    embed.add_field(name="🔑  Quyền nổi bật", value=perm_str,                                                   inline=False)
+
+    # ── Roles ──
+    embed.add_field(name=f"🎭  Roles ({len(roles)})", value=roles_str,                                          inline=False)
+
+    embed.set_footer(
+        text=f"TuyTam Store  •  Được yêu cầu bởi {ctx.author.display_name}",
+        icon_url=ctx.author.display_avatar.url
+    )
+    await ctx.reply(embed=embed)
+
+
+@bot.command(name="stock")
+async def stock_cmd(ctx, item: str = None, *, amount: str = None):
+    support_role = ctx.guild.get_role(get_cfg_support_role())
+    has_role = support_role in ctx.author.roles if support_role else False
+    is_staff = ctx.author.id in ADMIN_IDS or has_role
+
+    current_stock = get_stock()
+
+    if item is None:
+        lines = "\n".join(
+            f"{PRICE_TABLE['sell'][k]['label']}  —  **{current_stock.get(k, 'Chưa cập nhật')}**"
+            for k in PRICE_TABLE["sell"]
+        )
+        embed = discord.Embed(
+            title="📦  Stock Hiện Tại",
+            description=lines,
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.set_footer(text="TuyTam Store  •  Ticket System")
+        return await ctx.reply(embed=embed)
+
+    if not is_staff:
+        return await ctx.reply("❌ Bạn không có quyền cập nhật stock.")
+
+    item = item.lower()
+    if item not in PRICE_TABLE["sell"]:
+        valid = ", ".join(PRICE_TABLE["sell"].keys())
+        return await ctx.reply(f"❌ Item không hợp lệ! Dùng: `{valid}`")
+
+    if amount is None:
+        return await ctx.reply("❌ Thiếu số lượng! Ví dụ: `.stock money 500m`")
+
+    current_stock[item] = amount
+    save_stock(current_stock)
+    await update_price_message(ctx.guild)
+
+    item_label = PRICE_TABLE["sell"][item]["label"]
+    embed = discord.Embed(
+        title="✅  Đã Cập Nhật Stock",
+        description=f"{item_label}  →  **{amount}**",
+        color=0x57F287,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_footer(text=f"Cập nhật bởi {ctx.author}")
+    await ctx.reply(embed=embed)
+
+
+@bot.command()
+async def panel(ctx):
+    if ctx.author.id not in ADMIN_IDS:
+        return
+    await ctx.send(embed=build_panel_embed(ctx.guild), view=TicketPanel())
+    await ctx.message.delete()
+
+
+@bot.command()
+async def setpanel(ctx, channel: discord.TextChannel = None):
+    if ctx.author.id not in ADMIN_IDS:
+        return
+    if channel is None:
+        return await ctx.reply("❌ Thiếu kênh! Ví dụ: `.setpanel #shop`")
+    save_panel_channel_id(channel.id)
+    embed = discord.Embed(
+        title="⚙️  Đã Cài Đặt Panel Channel",
+        description=f"Bot sẽ chỉ scan {channel.mention} khi cập nhật stock.",
+        color=0x57F287,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_footer(text=f"Cài bởi {ctx.author}")
+    await ctx.reply(embed=embed)
+
+
+# ================= SETTINGS MODALS =================
+class ChangeChannelModal(Modal):
+    def __init__(self, field_key: str, field_label: str):
+        super().__init__(title=f"🔧 Đổi {field_label}")
+        self.field_key = field_key
+        self.field_label = field_label
+        self.id_input = TextInput(
+            label=f"ID {field_label}",
+            placeholder="Dán ID vào đây (chuột phải → Copy ID)",
+            min_length=15, max_length=20
+        )
+        self.add_item(self.id_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            new_id = int(self.id_input.value.strip())
+        except ValueError:
+            return await interaction.response.send_message("❌ ID không hợp lệ!", ephemeral=True)
+
+        save_cfg(self.field_key, new_id)
+        embed = discord.Embed(
+            title="✅  Đã Cập Nhật",
+            description=f"**{self.field_label}** → `{new_id}`",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.set_footer(text=f"Cập nhật bởi {interaction.user}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ================= SETTINGS VIEW =================
+class SettingsView(View):
+    def __init__(self):
+        super().__init__(timeout=120)
+
+    @discord.ui.button(label="📋 Log Channel", style=discord.ButtonStyle.grey, row=0)
+    async def change_log(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(ChangeChannelModal("cfg_log_channel", "Log Channel"))
+
+    @discord.ui.button(label="📂 Ticket Category", style=discord.ButtonStyle.grey, row=0)
+    async def change_category(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(ChangeChannelModal("cfg_ticket_category", "Ticket Category"))
+
+    @discord.ui.button(label="🛡️ Support Role", style=discord.ButtonStyle.grey, row=0)
+    async def change_role(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(ChangeChannelModal("cfg_support_role", "Support Role ID"))
+
+    @discord.ui.button(label="🔢 Counter Channel", style=discord.ButtonStyle.grey, row=1)
+    async def change_counter(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(ChangeChannelModal("cfg_counter_channel", "Counter Channel"))
+
+    @discord.ui.button(label="📱 Đổi QR", style=discord.ButtonStyle.blurple, row=1)
+    async def change_qr(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(SetQRModal())
+
+    @discord.ui.button(label="👁️ Xem QR", style=discord.ButtonStyle.grey, row=1)
+    async def view_qr(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        qr_path = get_qr_path()
+        if not qr_path or not os.path.exists(qr_path):
+            return await interaction.response.send_message("❌ Chưa có QR nào được lưu.", ephemeral=True)
+        file = discord.File(qr_path, filename="qr.png")
+        embed = discord.Embed(title="📱 QR Hiện Tại", color=0x5865F2)
+        embed.set_image(url="attachment://qr.png")
+        await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
+
+    @discord.ui.button(label="💰 Balance Channel", style=discord.ButtonStyle.green, row=2)
+    async def change_balance(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(ChangeChannelModal("cfg_balance_channel", "Balance Channel"))
+
+    @discord.ui.button(label="✅ Legit Channel", style=discord.ButtonStyle.green, row=2)
+    async def change_legit(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(ChangeChannelModal("cfg_legit_channel", "Legit Channel"))
+
+    @discord.ui.button(label="📌 Panel Channel", style=discord.ButtonStyle.green, row=2)
+    async def change_panel(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(ChangeChannelModal("panel_channel_id", "Panel Channel"))
+
+
+@bot.command(name="settings", aliases=["st"])
+async def settings(ctx):
+    if ctx.author.id not in ADMIN_IDS:
+        return
+
+    panel_channel_id = get_panel_channel_id()
+    if panel_channel_id:
+        ch = ctx.guild.get_channel(panel_channel_id)
+        panel_value = ch.mention if ch else f"⚠️ Kênh đã bị xoá (ID: `{panel_channel_id}`)"
+    else:
+        panel_value = "Chưa cài — dùng `.setpanel #kênh`"
+
+    log_id      = get_cfg_log_channel()
+    cat_id      = get_cfg_category()
+    role_id     = get_cfg_support_role()
+    counter_id  = get_cfg_counter_channel()
+    balance_id  = get_cfg_balance_channel()
+    legit_id    = get_cfg_legit_channel()
+    qr_path     = get_qr_path()
+
+    log_val     = f"<#{log_id}>" if log_id else "❌ Chưa cài"
+    cat_val     = f"<#{cat_id}>" if cat_id else "❌ Chưa cài"
+    role_val    = f"<@&{role_id}>" if role_id else "❌ Chưa cài"
+    counter_val = f"<#{counter_id}>" if counter_id else "❌ Chưa cài"
+    balance_val = f"<#{balance_id}>" if balance_id else "❌ Chưa cài — nhấn **💰 Balance Channel**"
+    legit_val   = f"<#{legit_id}>" if legit_id else "❌ Chưa cài — nhấn **✅ Legit Channel**"
+    qr_val      = "✅ Đã có" if qr_path and os.path.exists(qr_path) else "❌ Chưa có"
+
+    embed = discord.Embed(
+        title="⚙️  Cấu Hình Hiện Tại",
+        description="Nhấn các nút bên dưới để chỉnh sửa từng mục.",
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(name="📌  Panel Channel",   value=panel_value,  inline=False)
+    embed.add_field(name="📋  Log Channel",      value=log_val,      inline=True)
+    embed.add_field(name="📂  Ticket Category",  value=cat_val,      inline=True)
+    embed.add_field(name="🛡️  Support Role",     value=role_val,     inline=True)
+    embed.add_field(name="🔢  Counter Channel",  value=counter_val,  inline=True)
+    embed.add_field(name="💰  Balance Channel",  value=balance_val,  inline=True)
+    embed.add_field(name="✅  Legit Channel",    value=legit_val,    inline=True)
+    embed.add_field(name="📱  Mã QR",            value=qr_val,       inline=True)
+    embed.set_footer(text="TuyTam Store  •  Dùng .st hoặc .settings")
+    await ctx.reply(embed=embed, view=SettingsView())
+
+
+@bot.command()
+async def close(ctx):
+    support_role = ctx.guild.get_role(get_cfg_support_role())
+    has_role = support_role in ctx.author.roles if support_role else False
+    if not (ctx.author.id in ADMIN_IDS or has_role):
+        return await ctx.reply("❌ Bạn không có quyền.")
+    if not (ctx.channel.topic and "|" in ctx.channel.topic):
+        return await ctx.reply("❌ Đây không phải kênh ticket.")
+    await _close_ticket(ctx.channel, bot, closer=ctx.author)
+
+
+@bot.command(name="addnote")
+async def addnote_cmd(ctx, *, note: str = None):
+    support_role = ctx.guild.get_role(get_cfg_support_role())
+    has_role = support_role in ctx.author.roles if support_role else False
+    if not (ctx.author.id in ADMIN_IDS or has_role):
+        return await ctx.reply("❌ Bạn không có quyền.")
+    if not (ctx.channel.topic and "|" in ctx.channel.topic):
+        return await ctx.reply("❌ Đây không phải kênh ticket.")
+    if not note:
+        return await ctx.reply("❌ Thiếu nội dung! Ví dụ: `.addnote khách đã chuyển tiền`")
+
+    add_ticket_note(ctx.channel.id, str(ctx.author), note)
+    embed = discord.Embed(
+        title="📝 Ghi Chú Nội Bộ",
+        description=note,
+        color=0xFEE75C,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_footer(text=f"Bởi {ctx.author} • Chỉ staff thấy")
+    await ctx.reply(embed=embed)
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+
+
+@bot.command(name="ratings")
+async def ratings_cmd(ctx):
+    if ctx.author.id not in ADMIN_IDS:
+        return
+    data = load_data()
+    ratings = data.get("ratings", [])
+    if not ratings:
+        return await ctx.reply("Chưa có đánh giá nào.")
+
+    total = len(ratings)
+    avg = sum(r["stars"] for r in ratings) / total
+    dist = {i: sum(1 for r in ratings if r["stars"] == i) for i in range(1, 6)}
+
+    bar = ""
+    for s in range(5, 0, -1):
+        count = dist[s]
+        filled = int((count / total) * 10) if total > 0 else 0
+        bar += f"{'⭐'*s}: {'█'*filled}{'░'*(10-filled)} {count}\n"
+
+    embed = discord.Embed(
+        title="⭐ Thống Kê Đánh Giá",
+        color=0xF1C40F,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(name="Tổng đánh giá", value=str(total), inline=True)
+    embed.add_field(name="Trung bình", value=f"{avg:.1f} ⭐", inline=True)
+    embed.add_field(name="Phân bố", value=f"```{bar}```", inline=False)
+    await ctx.reply(embed=embed)
+
+
+@bot.command(name="orderbase")
+async def orderbase_cmd(ctx):
+    if ctx.author.id not in ADMIN_IDS:
+        return
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+
+    embed = discord.Embed(
+        title="# Nhận Làm Base Village Trong <:emoji_17:1483684359415267449>",
+        description=(
+            "**Giá Chỉ Từ 20-35m Tùy Theo Base Mà Ae Chọn**\n\n"
+            "**Cam Kết:**\n"
+            "<:emoji_17:1483684359415267449> •Tự Tìm Chỗ Xây Base Lun Nhé Ae\n"
+            "<:emoji_17:1483684359415267449> •Base Có Chỗ Nhân Giống Village\n"
+            "<:emoji_17:1483684359415267449> •Base Sẽ Có Ít Nhất 3 Con Dân Làng Bán Tu Sửa\n"
+            "<:emoji_17:1483684359415267449> •Còn Lại Sẽ Là Ngẫu Nhiên Và Có Thể Có Thêm Dòng Xịn Như Protection, Blast Protection, Fortune,...\n"
+            "<:emoji_17:1483684359415267449> •Bảo Hành 8h Kể Từ Khi Mua\n"
+            "<:emoji_17:1483684359415267449> •Nếu Bị Raid Trong Giờ Bảo Hành Sẽ Đc Hoàn Tiền\n"
+            "<:emoji_17:1483684359415267449> •Và Sẽ Đảm Bảo Đc Với Anh Em Là Quay Video Xoá Home Base\n"
+            "<:emoji_17:1483684359415267449> •Base 20m Sẽ Có 3 Con Roll Sẵn Tu Sửa Còn Lại Ae Tự Roll Và 35m Thì Sẽ Roll Hết Tất Cả Nhé Và Sẽ Đẹp Và Rộng Hơn Nên Ae K Lỗ Đâu\n\n"
+            "**Nên Ae Yên Tâm Mà Thuê** ✅\n\n"
+            "**Ai Muốn Có 1 Base Village Tuyệt Vời Như Vậy Mà Còn Rẻ Thì Hãy Tạo <#1464415587378659564> Để Có 1 Base Xịn Nhé**"
+        ),
+        color=0xE67E22,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_footer(text="💰 DoанBaoNgoc-Stock  •  TuyTam Store")
+
+    await ctx.send("<@&1464411190808805540> sorry ping", embed=embed)
+
+
+@bot.command(name="qr")
+async def qr_cmd(ctx):
+    qr_path = get_qr_path()
+    if not qr_path or not os.path.exists(qr_path):
+        embed = discord.Embed(
+            title="❌  Chưa Có Mã QR",
+            description="Admin chưa cài mã QR.\nDùng `.settings` để thêm QR thanh toán.",
+            color=0xED4245
+        )
+        return await ctx.reply(embed=embed)
+
+    embed = discord.Embed(
+        title="📱  Mã QR Thanh Toán",
+        description=(
+            "Quét mã bên dưới để thanh toán.\n"
+            "> 🏦 **MB Bank** — HOVANBUT\n"
+            "> 📱 **Thẻ Viettel** bị trừ thêm **18% thuế**\n"
+            "> ⚠️ Ghi rõ nội dung: `[tên MC] mua [item]`"
+        ),
+        color=0x57F287,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_footer(text="TuyTam Store  •  Quét QR để thanh toán")
+    file = discord.File(qr_path, filename="qr.png")
+    embed.set_image(url="attachment://qr.png")
+    await ctx.reply(embed=embed, file=file)
+
+
+class SetQRModal(Modal):
+    def __init__(self):
+        super().__init__(title="🖼️ Cập Nhật Ảnh QR")
+
+    url_input = TextInput(
+        label="URL ảnh QR (để trống nếu đính kèm file)",
+        placeholder="https://i.imgur.com/abc123.png",
+        required=False,
+        max_length=500
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Nếu nhập URL
+        url = self.url_input.value.strip()
+        if url:
+            import urllib.request
+            try:
+                qr_path = QR_FILE
+                urllib.request.urlretrieve(url, qr_path)
+                save_qr_path(qr_path)
+                embed = discord.Embed(
+                    title="✅  Đã Cập Nhật QR",
+                    description="Mã QR mới đã được lưu từ URL.",
+                    color=0x57F287,
+                    timestamp=datetime.now(timezone.utc)
+                )
+                embed.set_image(url=url)
+                embed.set_footer(text=f"Cập nhật bởi {interaction.user}")
+                return await interaction.response.send_message(embed=embed, ephemeral=True)
+            except Exception as e:
+                return await interaction.response.send_message(
+                    f"❌ Không tải được ảnh từ URL: `{e}`", ephemeral=True
+                )
+
+        await interaction.response.send_message(
+            "📎 Hãy **đính kèm ảnh QR** vào tin nhắn tiếp theo trong vòng **60 giây**.",
+            ephemeral=True
+        )
+
+        def check(m):
+            return (
+                m.author.id == interaction.user.id
+                and m.channel.id == interaction.channel.id
+                and len(m.attachments) > 0
+            )
+
+        try:
+            msg = await bot.wait_for("message", check=check, timeout=60)
+            attachment = msg.attachments[0]
+            if not attachment.content_type or not attachment.content_type.startswith("image/"):
+                return await interaction.followup.send("❌ File không phải ảnh!", ephemeral=True)
+
+            qr_path = QR_FILE
+            await attachment.save(qr_path)
+            save_qr_path(qr_path)
+
+            try:
+                await msg.delete()
+            except:
+                pass
+
+            embed = discord.Embed(
+                title="✅  Đã Cập Nhật QR",
+                description="Mã QR mới đã được lưu thành công!\nDùng `.qr` để kiểm tra.",
+                color=0x57F287,
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.set_footer(text=f"Cập nhật bởi {interaction.user}")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Hết thời gian! Không nhận được ảnh.", ephemeral=True)
+
+
+
+# ================= SLASH COMMANDS =================
+
+def is_admin(interaction: discord.Interaction) -> bool:
+    return interaction.user.id in ADMIN_IDS or interaction.user.guild_permissions.administrator
+
+def is_staff_or_admin(interaction: discord.Interaction) -> bool:
+    role = interaction.guild.get_role(get_cfg_support_role())
+    has_role = role in interaction.user.roles if role else False
+    return interaction.user.id in ADMIN_IDS or has_role
+
+# ── Giveaway Modal ──
+# ── Button tham gia giveaway (slash /giveaway) ──
+class GiveawayView(View):
+    def __init__(self, message_id: int):
+        super().__init__(timeout=None)
+        self.message_id = message_id
+
+    @discord.ui.button(label="🎉 Tham gia", style=discord.ButtonStyle.primary, custom_id="giveaway_join")
+    async def join(self, interaction: discord.Interaction, button: Button):
+        gw = active_giveaways.get(self.message_id)
+        if not gw:
+            return await interaction.response.send_message("❌ Giveaway này không còn hoạt động.", ephemeral=True)
+        if gw.get("ended"):
+            return await interaction.response.send_message("❌ Giveaway đã kết thúc rồi!", ephemeral=True)
+
+        uid = interaction.user.id
+        if uid in gw["entries"]:
+            gw["entries"].discard(uid)
+            await interaction.response.send_message("↩️ Bạn đã **rút khỏi** giveaway.", ephemeral=True)
+        else:
+            gw["entries"].add(uid)
+            await interaction.response.send_message("✅ Bạn đã **tham gia** giveaway!", ephemeral=True)
+
+        # Cập nhật số người tham gia trên embed
+        try:
+            msg = await interaction.channel.fetch_message(self.message_id)
+            embed = msg.embeds[0]
+            for i, field in enumerate(embed.fields):
+                if "Người tham gia" in field.name:
+                    embed.set_field_at(i, name=field.name, value=f"**{len(gw['entries'])}** người", inline=field.inline)
+                    break
+            await msg.edit(embed=embed)
+        except Exception:
+            pass
+
+
+async def giveaway_timer(channel_id: int, message_id: int, winners_count: int, seconds: int):
+    """Đếm ngược và tự động kết thúc giveaway."""
+    await asyncio.sleep(seconds)
+    gw = active_giveaways.get(message_id)
+    if not gw or gw.get("ended"):
+        return
+
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        return
+
+    gw["ended"] = True
+    entries = list(gw.get("entries", set()))
+
+    try:
+        msg = await channel.fetch_message(message_id)
+    except Exception:
+        return
+
+    if not entries:
+        embed = discord.Embed(
+            title="🎉  Giveaway Kết Thúc",
+            description="❌ Không có ai tham gia giveaway này.",
+            color=0x99AAB5,
+            timestamp=datetime.now(timezone.utc)
+        )
+        await msg.edit(embed=embed, view=None)
+        await channel.send("❌ Giveaway kết thúc nhưng không có người tham gia!")
+        return
+
+    count = min(winners_count, len(entries))
+    winner_ids = random.sample(entries, count)
+    winner_mentions = ", ".join(f"<@{uid}>" for uid in winner_ids)
+
+    embed = discord.Embed(
+        title="🎉  Giveaway Kết Thúc!",
+        description=f"**Phần thưởng:** {gw['prize']}\n**🏆 Winner:** {winner_mentions}",
+        color=0xF1C40F,
+        timestamp=datetime.now(timezone.utc)
+    )
+    host = channel.guild.get_member(gw["host"])
+    embed.set_footer(text=f"Host: {host.display_name if host else gw['host']}")
+    await msg.edit(embed=embed, view=None)
+    await channel.send(f"🎊 Chúc mừng {winner_mentions}! Bạn đã thắng **{gw['prize']}**!")
+
+    gw["winner_ids"] = winner_ids
+
+
+class GiveawayModal(discord.ui.Modal, title="🎉 Tạo Giveaway"):
+    duration = discord.ui.TextInput(
+        label="Thời gian",
+        placeholder="Ví dụ: 30s / 10m / 1h / 2d",
+        min_length=2, max_length=10
+    )
+    winners_count = discord.ui.TextInput(
+        label="Số người trúng thưởng",
+        placeholder="Ví dụ: 1",
+        min_length=1, max_length=2
+    )
+    prize = discord.ui.TextInput(
+        label="Phần thưởng",
+        placeholder="Ví dụ: 100m ingame, Elytra...",
+        min_length=1, max_length=200
+    )
+    description = discord.ui.TextInput(
+        label="Mô tả (tuỳ chọn)",
+        placeholder="Điều kiện tham gia, ghi chú thêm...",
+        style=discord.TextStyle.paragraph,
+        required=False, max_length=500
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Parse thời gian
+        dur = self.duration.value.strip()
+        unit = dur[-1].lower()
+        try:
+            val = int(dur[:-1])
+        except:
+            return await interaction.response.send_message("❌ Thời gian không hợp lệ! Dùng: `30s`, `10m`, `1h`, `2d`", ephemeral=True)
+        seconds = {"s": val, "m": val*60, "h": val*3600, "d": val*86400}.get(unit)
+        if not seconds:
+            return await interaction.response.send_message("❌ Đơn vị thời gian không hợp lệ! Dùng: `s`, `m`, `h`, `d`", ephemeral=True)
+
+        # Parse số người thắng
+        try:
+            w_count = int(self.winners_count.value.strip())
+            if w_count < 1: raise ValueError
+        except:
+            return await interaction.response.send_message("❌ Số người trúng thưởng phải là số nguyên dương!", ephemeral=True)
+
+        end_time = datetime.now(timezone.utc).timestamp() + seconds
+
+        embed = discord.Embed(
+            title="🎉  GIVEAWAY!",
+            description=self.description.value or "Nhấn nút **🎉 Tham gia** để tham dự!",
+            color=0xF1C40F,
+            timestamp=datetime.fromtimestamp(end_time, tz=timezone.utc)
+        )
+        embed.add_field(name="🏆  Phần thưởng",    value=self.prize.value,                inline=False)
+        embed.add_field(name="🎊  Số người thắng", value=f"**{w_count}** người",           inline=True)
+        embed.add_field(name="👥  Người tham gia", value="**0** người",                    inline=True)
+        embed.add_field(name="⏰  Kết thúc",       value=f"<t:{int(end_time)}:R>",         inline=True)
+        embed.add_field(name="🎤  Host",           value=interaction.user.mention,         inline=True)
+        embed.set_footer(text="TuyTam Store  •  Kết thúc lúc")
+
+        await interaction.response.send_message("✅ Đang tạo giveaway...", ephemeral=True)
+        msg = await interaction.channel.send(embed=embed, view=GiveawayView(0))
+        view = GiveawayView(msg.id)
+        await msg.edit(view=view)
+
+        active_giveaways[msg.id] = {
+            "prize": self.prize.value,
+            "winners": w_count,
+            "entries": set(),
+            "channel_id": interaction.channel.id,
+            "end_time": end_time,
+            "host": interaction.user.id
+        }
+        asyncio.create_task(giveaway_timer(interaction.channel.id, msg.id, w_count, seconds))
+
+
+@tree.command(name="giveaway", description="Tạo giveaway mới")
+async def slash_giveaway(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Chỉ admin mới được tạo giveaway.", ephemeral=True)
+    await interaction.response.send_modal(GiveawayModal())
+
+
+@tree.command(name="gend", description="Kết thúc giveaway sớm")
+@app_commands.describe(message_id="ID tin nhắn giveaway")
+async def slash_gend(interaction: discord.Interaction, message_id: str):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+    try:
+        mid = int(message_id)
+    except:
+        return await interaction.response.send_message("❌ ID không hợp lệ!", ephemeral=True)
+    gw = active_giveaways.get(mid)
+    if not gw:
+        return await interaction.response.send_message("❌ Không tìm thấy giveaway đang chạy.", ephemeral=True)
+    await interaction.response.send_message("✅ Đang kết thúc giveaway...", ephemeral=True)
+    channel = bot.get_channel(gw["channel_id"])
+    if channel:
+        await end_giveaway(mid, channel, gw["winners"], gw.get("prize", "phần thưởng"), gw.get("host", 0))
+
+
+@tree.command(name="clear", description="Xoá tin nhắn trong kênh")
+@app_commands.describe(amount="Số tin nhắn cần xoá (1-500)")
+async def slash_clear(interaction: discord.Interaction, amount: int):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+    if amount < 1 or amount > 500:
+        return await interaction.response.send_message("❌ Số lượng phải từ 1 đến 500.", ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    deleted = await interaction.channel.purge(limit=amount)
+    await interaction.followup.send(f"🗑️ Đã xoá **{len(deleted)}** tin nhắn.", ephemeral=True)
+
+
+@tree.command(name="addrole", description="Thêm role cho thành viên")
+@app_commands.describe(member="Thành viên", role="Role cần thêm")
+async def slash_addrole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+    if role >= interaction.guild.me.top_role:
+        return await interaction.response.send_message("❌ Role này cao hơn role của bot.", ephemeral=True)
+    await member.add_roles(role, reason=f"Bởi {interaction.user}")
+    embed = discord.Embed(title="✅ Đã Thêm Role", color=0x57F287)
+    embed.add_field(name="👤 Thành viên", value=member.mention, inline=True)
+    embed.add_field(name="🏷️ Role",       value=role.mention,   inline=True)
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="removerole", description="Xoá role của thành viên")
+@app_commands.describe(member="Thành viên", role="Role cần xoá")
+async def slash_removerole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+    if role >= interaction.guild.me.top_role:
+        return await interaction.response.send_message("❌ Role này cao hơn role của bot.", ephemeral=True)
+    await member.remove_roles(role, reason=f"Bởi {interaction.user}")
+    embed = discord.Embed(title="✅ Đã Xoá Role", color=0xFEE75C)
+    embed.add_field(name="👤 Thành viên", value=member.mention, inline=True)
+    embed.add_field(name="🏷️ Role",       value=role.mention,   inline=True)
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="createchannel", description="Tạo kênh text mới")
+@app_commands.describe(name="Tên kênh", category="Category (tuỳ chọn)")
+async def slash_createchannel(interaction: discord.Interaction, name: str, category: discord.CategoryChannel = None):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+    name = name.lower().replace(" ", "-")
+    ch = await interaction.guild.create_text_channel(name, category=category, reason=f"Bởi {interaction.user}")
+    await interaction.response.send_message(f"✅ Đã tạo kênh {ch.mention}!", ephemeral=True)
+
+
+@tree.command(name="deletechannel", description="Xoá kênh")
+@app_commands.describe(channel="Kênh cần xoá (để trống = kênh hiện tại)")
+async def slash_deletechannel(interaction: discord.Interaction, channel: discord.TextChannel = None):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+    target = channel or interaction.channel
+    name = target.name
+    await interaction.response.send_message(f"✅ Đang xoá kênh `#{name}`...", ephemeral=True)
+    await target.delete(reason=f"Bởi {interaction.user}")
+
+
+@tree.command(name="userinfo", description="Xem thông tin thành viên")
+@app_commands.describe(member="Thành viên (để trống = bản thân)")
+async def slash_userinfo(interaction: discord.Interaction, member: discord.Member = None):
+    m = member or interaction.user
+    roles = [r.mention for r in m.roles if r.name != "@everyone"]
+    roles_str = " ".join(roles[-10:]) if roles else "Không có"
+    embed = discord.Embed(title=f"👤  {m}", color=m.color if m.color.value else 0x5865F2, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="🆔 ID",         value=f"`{m.id}`",                                      inline=True)
+    embed.add_field(name="🤖 Bot",        value="✅" if m.bot else "❌",                            inline=True)
+    embed.add_field(name="📅 Tạo acc",    value=f"<t:{int(m.created_at.timestamp())}:D>",         inline=True)
+    embed.add_field(name="📥 Vào server", value=f"<t:{int(m.joined_at.timestamp())}:D>" if m.joined_at else "N/A", inline=True)
+    embed.add_field(name="🏷️ Roles",      value=roles_str,                                         inline=False)
+    embed.set_thumbnail(url=m.display_avatar.url)
+    embed.set_footer(text=f"TuyTam Store  •  Yêu cầu bởi {interaction.user}")
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="serverinfo", description="Xem thông tin server")
+async def slash_serverinfo(interaction: discord.Interaction):
+    g = interaction.guild
+    bots   = sum(1 for m in g.members if m.bot)
+    humans = g.member_count - bots
+    embed = discord.Embed(title=f"🏠  {g.name}", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="🆔 ID",        value=f"`{g.id}`",                                  inline=True)
+    embed.add_field(name="👑 Owner",      value=g.owner.mention if g.owner else "N/A",        inline=True)
+    embed.add_field(name="📅 Tạo lúc",   value=f"<t:{int(g.created_at.timestamp())}:D>",     inline=True)
+    embed.add_field(name="👥 Thành viên", value=f"👤 {humans}  🤖 {bots}",                    inline=True)
+    embed.add_field(name="💬 Kênh",       value=f"📝 {len(g.text_channels)}  🔊 {len(g.voice_channels)}", inline=True)
+    embed.add_field(name="💎 Boost",      value=f"Lv **{g.premium_tier}** — **{g.premium_subscription_count}** boost", inline=True)
+    if g.icon: embed.set_thumbnail(url=g.icon.url)
+    embed.set_footer(text=f"TuyTam Store  •  {interaction.user}")
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="botinfo", description="Xem thông tin bot")
+async def slash_botinfo(interaction: discord.Interaction):
+    import platform
+    embed = discord.Embed(title=f"🤖  {bot.user.name}", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="🆔 ID",       value=f"`{bot.user.id}`",                                          inline=True)
+    embed.add_field(name="🌐 Servers",  value=f"**{len(bot.guilds)}**",                                    inline=True)
+    embed.add_field(name="🏓 Latency",  value=f"**{round(bot.latency*1000)}ms**",                          inline=True)
+    embed.add_field(name="🐍 Python",   value=f"`{platform.python_version()}`",                            inline=True)
+    embed.add_field(name="📦 discord.py", value=f"`{discord.__version__}`",                                inline=True)
+    embed.add_field(name="📅 Tạo lúc",  value=f"<t:{int(bot.user.created_at.timestamp())}:D>",            inline=True)
+    if bot.user.avatar: embed.set_thumbnail(url=bot.user.avatar.url)
+    embed.set_footer(text="TuyTam Store  •  Ticket System")
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="ping", description="Kiểm tra độ trễ bot")
+async def slash_ping(interaction: discord.Interaction):
+    latency = round(bot.latency * 1000)
+    color = 0x57F287 if latency < 100 else (0xFEE75C if latency < 200 else 0xED4245)
+    status = "Tốt 🟢" if latency < 100 else ("Bình thường 🟡" if latency < 200 else "Chậm 🔴")
+    embed = discord.Embed(title="🏓 Pong!", description=f"Độ trễ: **{latency}ms** — {status}", color=color)
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="price", description="Xem bảng giá TuyTam Store")
+async def slash_price(interaction: discord.Interaction):
+    embed = build_price_embed(interaction.guild)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name="qr", description="Gửi mã QR thanh toán")
+async def slash_qr(interaction: discord.Interaction):
+    qr_path = get_qr_path()
+    if not qr_path or not os.path.exists(qr_path):
+        return await interaction.response.send_message("❌ Chưa có QR! Admin cài qua `.settings`.", ephemeral=True)
+    file = discord.File(qr_path, filename="qr.png")
+    embed = discord.Embed(title="📱  Mã QR Thanh Toán", color=0x57F287, timestamp=datetime.now(timezone.utc))
+    embed.description = "> 🏦 **MB Bank** — `0702557706` — HOVANBUT\n> 📱 **Thẻ Viettel** bị trừ thêm **18% thuế**\n> ⚠️ Ghi rõ: `[tên MC] mua [item]`"
+    embed.set_image(url="attachment://qr.png")
+    await interaction.response.send_message(embed=embed, file=file)
+
+
+@tree.command(name="stock", description="Xem stock hiện tại")
+async def slash_stock(interaction: discord.Interaction):
+    current_stock = get_stock()
+    lines = "\n".join(
+        f"{PRICE_TABLE['sell'][k]['label']}  —  **{current_stock.get(k, 'Chưa cập nhật')}**"
+        for k in PRICE_TABLE["sell"]
+    )
+    embed = discord.Embed(title="📦  Stock Hiện Tại", description=lines, color=0x5865F2, timestamp=datetime.now(timezone.utc))
+    embed.set_footer(text="TuyTam Store  •  Ticket System")
+    await interaction.response.send_message(embed=embed)
+
+
+# ================= BALANCE SYSTEM =================
+
+def fmt_vnd(amount: int) -> str:
+    """Format số tiền VND đẹp: 1.500.000đ hoặc -500.000đ"""
+    if amount < 0:
+        return f"-{abs(amount):,}đ".replace(",", ".")
+    return f"{amount:,}đ".replace(",", ".")
+
+async def handle_balance_message(message: discord.Message):
+    """Xử lý tin nhắn + / - trong kênh balance."""
+    content = message.content.strip()
+
+    # Nhận dạng dạng "+ 1500000" hoặc "- 500000"
+    if not (content.startswith("+") or content.startswith("-")):
+        return
+    op = content[0]
+    raw_str = content[1:].strip().replace(".", "").replace(",", "").replace(" ", "")
+    if not raw_str.isdigit():
+        return
+
+    raw = int(raw_str)
+    if raw <= 0:
+        return
+
+    bal = get_balance_data()
+    now_str = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+
+    if op == "+":
+        fee    = round(raw * 0.05)
+        net    = raw - fee
+        bal["current"]   += net
+        bal["total_in"]  += net
+        bal["total_fee"] += fee
+        bal["tx_count"]  += 1
+        bal["history"].append({
+            "type": "+", "raw": raw, "fee": fee, "net": net,
+            "user": str(message.author), "time": now_str
+        })
+        # Giữ tối đa 100 giao dịch gần nhất
+        bal["history"] = bal["history"][-100:]
+        save_balance_data(bal)
+
+        embed = discord.Embed(
+            title="💰  Nạp Tiền",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="💵  Số tiền nhận",   value=f"**{fmt_vnd(raw)}**",  inline=True)
+        embed.add_field(name="📉  Phí 5%",         value=f"- {fmt_vnd(fee)}",    inline=True)
+        embed.add_field(name="✅  Thực nhận",       value=f"**{fmt_vnd(net)}**",  inline=True)
+        embed.add_field(name="🏦  Số dư hiện tại", value=f"**{fmt_vnd(bal['current'])}**", inline=False)
+        embed.set_footer(text=f"Bởi {message.author.display_name}  •  {now_str}")
+
+    else:  # op == "-"
+        bal["current"]    -= raw
+        bal["total_out"]  += raw
+        bal["tx_count"]   += 1
+        bal["history"].append({
+            "type": "-", "raw": raw, "fee": 0, "net": raw,
+            "user": str(message.author), "time": now_str
+        })
+        bal["history"] = bal["history"][-100:]
+        save_balance_data(bal)
+
+        color = 0xED4245 if bal["current"] >= 0 else 0x9B59B6
+        embed = discord.Embed(
+            title="💸  Chi Tiền",
+            color=color,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="💵  Số tiền chi",    value=f"**{fmt_vnd(raw)}**",           inline=True)
+        embed.add_field(name="🏦  Số dư còn lại",  value=f"**{fmt_vnd(bal['current'])}**" + (" ⚠️" if bal["current"] < 0 else ""), inline=True)
+        embed.set_footer(text=f"Bởi {message.author.display_name}  •  {now_str}")
+
+    try:
+        await message.delete()
+    except:
+        pass
+    await message.channel.send(embed=embed)
+
+
+@bot.command(name="balance", aliases=["bal"])
+async def balance_cmd(ctx):
+    bal = get_balance_data()
+    ch_id = get_cfg_balance_channel()
+    ch_mention = f"<#{ch_id}>" if ch_id else "Chưa cài"
+
+    embed = discord.Embed(
+        title="📊  Thống Kê Số Dư",
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(name="🏦  Số dư hiện tại",  value=f"**{fmt_vnd(bal['current'])}**",   inline=False)
+    embed.add_field(name="📥  Tổng nạp",        value=fmt_vnd(bal['total_in']),            inline=True)
+    embed.add_field(name="📤  Tổng chi",        value=fmt_vnd(bal['total_out']),           inline=True)
+    embed.add_field(name="📉  Tổng phí 5%",     value=fmt_vnd(bal['total_fee']),           inline=True)
+    embed.add_field(name="🔢  Tổng giao dịch",  value=f"**{bal['tx_count']}** lần",       inline=True)
+    embed.add_field(name="📌  Kênh balance",     value=ch_mention,                          inline=True)
+
+    # 5 giao dịch gần nhất
+    history = bal.get("history", [])
+    if history:
+        last5 = history[-5:][::-1]
+        lines = []
+        for tx in last5:
+            icon = "📥" if tx["type"] == "+" else "📤"
+            lines.append(f"{icon} **{fmt_vnd(tx['net'])}** — {tx['user']} — {tx['time']}")
+        embed.add_field(name="🕐  5 giao dịch gần nhất", value="\n".join(lines), inline=False)
+
+    embed.set_footer(text="TuyTam Store  •  Ticket System")
+    await ctx.reply(embed=embed)
+
+
+@bot.command(name="balreset")
+async def balreset_cmd(ctx):
+    """Reset toàn bộ số dư (chỉ admin)."""
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới được reset.")
+    data = load_data()
+    data["balance"] = {
+        "current": 0, "total_in": 0, "total_fee": 0,
+        "total_out": 0, "tx_count": 0, "history": []
+    }
+    save_data(data)
+    await ctx.reply("✅ Đã reset toàn bộ số dư về 0.")
+
+
+@bot.command(name="balset")
+async def balset_cmd(ctx, *, amount: str = None):
+    """Đặt số dư về một giá trị cụ thể (admin). Dùng: .balset 1500000"""
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới được đặt số dư.")
+    if amount is None:
+        return await ctx.reply("❌ Dùng: `.balset <số tiền>`\nVí dụ: `.balset 1500000` hoặc `.balset -200000`")
+
+    raw_str = amount.strip().replace(".", "").replace(",", "").replace(" ", "")
+    negative = raw_str.startswith("-")
+    raw_str = raw_str.lstrip("-+")
+    if not raw_str.isdigit():
+        return await ctx.reply("❌ Số tiền không hợp lệ!")
+
+    new_balance = int(raw_str) * (-1 if negative else 1)
+    bal = get_balance_data()
+    old_balance = bal["current"]
+    bal["current"] = new_balance
+    now_str = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+    bal["history"].append({
+        "type": "set", "raw": new_balance, "fee": 0, "net": new_balance,
+        "user": str(ctx.author), "time": now_str
+    })
+    bal["history"] = bal["history"][-100:]
+    save_balance_data(bal)
+
+    color = 0x57F287 if new_balance >= 0 else 0x9B59B6
+    embed = discord.Embed(
+        title="⚙️  Đã Đặt Số Dư",
+        color=color,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(name="📊  Số dư cũ",    value=fmt_vnd(old_balance),  inline=True)
+    embed.add_field(name="✅  Số dư mới",   value=f"**{fmt_vnd(new_balance)}**", inline=True)
+    embed.set_footer(text=f"Đặt bởi {ctx.author}")
+    await ctx.reply(embed=embed)
+
+
+# ================= ON MESSAGE =================
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+    await bot.process_commands(message)
+
+    # Balance channel handler
+    bal_ch = get_cfg_balance_channel()
+    if bal_ch and message.channel.id == bal_ch:
+        await handle_balance_message(message)
+
+    # Legit channel handler — tự động cập nhật tên kênh
+    await handle_legit_message(message)
+
+    # Vouch channel handler — tự động cập nhật tên kênh
+    await handle_vouch_message(message)
+
+
+async def handle_legit_message(message: discord.Message):
+    """
+    Lắng nghe tin nhắn +1legit trong kênh legit.
+    Cú pháp: +1legit(+1 legit) {seller} {loại đơn}
+    Tự động +1 vào số đếm trong tên kênh.
+    """
+    import re as _re_legit
+
+    # Bỏ qua tin nhắn từ bot ID cụ thể
+    IGNORED_BOT_IDS = {628400349979344919}
+    if message.author.id in IGNORED_BOT_IDS:
+        return
+
+    # Kiểm tra kênh legit (theo ID cấu hình hoặc tên kênh chứa 'legit')
+    legit_ch_id = get_cfg_legit_channel()
+    if legit_ch_id:
+        if message.channel.id != legit_ch_id:
+            return
+    else:
+        # Fallback: nhận diện qua tên kênh có chứa 'legit'
+        if "legit" not in message.channel.name.lower():
+            return
+
+    content = message.content.strip()
+
+    # Nhận dạng cú pháp: +1legit hoặc +1 legit (không phân biệt hoa thường)
+    if not _re_legit.match(r"^\+1\s*legit\b", content, _re_legit.IGNORECASE):
+        return
+
+    channel = message.channel
+    current_name = channel.name  # ví dụ: ✅•𝐋𝐞𝐠𝐢𝐭-58
+
+    # Trích số ở cuối tên kênh
+    match = _re_legit.search(r"-(\d+)$", current_name)
+    if not match:
+        # Tên kênh chưa có số — thêm -1
+        new_count = 1
+        base_name = current_name
+    else:
+        new_count = int(match.group(1)) + 1
+        base_name = current_name[:match.start()]  # phần tên trước dấu -số
+
+    new_name = f"{base_name}-{new_count}"
+
+    try:
+        await channel.edit(name=new_name, reason=f"+1 legit bởi {message.author} → {new_count} đơn")
+        # Phản ứng tick xanh để xác nhận
+        await message.add_reaction("✅")
+    except discord.Forbidden:
+        pass  # Bot thiếu quyền Manage Channels — bỏ qua
+    except Exception as e:
+        print(f"[LEGIT] Lỗi cập nhật tên kênh: {e}")
+
+
+async def handle_vouch_message(message: discord.Message):
+    """
+    Lắng nghe tin nhắn 'done {loại đơn}' trong kênh vouch.
+    Tự động +1 vào số đếm ở cuối tên kênh.
+    """
+    import re as _re_vouch
+
+    # Bỏ qua bot
+    IGNORED_BOT_IDS = {628400349979344919}
+    if message.author.id in IGNORED_BOT_IDS:
+        return
+
+    # Kiểm tra đúng kênh vouch
+    if message.channel.id != VOUCH_CHANNEL_ID:
+        return
+
+    content = message.content.strip()
+
+    # Nhận dạng cú pháp: done {loại đơn} (không phân biệt hoa thường)
+    if not _re_vouch.match(r"^done\b", content, _re_vouch.IGNORECASE):
+        return
+
+    channel = message.channel
+    current_name = channel.name  # ví dụ: 🎉•vouch-120
+
+    # Trích số ở cuối tên kênh
+    match = _re_vouch.search(r"-(\d+)$", current_name)
+    if not match:
+        new_count = 1
+        base_name = current_name
+    else:
+        new_count = int(match.group(1)) + 1
+        base_name = current_name[:match.start()]
+
+    new_name = f"{base_name}-{new_count}"
+
+    try:
+        await channel.edit(name=new_name, reason=f"+1 vouch bởi {message.author} → {new_count} đơn")
+        await message.add_reaction("✅")
+    except discord.Forbidden:
+        pass
+    except Exception as e:
+        print(f"[VOUCH] Lỗi cập nhật tên kênh: {e}")
+
+
+# ================= ON MEMBER JOIN =================
+WELCOME_GUILDS = {
+    950363132679831642: 1276087208150827070,  # Star Clan → kênh welcome
+}
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    ch_id = WELCOME_GUILDS.get(member.guild.id)
+    if not ch_id:
+        return
+    channel = member.guild.get_channel(ch_id)
+    if not channel:
+        return
+    try:
+        msg = await channel.send(member.mention)
+        await asyncio.sleep(10)
+        await msg.delete()
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+        pass
+
+# ================= ERROR HANDLER =================
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        pass
+    elif isinstance(error, commands.MissingPermissions):
+        await ctx.reply("❌ Bạn không có quyền thực hiện lệnh này.")
+
+# ================= SETUP SERVER =================
+import re as _re_setup
+import unicodedata as _unicodedata
+
+# ── Bảng font chữ Unicode đặc biệt (Bold, Bold Italic, Circled, v.v.) ──
+_FONT_MAPS = {
+    "bold": {
+        **{chr(ord('A')+i): chr(0x1D400+i) for i in range(26)},
+        **{chr(ord('a')+i): chr(0x1D41A+i) for i in range(26)},
+        **{str(i): chr(0x1D7CE+i) for i in range(10)},
+    },
+    "bold_italic": {
+        **{chr(ord('A')+i): chr(0x1D468+i) for i in range(26)},
+        **{chr(ord('a')+i): chr(0x1D482+i) for i in range(26)},
+    },
+    "sans_bold": {
+        **{chr(ord('A')+i): chr(0x1D5D4+i) for i in range(26)},
+        **{chr(ord('a')+i): chr(0x1D5EE+i) for i in range(26)},
+        **{str(i): chr(0x1D7EC+i) for i in range(10)},
+    },
+    "script": {
+        **{chr(ord('A')+i): chr(0x1D4D0+i) for i in range(26)},
+        **{chr(ord('a')+i): chr(0x1D4EA+i) for i in range(26)},
+    },
+    "double": {
+        **{chr(ord('A')+i): chr(0x1D538+i) for i in range(26)},
+        **{chr(ord('a')+i): chr(0x1D552+i) for i in range(26)},
+    },
+    "math_bold_serif": {
+        **{chr(ord('A')+i): chr(0x1D400+i) for i in range(26)},
+        **{chr(ord('a')+i): chr(0x1D41A+i) for i in range(26)},
+        **{str(i): chr(0x1D7CE+i) for i in range(10)},
+    },
+    "normal": {},  # giữ nguyên
+}
+
+# Vài override đặc biệt (script/double có ký tự ngoại lệ)
+_FONT_MAPS["script"].update({"B": "ℬ","E": "ℰ","F": "ℱ","H": "ℋ","I": "ℐ","L": "ℒ","M": "ℳ","R": "ℛ","e":"ℯ","g":"ℊ","o":"ℴ"})
+_FONT_MAPS["double"].update({"C": "ℂ","H": "ℍ","N": "ℕ","P": "ℙ","Q": "ℚ","R": "ℝ","Z": "ℤ"})
+
+def _apply_font(text: str, font: str) -> str:
+    """Áp dụng font Unicode vào chuỗi text (chỉ áp dụng cho chữ/số ASCII)."""
+    if font == "normal" or font not in _FONT_MAPS:
+        return text
+    mapping = _FONT_MAPS[font]
+    return "".join(mapping.get(c, c) for c in text)
+
+def _strip_unicode_font(text: str) -> str:
+    """Chuyển ký tự Unicode bold/italic/script/double về ASCII thường."""
+    ranges = [
+        # (start_cp, end_cp, base_ascii_cp)
+        (0x1D400, 0x1D419, ord('A')),   # Bold A-Z
+        (0x1D41A, 0x1D433, ord('a')),   # Bold a-z
+        (0x1D434, 0x1D44D, ord('A')),   # Italic A-Z
+        (0x1D44E, 0x1D467, ord('a')),   # Italic a-z
+        (0x1D468, 0x1D481, ord('A')),   # Bold Italic A-Z
+        (0x1D482, 0x1D49B, ord('a')),   # Bold Italic a-z
+        (0x1D49C, 0x1D4B5, ord('A')),   # Script A-Z (thường)
+        (0x1D4B6, 0x1D4CF, ord('a')),   # Script a-z (thường)
+        (0x1D4D0, 0x1D4E9, ord('A')),   # Script Bold A-Z
+        (0x1D4EA, 0x1D503, ord('a')),   # Script Bold a-z
+        (0x1D538, 0x1D551, ord('A')),   # Double A-Z
+        (0x1D552, 0x1D56B, ord('a')),   # Double a-z
+        (0x1D5D4, 0x1D5ED, ord('A')),   # Sans Bold A-Z
+        (0x1D5EE, 0x1D607, ord('a')),   # Sans Bold a-z
+        (0x1D7CE, 0x1D7D7, ord('0')),   # Bold digits 0-9
+        (0x1D7EC, 0x1D7F5, ord('0')),   # Sans Bold digits 0-9
+    ]
+    # Ngoại lệ script/double và script thường
+    special = {
+        # Script Bold
+        'ℬ':'B','ℰ':'E','ℱ':'F','ℋ':'H','ℐ':'I','ℒ':'L','ℳ':'M','ℛ':'R',
+        'ℯ':'e','ℊ':'g','ℴ':'o',
+        # Double
+        'ℂ':'C','ℍ':'H','ℕ':'N','ℙ':'P','ℚ':'Q','ℝ':'R','ℤ':'Z',
+        # Script thường — uppercase ngoại lệ
+        'ℬ':'B',  # đã trên
+        # Script thường — lowercase ngoại lệ: e=ℯ(0x212F), g=ℊ(0x210A), o=ℴ(0x2134)
+        '\u212F':'e',  # ℯ
+        '\u210A':'g',  # ℊ
+        '\u2134':'o',  # ℴ
+        # Script thường — uppercase ngoại lệ
+        '\u212C':'B',  # ℬ
+        '\u2130':'E',  # ℰ
+        '\u2131':'F',  # ℱ
+        '\u210B':'H',  # ℋ
+        '\u2110':'I',  # ℐ
+        '\u2112':'L',  # ℒ
+        '\u2133':'M',  # ℳ
+        '\u211B':'R',  # ℛ
+    }
+    result = []
+    for c in text:
+        if c in special:
+            result.append(special[c])
+            continue
+        cp = ord(c)
+        converted = False
+        for start, end, base in ranges:
+            if start <= cp <= end:
+                result.append(chr(base + (cp - start)))
+                converted = True
+                break
+        if not converted:
+            result.append(c)
+    return ''.join(result)
+
+
+def _detect_channel_parts(name: str):
+    """
+    Phân tích tên kênh thành các phần:
+    - icon (emoji đầu nếu có)
+    - separator (• hoặc ký tự phân cách)
+    - base_text (phần chữ chính, đã strip font cũ về ASCII)
+    - trailing_num (số cuối nếu có, vd: -58)
+    Trả về dict.
+    """
+    # Tìm icon ở đầu (emoji unicode)
+    icon_match = _re_setup.match(
+        r'^((?:[\U00010000-\U0010FFFF]|[\u2600-\u26FF]|[\u2700-\u27BF]|[\U0001F300-\U0001F9FF])+)',
+        name
+    )
+    icon = icon_match.group(1) if icon_match else ""
+    rest = name[len(icon):].lstrip()
+
+    # Tìm separator
+    sep = ""
+    sep_match = _re_setup.match(r'^([•·\-–—|])\s*', rest)
+    if sep_match:
+        sep = sep_match.group(1)
+        rest = rest[sep_match.end():]
+
+    # Strip font cũ về ASCII trước khi xử lý
+    rest_plain = _strip_unicode_font(rest)
+
+    # Tìm số ở cuối (trên chuỗi đã plain)
+    num_match = _re_setup.search(r'[\-–](\d+)$', rest_plain)
+    trailing_num = ""
+    base_text = rest_plain
+    if num_match:
+        trailing_num = num_match.group(0)   # vd: "-58"
+        base_text = rest_plain[:num_match.start()]
+
+    return {
+        "icon": icon,
+        "sep": sep,
+        "base_text": base_text,
+        "trailing_num": trailing_num,
+        "original": name,
+    }
+
+def _rebuild_name(parts: dict, new_base: str, font: str = "normal") -> str:
+    """Tái tạo tên kênh từ parts với base mới và font mới."""
+    styled_base = _apply_font(new_base, font)
+    result = parts["icon"]
+    if parts["icon"] and parts["sep"]:
+        result += parts["sep"]
+    elif parts["icon"]:
+        result += ""
+    result += styled_base + parts["trailing_num"]
+    return result.strip()
+
+# ── State cho phiên .setup ──
+_setup_sessions: dict = {}   # guild_id → session dict
+
+FONT_LABELS = {
+    "normal":           "Thường (giữ nguyên)",
+    "bold":             "𝐁𝐨𝐥𝐝  —  𝐐𝐮𝐢𝐞𝐭 𝐒𝐜𝐡𝐞𝐦𝐚𝐭𝐢𝐜𝐬",
+    "bold_italic":      "𝑩𝒐𝒍𝒅 𝑰𝒕𝒂𝒍𝒊𝒄  —  𝑸𝒖𝒊𝒆𝒕 𝑺𝒄𝒉𝒆𝒎𝒂𝒕𝒊𝒄𝒔",
+    "sans_bold":        "𝗦𝗮𝗻𝘀 𝗕𝗼𝗹𝗱  —  𝗤𝘂𝗶𝗲𝘁 𝗦𝗰𝗵𝗲𝗺𝗮𝘁𝗶𝗰𝘀",
+    "script":           "𝒮𝒸𝓇𝒾𝓅𝓉  —  𝒬𝓊𝒾ℯ𝓉 𝒮𝒸𝒽ℯ𝓂𝒶𝓉𝒾𝒸𝓈",
+    "double":           "𝔻𝕠𝕦𝕓𝕝𝕖  —  ℚ𝕦𝕚𝕖𝕥 𝕊𝕔𝕙𝕖𝕞𝕒𝕥𝕚𝕔𝕤",
+    "math_bold_serif":  "𝐌𝐚𝐭𝐡 𝐁𝐨𝐥𝐝 𝐒𝐞𝐫𝐢𝐟  —  𝐐𝐮𝐢𝐞𝐭 𝐒𝐜𝐡𝐞𝐦𝐚𝐭𝐢𝐜𝐬",
+}
+
+# Alias để user gõ tên font dễ hơn
+FONT_ALIASES = {
+    "quiet": "bold",
+    "schematics": "bold",
+    "math bold": "bold",
+    "mathbold": "bold",
+    "bi": "bold_italic",
+    "italic": "bold_italic",
+    "sb": "sans_bold",
+    "sansbold": "sans_bold",
+    "sc": "script",
+    "db": "double",
+    "bb": "double",
+    "math_bold_serif": "math_bold_serif",
+    "mathboldserif": "math_bold_serif",
+    "mbs": "math_bold_serif",
+    "serif": "math_bold_serif",
+    "bold serif": "math_bold_serif",
+    "boldserif": "math_bold_serif",
+}
+
+class SetupMainView(View):
+    """Menu chính của .setup."""
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=300)
+        self.guild = guild
+
+    @discord.ui.button(label="📋 Xem danh sách kênh", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_list(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await _show_channel_list(interaction, self.guild)
+
+    @discord.ui.button(label="✏️ Đổi tên kênh (hàng loạt)", style=discord.ButtonStyle.primary, row=0)
+    async def btn_rename(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(SetupFontSampleModal(self.guild, mode="rename"))
+
+    @discord.ui.button(label="➕ Tạo kênh mới", style=discord.ButtonStyle.success, row=0)
+    async def btn_create(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(CreateChannelModal(self.guild))
+
+    @discord.ui.button(label="🔒 Sửa quyền kênh", style=discord.ButtonStyle.danger, row=1)
+    async def btn_perms(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_message(
+            "🔒 **Sửa quyền kênh**\nDùng lệnh: `.setperm #kênh @role xem=true gửi=false`\n"
+            "Hoặc chọn kênh cụ thể từ danh sách bên dưới.",
+            ephemeral=True,
+            view=PermSelectView(self.guild)
+        )
+
+    @discord.ui.button(label="🔤 Chọn font chữ", style=discord.ButtonStyle.secondary, row=1)
+    async def btn_font(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_message(
+            "🔤 **Chọn font chữ mẫu**\nBot sẽ áp dụng font này khi tạo/đổi tên kênh.",
+            ephemeral=True,
+            view=FontSelectView(self.guild)
+        )
+
+
+async def _show_channel_list(interaction: discord.Interaction, guild: discord.Guild):
+    """Gửi danh sách tất cả kênh theo category."""
+    lines = []
+    # Kênh không có category
+    no_cat = [ch for ch in guild.channels if ch.category is None and isinstance(ch, (discord.TextChannel, discord.VoiceChannel))]
+    if no_cat:
+        lines.append("**— Không có category —**")
+        for ch in sorted(no_cat, key=lambda c: c.position):
+            icon = "💬" if isinstance(ch, discord.TextChannel) else "🔊"
+            lines.append(f"  {icon} `#{ch.name}` (ID: {ch.id})")
+
+    for cat in sorted(guild.categories, key=lambda c: c.position):
+        lines.append(f"\n**📁 {cat.name}**")
+        for ch in sorted(cat.channels, key=lambda c: c.position):
+            icon = "💬" if isinstance(ch, discord.TextChannel) else ("🔊" if isinstance(ch, discord.VoiceChannel) else "📢")
+            lines.append(f"  {icon} `{ch.name}` (ID: {ch.id})")
+
+    text = "\n".join(lines) if lines else "Server không có kênh nào."
+    # Chia chunk nếu quá dài
+    chunks = []
+    cur = ""
+    for line in lines:
+        if len(cur) + len(line) + 1 > 1800:
+            chunks.append(cur)
+            cur = line
+        else:
+            cur += "\n" + line
+    if cur:
+        chunks.append(cur)
+
+    await interaction.response.send_message(
+        f"📋 **Danh sách kênh — {guild.name}** ({len(guild.channels)} kênh)\n{chunks[0] if chunks else '(trống)'}",
+        ephemeral=True
+    )
+    for chunk in chunks[1:]:
+        await interaction.followup.send(chunk, ephemeral=True)
+
+
+# ── Modal: Tạo kênh mới ──
+class CreateChannelModal(Modal, title="➕ Tạo Kênh Mới"):
+    ch_name = TextInput(label="Tên kênh", placeholder="vd: 💰•money hoặc ✅•legit-0", max_length=100)
+    ch_type = TextInput(label="Loại (text/voice/category)", placeholder="text", default="text", max_length=10)
+    font    = TextInput(label="Font (normal/bold/sans_bold/serif/script/double)", placeholder="normal", default="normal", max_length=20, required=False)
+
+    def __init__(self, guild: discord.Guild):
+        super().__init__()
+        self.guild = guild
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw_name = self.ch_name.value.strip()
+        ch_type  = self.ch_type.value.strip().lower()
+        font     = self.font.value.strip().lower() or "normal"
+
+        parts = _detect_channel_parts(raw_name)
+        final_name = _rebuild_name(parts, parts["base_text"], font)
+        # Discord yêu cầu tên kênh không có ký tự đặc biệt trong phần slug (chỉ với text channel)
+        # Nhưng emoji thì OK — Discord tự xử lý
+
+        try:
+            if ch_type in ("voice", "vc"):
+                ch = await self.guild.create_voice_channel(final_name, reason=f"Setup bởi {interaction.user}")
+                icon = "🔊"
+            elif ch_type in ("category", "cat"):
+                ch = await self.guild.create_category(final_name, reason=f"Setup bởi {interaction.user}")
+                icon = "📁"
+            else:
+                ch = await self.guild.create_text_channel(final_name, reason=f"Setup bởi {interaction.user}")
+                icon = "💬"
+
+            embed = discord.Embed(title="✅ Tạo Kênh Thành Công", color=0x57F287,
+                                  timestamp=datetime.now(timezone.utc))
+            embed.add_field(name="Tên", value=f"`{final_name}`", inline=True)
+            embed.add_field(name="Loại", value=f"{icon} {ch_type}", inline=True)
+            embed.add_field(name="Font", value=FONT_LABELS.get(font, font), inline=True)
+            if isinstance(ch, discord.TextChannel):
+                embed.add_field(name="Kênh", value=ch.mention, inline=True)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền tạo kênh!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Lỗi: {e}", ephemeral=True)
+
+
+# ── Modal: Nhập font mẫu để đổi tên hàng loạt ──
+class SetupFontSampleModal(Modal, title="✏️ Đổi Tên Kênh Hàng Loạt"):
+    sample = TextInput(
+        label="Font mẫu (paste ký tự hoặc gõ tên font)",
+        placeholder="Paste: 𝐐𝐮𝐢𝐞𝐭 𝐒𝐜𝐡𝐞𝐦𝐚𝐭𝐢𝐜𝐬  hoặc gõ: bold",
+        max_length=50,
+        required=False
+    )
+    font_name = TextInput(
+        label="Font: bold/sans_bold/serif/script/double",
+        placeholder="bold | sans_bold | serif | script | double | normal",
+        default="bold",
+        max_length=20,
+        required=False
+    )
+    scope = TextInput(
+        label="Áp dụng cho? (all/text/voice/category)",
+        placeholder="all",
+        default="all",
+        max_length=20,
+        required=False
+    )
+
+    def __init__(self, guild: discord.Guild, mode: str = "rename"):
+        super().__init__()
+        self.guild = guild
+        self.mode  = mode
+
+    async def on_submit(self, interaction: discord.Interaction):
+        font     = self.font_name.value.strip().lower() or "sans_bold"
+        scope    = self.scope.value.strip().lower() or "all"
+
+        # Nếu user paste mẫu font, tự detect
+        sample_text = self.sample.value.strip()
+        if sample_text:
+            font = _detect_font_from_sample(sample_text) or font
+
+        await interaction.response.send_message(
+            f"⏳ Đang xem trước... Font: **{FONT_LABELS.get(font, font)}** | Scope: **{scope}**",
+            ephemeral=True,
+            view=RenamePreviewView(self.guild, font, scope)
+        )
+
+
+def _detect_font_from_sample(sample: str) -> str:
+    """Nhận diện font từ ký tự Unicode mẫu người dùng paste vào, hoặc từ alias tên."""
+    if not sample:
+        return "normal"
+
+    # Kiểm tra alias trước (user gõ tên như "bold", "quiet", "sb", "serif"...)
+    low = sample.strip().lower()
+    if low in FONT_ALIASES:
+        return FONT_ALIASES[low]
+    if low in FONT_LABELS:
+        return low
+
+    # Nhận diện từ codepoint ký tự đầu tiên
+    c = sample[0]
+    cp = ord(c)
+    if 0x1D400 <= cp <= 0x1D433:
+        return "bold"
+    if 0x1D7CE <= cp <= 0x1D7D7:
+        return "bold"
+    if 0x1D468 <= cp <= 0x1D49B:
+        return "bold_italic"
+    if 0x1D5D4 <= cp <= 0x1D607:
+        return "sans_bold"
+    if 0x1D7EC <= cp <= 0x1D7F5:
+        return "sans_bold"
+    if 0x1D4D0 <= cp <= 0x1D503 or c in "ℬℰℱℋℐℒℳℛℯℊℴ":
+        return "script"
+    if 0x1D538 <= cp <= 0x1D56B or c in "ℂℍℕℙℚℝℤ":
+        return "double"
+    return "normal"
+
+
+# ── View: Preview đổi tên hàng loạt ──
+class RenamePreviewView(View):
+    def __init__(self, guild: discord.Guild, font: str, scope: str):
+        super().__init__(timeout=180)
+        self.guild = guild
+        self.font  = font
+        self.scope = scope
+
+    def _get_channels(self):
+        import re as _re_tc
+        scope = self.scope
+        channels = []
+        for ch in self.guild.channels:
+            if scope == "text"     and not isinstance(ch, discord.TextChannel):     continue
+            if scope == "voice"    and not isinstance(ch, discord.VoiceChannel):    continue
+            if scope == "category" and not isinstance(ch, discord.CategoryChannel): continue
+            # Bỏ qua kênh có tên bắt đầu bằng ticket- (ticket-001, ticket-002, ...)
+            if _re_tc.match(r'^ticket-', ch.name, _re_tc.IGNORECASE):
+                continue
+            channels.append(ch)
+        return sorted(channels, key=lambda c: c.position)
+
+    def _build_preview(self):
+        channels = self._get_channels()
+        lines = []
+        for ch in channels[:30]:   # preview tối đa 30
+            parts  = _detect_channel_parts(ch.name)
+            new_name = _rebuild_name(parts, parts["base_text"], self.font)
+            if new_name != ch.name:
+                lines.append(f"`{ch.name}` → `{new_name}`")
+        return lines, len(channels)
+
+    @discord.ui.button(label="👁️ Xem trước 30 kênh đầu", style=discord.ButtonStyle.secondary)
+    async def btn_preview(self, interaction: discord.Interaction, button: discord.ui.Button):
+        import re as _re_tc3
+        ticket_skipped = sum(
+            1 for ch in self.guild.channels
+            if _re_tc3.match(r'^ticket-', ch.name, _re_tc3.IGNORECASE)
+        )
+        lines, total = self._build_preview()
+        if not lines:
+            return await interaction.response.send_message(
+                f"✅ Không có kênh nào cần đổi tên với font này.\n"
+                f"⏭️ Đã bỏ qua **{ticket_skipped}** kênh ticket-.",
+                ephemeral=True
+            )
+        text = "\n".join(lines[:25])
+        await interaction.response.send_message(
+            f"👁️ **Preview** ({total} kênh — font: {FONT_LABELS.get(self.font, self.font)})\n"
+            f"⏭️ Bỏ qua **{ticket_skipped}** kênh ticket-\n```\n{text}\n```",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="✅ Xác nhận đổi tên", style=discord.ButtonStyle.success)
+    async def btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        import re as _re_tc2
+        # Đếm kênh ticket- bị bỏ qua
+        ticket_skipped = [
+            ch for ch in self.guild.channels
+            if _re_tc2.match(r'^ticket-', ch.name, _re_tc2.IGNORECASE)
+        ]
+        channels = self._get_channels()
+        await interaction.response.send_message(
+            f"⏳ Đang đổi tên **{len(channels)}** kênh... "
+            f"(bỏ qua **{len(ticket_skipped)}** kênh ticket-)",
+            ephemeral=True
+        )
+        done, errors = 0, []
+        skipped_already = []   # đã đúng font
+        skipped_empty   = []   # base_text rỗng (divider, ký tự đặc biệt)
+
+        for ch in channels:
+            parts    = _detect_channel_parts(ch.name)
+            new_name = _rebuild_name(parts, parts["base_text"], self.font)
+
+            if new_name == ch.name:
+                if not parts["base_text"].strip():
+                    skipped_empty.append(f"`{ch.name}`")
+                else:
+                    skipped_already.append(f"`{ch.name}`")
+                continue
+
+            try:
+                await ch.edit(name=new_name, reason=f"Setup font bởi {interaction.user}")
+                done += 1
+                await asyncio.sleep(0.7)
+            except discord.Forbidden:
+                errors.append(f"`{ch.name}` — thiếu quyền")
+            except Exception as e:
+                errors.append(f"`{ch.name}` — {e}")
+
+        result = f"✅ Đổi tên thành công: **{done}** kênh"
+
+        if skipped_already:
+            result += f"\n\n⏭️ **Đã đúng font ({len(skipped_already)})** — bỏ qua:\n"
+            result += " ".join(skipped_already[:20])
+            if len(skipped_already) > 20:
+                result += f" ... (+{len(skipped_already)-20})"
+
+        if skipped_empty:
+            result += f"\n\n🚫 **Không xử lý được ({len(skipped_empty)})** — divider/ký tự đặc biệt:\n"
+            result += " ".join(skipped_empty[:20])
+
+        if errors:
+            result += f"\n\n❌ Lỗi ({len(errors)}):\n" + "\n".join(errors[:10])
+
+        await interaction.followup.send(result, ephemeral=True)
+
+    @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.danger)
+    async def btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("🚫 Đã huỷ thao tác.", ephemeral=True)
+        self.stop()
+
+
+# ── View: Chọn font ──
+class FontSelectView(View):
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=120)
+        self.guild = guild
+        options = [
+            discord.SelectOption(label=label, value=key, description=f"Font: {key}")
+            for key, label in FONT_LABELS.items()
+        ]
+        self.add_item(FontSelectMenu(guild, options))
+
+
+class FontSelectMenu(Select):
+    def __init__(self, guild: discord.Guild, options):
+        super().__init__(placeholder="Chọn font chữ...", options=options, min_values=1, max_values=1)
+        self.guild = guild
+
+    async def callback(self, interaction: discord.Interaction):
+        font = self.values[0]
+        # Lưu font vào session
+        _setup_sessions[self.guild.id] = _setup_sessions.get(self.guild.id, {})
+        _setup_sessions[self.guild.id]["font"] = font
+        sample = _apply_font("Legit Money Store", font)
+        await interaction.response.send_message(
+            f"✅ Đã chọn font: **{FONT_LABELS.get(font, font)}**\nMẫu: `{sample}`\n\n"
+            f"Dùng nút **✏️ Đổi tên kênh** để áp dụng.",
+            ephemeral=True
+        )
+
+
+# ── View: Chọn kênh để sửa quyền ──
+class PermSelectView(View):
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=120)
+        options = [
+            discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id))
+            for ch in sorted(guild.text_channels, key=lambda c: c.position)[:25]
+        ]
+        if options:
+            self.add_item(PermChannelSelect(guild, options))
+
+    @discord.ui.button(label="🔒 Khoá @everyone đọc kênh này", style=discord.ButtonStyle.danger, row=1)
+    async def btn_lock(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        ch = interaction.channel
+        try:
+            await ch.set_permissions(interaction.guild.default_role,
+                                     read_messages=False,
+                                     reason=f"Lock bởi {interaction.user}")
+            await interaction.response.send_message(f"🔒 Đã khoá `#{ch.name}` với @everyone.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+    @discord.ui.button(label="🔓 Mở khoá @everyone", style=discord.ButtonStyle.success, row=1)
+    async def btn_unlock(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        ch = interaction.channel
+        try:
+            await ch.set_permissions(interaction.guild.default_role,
+                                     read_messages=True,
+                                     reason=f"Unlock bởi {interaction.user}")
+            await interaction.response.send_message(f"🔓 Đã mở khoá `#{ch.name}` với @everyone.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+class PermChannelSelect(Select):
+    def __init__(self, guild: discord.Guild, options):
+        super().__init__(placeholder="Chọn kênh để xem/sửa quyền...", options=options)
+        self.guild = guild
+
+    async def callback(self, interaction: discord.Interaction):
+        ch_id = int(self.values[0])
+        ch = self.guild.get_channel(ch_id)
+        if not ch:
+            return await interaction.response.send_message("❌ Không tìm thấy kênh.", ephemeral=True)
+
+        # Hiển thị quyền hiện tại
+        overwrites = ch.overwrites
+        lines = []
+        for target, ow in overwrites.items():
+            name = target.name if hasattr(target, "name") else str(target)
+            pairs = []
+            if ow.read_messages is not None:
+                pairs.append(f"xem={'✅' if ow.read_messages else '❌'}")
+            if ow.send_messages is not None:
+                pairs.append(f"gửi={'✅' if ow.send_messages else '❌'}")
+            if ow.manage_messages is not None:
+                pairs.append(f"quản lý={'✅' if ow.manage_messages else '❌'}")
+            lines.append(f"**{name}**: {', '.join(pairs) or 'mặc định'}")
+
+        perm_text = "\n".join(lines) if lines else "Không có quyền tuỳ chỉnh"
+        await interaction.response.send_message(
+            f"🔒 **Quyền kênh `#{ch.name}`**\n{perm_text}\n\n"
+            f"Dùng `.setperm #{ch.name} @role xem=true gửi=false` để sửa.",
+            ephemeral=True
+        )
+
+
+@bot.command(name="setup")
+async def setup_cmd(ctx):
+    """Mở menu Setup Server (chỉ admin)."""
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới được dùng lệnh này.")
+    guild = ctx.guild
+    if not guild:
+        return await ctx.reply("❌ Lệnh này chỉ dùng trong server.")
+
+    # Thống kê nhanh
+    text_ch  = len(guild.text_channels)
+    voice_ch = len(guild.voice_channels)
+    cats     = len(guild.categories)
+    members  = guild.member_count
+
+    embed = discord.Embed(
+        title=f"⚙️  Setup Server — {guild.name}",
+        description=(
+            f"👥 **{members}** thành viên  |  "
+            f"💬 **{text_ch}** text  |  "
+            f"🔊 **{voice_ch}** voice  |  "
+            f"📁 **{cats}** category\n\n"
+            "Chọn thao tác bên dưới:"
+        ),
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    embed.add_field(
+        name="📝 Các chức năng",
+        value=(
+            "› **📋 Xem danh sách kênh** — liệt kê toàn bộ kênh theo category\n"
+            "› **✏️ Đổi tên hàng loạt** — áp dụng font chữ mới cho tên kênh\n"
+            "› **➕ Tạo kênh mới** — tạo kênh text/voice/category với font\n"
+            "› **🔒 Sửa quyền kênh** — xem & chỉnh quyền @everyone / role\n"
+            "› **🔤 Chọn font chữ** — xem trước các kiểu font Unicode"
+        ),
+        inline=False
+    )
+    embed.set_footer(text=f"Yêu cầu bởi {ctx.author}  •  Hết hạn sau 5 phút")
+    await ctx.reply(embed=embed, view=SetupMainView(guild))
+
+
+@bot.command(name="setperm")
+async def setperm_cmd(ctx, channel: discord.TextChannel = None, role: discord.Role = None, *, flags: str = ""):
+    """
+    Sửa quyền kênh nhanh.
+    Cú pháp: .setperm #kênh @role xem=true gửi=false
+    """
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin.")
+    if not channel or not role:
+        return await ctx.reply("❌ Dùng: `.setperm #kênh @role xem=true gửi=false`")
+
+    overwrite = channel.overwrites_for(role)
+    flag_map = {
+        "xem": "read_messages", "gửi": "send_messages",
+        "đọc": "read_messages", "view": "read_messages",
+        "send": "send_messages", "manage": "manage_messages",
+        "ql": "manage_messages", "reaction": "add_reactions",
+        "embed": "embed_links", "file": "attach_files",
+    }
+    changes = []
+    for part in flags.split():
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        k = k.lower().strip()
+        v = v.lower().strip()
+        attr = flag_map.get(k)
+        if not attr:
+            continue
+        val = True if v in ("true", "1", "yes", "✅", "on") else (False if v in ("false", "0", "no", "❌", "off") else None)
+        if val is None:
+            setattr(overwrite, attr, None)
+        else:
+            setattr(overwrite, attr, val)
+        changes.append(f"{k}={'✅' if val else ('❌' if val is False else '↩️ default')}")
+
+    if not changes:
+        return await ctx.reply("❌ Không có flag hợp lệ.\nVí dụ: `xem=true gửi=false`")
+
+    try:
+        await channel.set_permissions(role, overwrite=overwrite, reason=f"setperm bởi {ctx.author}")
+        await ctx.reply(f"✅ Đã sửa quyền `#{channel.name}` cho {role.mention}:\n" + "\n".join(f"  › {c}" for c in changes))
+    except discord.Forbidden:
+        await ctx.reply("❌ Bot thiếu quyền Manage Channels.")
+    except Exception as e:
+        await ctx.reply(f"❌ Lỗi: {e}")
+
+
+@bot.command(name="rename")
+async def rename_cmd(ctx, channel: discord.abc.GuildChannel = None, *, new_name: str = None):
+    """
+    Đổi tên 1 kênh cụ thể, giữ icon & số đếm.
+    Cú pháp: .rename #kênh tên-mới
+    """
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin.")
+    if not channel or not new_name:
+        return await ctx.reply("❌ Dùng: `.rename #kênh tên-mới`")
+
+    old_name = channel.name
+    parts    = _detect_channel_parts(old_name)
+
+    # Lấy font đã chọn trong session (nếu có)
+    font = _setup_sessions.get(ctx.guild.id, {}).get("font", "normal")
+    final_name = _rebuild_name(parts, new_name, font)
+
+    try:
+        await channel.edit(name=final_name, reason=f"Rename bởi {ctx.author}")
+        await ctx.reply(f"✅ `{old_name}` → `{final_name}`")
+    except discord.Forbidden:
+        await ctx.reply("❌ Bot thiếu quyền.")
+    except Exception as e:
+        await ctx.reply(f"❌ {e}")
+
+
+# ================= EMOJI COMMAND =================
+import re as _re_emoji
+
+@bot.command(name="emoji")
+async def emoji_cmd(ctx, *, args: str = None):
+    """
+    .emoji         → Lắng nghe 60s, tự động thêm ảnh/GIF được gửi trong kênh làm emoji server.
+    .emoji <emoji> → Thêm emoji từ server khác vào server này (có thể nhiều emoji cách nhau bởi khoảng trắng).
+    Chỉ admin mới dùng được.
+    """
+    if ctx.author.id not in ADMIN_IDS:
+        return await ctx.reply("❌ Chỉ admin mới được dùng lệnh này.")
+
+    guild: discord.Guild = ctx.guild
+    if guild is None:
+        return await ctx.reply("❌ Lệnh này chỉ dùng được trong server.")
+
+    # ── Chế độ 2: .emoji <emoji từ server khác> ──
+    if args:
+        import aiohttp as _aiohttp
+
+        # Tìm tất cả custom emoji trong args: <:name:id> hoặc <a:name:id>
+        _emoji_pattern = r"<(a?):([^:>]+):(\d+)>"
+        matches = _re_emoji.findall(_emoji_pattern, args)
+        if not matches:
+            return await ctx.reply("❌ Không tìm thấy emoji hợp lệ.\nCú pháp: `.emoji <emoji1> <emoji2> ...`")
+
+        prog_msg = await ctx.reply(f"⏳ Đang thêm **{len(matches)}** emoji, vui lòng chờ...")
+
+        added, failed = [], []
+        name_count: dict = {}
+
+        async with _aiohttp.ClientSession() as session:
+            for animated, name, emoji_id in matches:
+                ext = "gif" if animated else "png"
+                url = f"https://cdn.discordapp.com/emojis/{emoji_id}.{ext}?quality=lossless"
+
+                # Xử lý tên trùng
+                base_name = name[:32]
+                if base_name in name_count:
+                    name_count[base_name] += 1
+                    final_name = f"{base_name[:29]}_{name_count[base_name]}"
+                else:
+                    name_count[base_name] = 1
+                    final_name = base_name
+
+                try:
+                    async with session.get(url, timeout=_aiohttp.ClientTimeout(total=15)) as resp:
+                        if resp.status != 200:
+                            raise Exception(f"Không tải được ảnh (HTTP {resp.status})")
+                        image_bytes = await resp.read()
+
+                    new_emoji = await guild.create_custom_emoji(
+                        name=final_name,
+                        image=image_bytes,
+                        reason=f"Thêm bởi {ctx.author} qua .emoji"
+                    )
+                    added.append(str(new_emoji))
+                except discord.HTTPException as e:
+                    failed.append(f"`{final_name}` — {e.text}")
+                except Exception as e:
+                    failed.append(f"`{final_name}` — {e}")
+
+        lines = []
+        if added:
+            emoji_str = " ".join(added)
+            lines.append(f"✅ Đã thêm **{len(added)}** emoji:\n{emoji_str[:900]}")
+        if failed:
+            fail_str = "\n".join(failed[:20])
+            lines.append(f"❌ Thất bại **{len(failed)}**:\n{fail_str}")
+
+        result_text = "\n\n".join(lines) if lines else "Không có emoji nào được thêm."
+        try:
+            await prog_msg.edit(content=result_text)
+        except Exception:
+            await ctx.reply(result_text)
+        return
+
+    # ── Chế độ 1: .emoji (lắng nghe ảnh/GIF trong 60s) ──
+    embed = discord.Embed(
+        title="🖼️  Chế độ thêm Emoji",
+        description="Gửi **ảnh hoặc GIF** vào kênh này trong **60 giây**.\n"
+                    "Bot sẽ tự động thêm tất cả làm emoji của server.\n"
+                    "Gõ `hủy` để dừng sớm.",
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_footer(text=f"Được kích hoạt bởi {ctx.author}")
+    status_msg = await ctx.reply(embed=embed)
+
+    added, failed = [], []
+
+    def check(m: discord.Message):
+        return (
+            m.channel == ctx.channel
+            and not m.author.bot
+            and m.author.id in ADMIN_IDS
+            and (m.attachments or m.content.strip().lower() == "hủy")
+        )
+
+    deadline = asyncio.get_event_loop().time() + 60
+
+    while asyncio.get_event_loop().time() < deadline:
+        timeout_left = deadline - asyncio.get_event_loop().time()
+        try:
+            msg: discord.Message = await bot.wait_for("message", check=check, timeout=timeout_left)
+        except asyncio.TimeoutError:
+            break
+
+        # Cho phép dừng sớm
+        if msg.content.strip().lower() == "hủy":
+            await msg.add_reaction("🛑")
+            break
+
+        for attachment in msg.attachments:
+            content_type = attachment.content_type or ""
+            if not (content_type.startswith("image/") or content_type.startswith("video/")):
+                failed.append(f"`{attachment.filename}` (không phải ảnh/GIF)")
+                continue
+
+            # Tên emoji: lấy từ tên file, bỏ extension, chỉ giữ ký tự hợp lệ
+            raw_name = attachment.filename.rsplit(".", 1)[0]
+            emoji_name = _re_emoji.sub(r"[^a-zA-Z0-9_]", "_", raw_name)[:32] or "emoji"
+            # Đảm bảo tên ít nhất 2 ký tự
+            if len(emoji_name) < 2:
+                emoji_name = emoji_name + "_"
+
+            try:
+                image_bytes = await attachment.read()
+                new_emoji = await guild.create_custom_emoji(
+                    name=emoji_name,
+                    image=image_bytes,
+                    reason=f"Thêm bởi {ctx.author} qua .emoji"
+                )
+                added.append(str(new_emoji))
+                await msg.add_reaction("✅")
+            except discord.HTTPException as e:
+                failed.append(f"`{emoji_name}` ({e.text})")
+                await msg.add_reaction("❌")
+            except Exception as e:
+                failed.append(f"`{emoji_name}` ({e})")
+                await msg.add_reaction("❌")
+
+    # Cập nhật embed kết quả
+    result_embed = discord.Embed(
+        title="✅  Kết Quả Thêm Emoji",
+        color=0x57F287 if added else 0xED4245,
+        timestamp=datetime.now(timezone.utc)
+    )
+    if added:
+        result_embed.add_field(
+            name=f"✅ Đã thêm ({len(added)})",
+            value=" ".join(added) if added else "—",
+            inline=False
+        )
+    if failed:
+        result_embed.add_field(
+            name=f"❌ Thất bại ({len(failed)})",
+            value="\n".join(failed),
+            inline=False
+        )
+    if not added and not failed:
+        result_embed.description = "Không có ảnh nào được gửi trong 60 giây."
+
+    result_embed.set_footer(text=f"Kích hoạt bởi {ctx.author}")
+    await status_msg.edit(embed=result_embed)
+
+
+# ================= TIKTOK MONITOR =================
+# LIVE detection  : TikTokLive (WebSocket realtime — isaackogan/TikTokLive)
+# Video detection : ProxiTok RSS (polling mỗi 60s)
+#
+# Cài đặt thư viện:
+#   pip install TikTokLive aiohttp
+#
+# TikTokLive kết nối WebSocket trực tiếp tới TikTok Webcast service.
+# Không cần API key — chỉ cần username TikTok.
+
+import re as _re_tiktok
+import aiohttp as _aiohttp_tiktok
+import xml.etree.ElementTree as _ET
+
+# ── Video polling interval ──
+TIKTOK_VIDEO_CHECK_INTERVAL = 60   # giây — kiểm tra video mới mỗi 60s
+TIKTOK_LIVE_RETRY_INTERVAL  = 60   # giây — thử reconnect LIVE client sau lỗi/kết thúc
+
+# ── ProxiTok RSS instances (fallback theo thứ tự) ──
+PROXITOK_INSTANCES = [
+    "https://proxitok.pabloferreiro.es",
+    "https://proxitok.privacydev.net",
+    "https://proxitok.odyssey346.dev",
+]
+
+# ── Dict giữ TikTokLive client tasks đang chạy: {username: asyncio.Task} ──
+_live_tasks: dict[str, asyncio.Task] = {}
+
+# ─────────────────────────────────────────────────────────────
+# RSS helpers (video mới)
+# ─────────────────────────────────────────────────────────────
+
+async def _fetch_tiktok_rss(username: str) -> str | None:
+    """Thử lấy RSS feed từ các ProxiTok instance."""
+    for base in PROXITOK_INSTANCES:
+        url = f"{base}/@{username}/rss"
+        try:
+            async with _aiohttp_tiktok.ClientSession() as session:
+                async with session.get(url, timeout=_aiohttp_tiktok.ClientTimeout(total=15)) as resp:
+                    if resp.status == 200:
+                        return await resp.text()
+        except Exception:
+            continue
+    return None
+
+def _clean_xml(xml_text: str) -> str:
+    """
+    Làm sạch XML trước khi parse:
+    - Xoá ký tự điều khiển không hợp lệ trong XML (U+0000–U+001F trừ tab/newline/CR)
+    - Escape dấu & không hợp lệ (không phải &amp; &lt; &gt; &quot; &apos; &#...)
+    - Giữ nguyên emoji và ký tự Unicode khác (hợp lệ trong XML 1.0)
+    """
+    import re as _re_clean
+    # Loại ký tự điều khiển invalid: U+0000-U+0008, U+000B, U+000C, U+000E-U+001F, U+FFFE, U+FFFF
+    xml_text = _re_clean.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]', '', xml_text)
+    # Escape & không hợp lệ — & không theo sau bởi amp; lt; gt; quot; apos; hay #
+    xml_text = _re_clean.sub(r'&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)', '&amp;', xml_text)
+    return xml_text
+
+def _parse_rss_latest_video(xml_text: str):
+    """Trả về (video_id, title, url, thumbnail) của video mới nhất, hoặc None."""
+    try:
+        root    = _ET.fromstring(_clean_xml(xml_text))
+        ns      = {"media": "http://search.yahoo.com/mrss/"}
+        channel = root.find("channel")
+        if channel is None:
+            return None
+        item = channel.find("item")
+        if item is None:
+            return None
+
+        title = item.findtext("title") or "Video mới"
+        link  = item.findtext("link")  or ""
+
+        thumb = None
+        for tag in ("media:thumbnail", "media:content"):
+            el = item.find(tag, ns)
+            if el is not None:
+                thumb = el.get("url")
+                break
+
+        # ProxiTok trả về URL dạng proxy: https://proxitok.xxx/thumbnail?url=https%3A%2F%2F...
+        # Discord không load được URL proxy này → decode lấy URL gốc TikTok CDN
+        if thumb:
+            try:
+                from urllib.parse import urlparse, parse_qs, unquote
+                parsed = urlparse(thumb)
+                qs = parse_qs(parsed.query)
+                # Thử lấy param "url" hoặc "src" (tuỳ ProxiTok instance)
+                real_url = (qs.get("url") or qs.get("src") or [None])[0]
+                if real_url:
+                    thumb = unquote(real_url)
+            except Exception:
+                pass  # Giữ nguyên URL cũ nếu decode thất bại
+
+        m        = _re_tiktok.search(r"/video/(\d+)", link or "")
+        video_id = m.group(1) if m else link
+        return video_id, title, link, thumb
+    except Exception as e:
+        print(f"[TikTok-RSS] Lỗi parse: {e}")
+        return None
+
+def _parse_rss_profile(xml_text: str):
+    """
+    Trích xuất (display_name, avatar_url) từ RSS feed.
+    - display_name: lấy từ <title> của <channel>
+    - avatar_url  : lấy từ <image><url> hoặc <itunes:image href="...">
+    """
+    try:
+        root    = _ET.fromstring(_clean_xml(xml_text))
+        channel = root.find("channel")
+        if channel is None:
+            return None, None
+
+        # Tên hiển thị — thường là "TikTok · @username" hoặc tên thật
+        raw_title    = channel.findtext("title") or ""
+        display_name = raw_title.replace("TikTok · ", "").strip() or raw_title.strip()
+
+        # Avatar — thử <image><url>
+        avatar = None
+        img_el = channel.find("image")
+        if img_el is not None:
+            avatar = img_el.findtext("url")
+
+        # Fallback: <itunes:image href="...">
+        if not avatar:
+            ns_itunes = {"itunes": "http://www.itunes.com/dtds/podcast-1.0.dtd"}
+            it_img = channel.find("itunes:image", ns_itunes)
+            if it_img is not None:
+                avatar = it_img.get("href")
+
+        return display_name or None, avatar or None
+    except Exception:
+        return None, None
+
+# Cache profile nhẹ: {username: (display_name, avatar_url)}  — reset khi bot restart
+_profile_cache: dict[str, tuple[str | None, str | None]] = {}
+
+async def _get_tiktok_profile(username: str) -> tuple[str, str | None]:
+    """
+    Trả về (display_name, avatar_url).
+    display_name luôn có giá trị (fallback về @username).
+    Kết quả được cache trong phiên chạy.
+    """
+    if username in _profile_cache:
+        return _profile_cache[username]
+
+    rss = await _fetch_tiktok_rss(username)
+    if rss:
+        display_name, avatar = _parse_rss_profile(rss)
+        result = (display_name or f"@{username}", avatar)
+    else:
+        result = (f"@{username}", None)
+
+    _profile_cache[username] = result
+    return result
+
+# ─────────────────────────────────────────────────────────────
+# TikTokLive — WebSocket realtime LIVE detection
+# ─────────────────────────────────────────────────────────────
+
+async def _run_live_watcher(username: str):
+    """
+    Kết nối WebSocket TikTokLive cho 1 username.
+    - Gửi thông báo Discord KHI BẮT ĐẦU live (1 lần duy nhất mỗi phiên).
+    - Gửi thông báo Discord KHI KẾT THÚC live.
+    - Tự động reconnect để chờ phiên live tiếp theo.
+    """
+    try:
+        from TikTokLive import TikTokLiveClient
+        from TikTokLive.events import ConnectEvent, DisconnectEvent
+    except ImportError:
+        print("[TikTok-LIVE] ❌ Thư viện TikTokLive chưa được cài. Chạy: pip install TikTokLive")
+        return
+
+    print(f"[TikTok-LIVE] 🔍 Bắt đầu theo dõi LIVE @{username}")
+
+    while True:
+        client = TikTokLiveClient(unique_id=f"@{username}")
+
+        # Guard: chỉ gửi thông báo "bắt đầu LIVE" đúng 1 lần mỗi phiên
+        _notified_start = {"sent": False}
+
+        async def _notify_channel(embed: discord.Embed):
+            """Helper gửi embed vào kênh thông báo."""
+            data         = load_data()
+            notify_ch_id = data.get("tiktok_notify_channel")
+            if not notify_ch_id:
+                return
+            notify_ch = bot.get_channel(notify_ch_id)
+            if not notify_ch:
+                try:
+                    notify_ch = await bot.fetch_channel(notify_ch_id)
+                except Exception:
+                    return
+            try:
+                await notify_ch.send(embed=embed)
+            except Exception as e:
+                print(f"[TikTok-LIVE] ❌ Gửi thông báo lỗi: {e}")
+
+        @client.on(ConnectEvent)
+        async def on_connect(event: ConnectEvent):
+            # Chỉ gửi 1 lần — tránh spam khi WebSocket reconnect nội bộ
+            if _notified_start["sent"]:
+                return
+            _notified_start["sent"] = True
+
+            print(f"[TikTok-LIVE] 🔴 @{username} bắt đầu LIVE!")
+            data = load_data()
+            data.setdefault("tiktok_live_status", {})[username] = True
+            save_data(data)
+
+            # Lấy profile (tên hiển thị + avatar)
+            display_name, avatar_url = await _get_tiktok_profile(username)
+
+            # Lấy thumbnail live từ RSS feed (đáng tin hơn room_info)
+            live_thumb = None
+            try:
+                rss = await _fetch_tiktok_rss(username)
+                if rss:
+                    result = _parse_rss_latest_video(rss)
+                    if result:
+                        _, _, _, live_thumb = result
+            except Exception:
+                pass
+
+            embed = discord.Embed(
+                title=f"🔴 {display_name} đang LIVE trên TikTok!",
+                description=(
+                    f"📛 **@{username}**\n"
+                    f"👉 [Nhấn vào đây để xem LIVE](https://www.tiktok.com/@{username}/live)"
+                ),
+                color=0xFF0000,
+                timestamp=datetime.now(timezone.utc)
+            )
+            if live_thumb:
+                embed.set_image(url=live_thumb)
+                if avatar_url:
+                    embed.set_thumbnail(url=avatar_url)
+            elif avatar_url:
+                # Không có thumbnail live → dùng avatar làm ảnh chính
+                embed.set_image(url=avatar_url)
+            embed.set_footer(text="TikTok Live Alert  •  Powered by TikTokLive WebSocket")
+            await _notify_channel(embed)
+
+        @client.on(DisconnectEvent)
+        async def on_disconnect(event: DisconnectEvent):
+            # Chỉ gửi thông báo kết thúc nếu trước đó đã thông báo bắt đầu
+            if not _notified_start["sent"]:
+                return
+
+            print(f"[TikTok-LIVE] ⚫ @{username} kết thúc LIVE.")
+            data = load_data()
+            data.setdefault("tiktok_live_status", {})[username] = False
+            save_data(data)
+
+            display_name, avatar_url = await _get_tiktok_profile(username)
+
+            embed = discord.Embed(
+                title=f"⚫ {display_name} đã kết thúc LIVE",
+                description=(
+                    f"📛 **@{username}**\n"
+                    f"Cảm ơn mọi người đã xem! Theo dõi để không bỏ lỡ lần sau. 🙏"
+                ),
+                color=0x555555,
+                timestamp=datetime.now(timezone.utc)
+            )
+            if avatar_url:
+                embed.set_thumbnail(url=avatar_url)
+            embed.set_footer(text="TikTok Live Alert")
+            await _notify_channel(embed)
+
+        try:
+            await client.connect()
+        except Exception as e:
+            err_msg = str(e).lower()
+            # Các lỗi expected — user chưa live, không tồn tại, chưa đủ điều kiện live
+            _expected = (
+                "not live", "offline", "could not find",
+                "failed to retrieve", "usernotfounderror",
+                "not capable", "never gone live", "does not exist",
+                "invalid literal",   # TikTokLive v6 lỗi parse khi user không live
+            )
+            if not any(k in err_msg for k in _expected):
+                print(f"[TikTok-LIVE] ⚠️ Lỗi kết nối @{username}: {e}")
+
+        # Reset guard và đợi trước khi thử lại
+        _notified_start["sent"] = False
+        await asyncio.sleep(TIKTOK_LIVE_RETRY_INTERVAL)
+
+# ─────────────────────────────────────────────────────────────
+# Manager: khởi động / dừng watcher khi danh sách thay đổi
+# ─────────────────────────────────────────────────────────────
+
+async def _sync_live_watchers():
+    """
+    Đồng bộ _live_tasks với tiktok_accounts trong data.
+    Gọi sau mỗi lần add/remove tài khoản và khi bot khởi động.
+    """
+    data     = load_data()
+    accounts = set(data.get("tiktok_accounts", []))
+    running  = set(_live_tasks.keys())
+
+    # Thêm watcher cho tài khoản mới
+    for username in accounts - running:
+        task = asyncio.create_task(_run_live_watcher(username))
+        _live_tasks[username] = task
+        print(f"[TikTok-LIVE] ✅ Watcher khởi động: @{username}")
+
+    # Huỷ watcher cho tài khoản đã xoá
+    for username in running - accounts:
+        task = _live_tasks.pop(username, None)
+        if task and not task.done():
+            task.cancel()
+            print(f"[TikTok-LIVE] 🛑 Watcher dừng: @{username}")
+
+# ─────────────────────────────────────────────────────────────
+# Video polling loop (RSS — chạy song song với live watchers)
+# ─────────────────────────────────────────────────────────────
+
+async def _tiktok_video_poll_loop():
+    """Kiểm tra video mới qua RSS mỗi TIKTOK_VIDEO_CHECK_INTERVAL giây."""
+    await bot.wait_until_ready()
+    print("[TikTok-Video] ✅ Video poll loop đã khởi động")
+
+    while not bot.is_closed():
+        try:
+            data         = load_data()
+            accounts     = data.get("tiktok_accounts", [])
+            notify_ch_id = data.get("tiktok_notify_channel")
+            last_video   = data.get("tiktok_last_video", {})
+
+            if not accounts or not notify_ch_id:
+                await asyncio.sleep(TIKTOK_VIDEO_CHECK_INTERVAL)
+                continue
+
+            notify_ch = bot.get_channel(notify_ch_id)
+            if not notify_ch:
+                try:
+                    notify_ch = await bot.fetch_channel(notify_ch_id)
+                except Exception:
+                    await asyncio.sleep(TIKTOK_VIDEO_CHECK_INTERVAL)
+                    continue
+
+            changed = False
+
+            for username in accounts:
+                rss = await _fetch_tiktok_rss(username)
+                if not rss:
+                    await asyncio.sleep(2)
+                    continue
+
+                result = _parse_rss_latest_video(rss)
+                if not result:
+                    await asyncio.sleep(2)
+                    continue
+
+                vid_id, title, link, thumb = result
+                prev_id = last_video.get(username)
+
+                if prev_id is None:
+                    # Lần đầu — chỉ lưu baseline, không thông báo
+                    last_video[username] = vid_id
+                    changed = True
+                elif vid_id != prev_id:
+                    last_video[username] = vid_id
+                    changed = True
+
+                    # Lấy profile (tên hiển thị + avatar) — dùng cache
+                    display_name, avatar_url = await _get_tiktok_profile(username)
+
+                    embed = discord.Embed(
+                        title=f"📹 {display_name} vừa đăng video mới!",
+                        description=(
+                            f"📛 **@{username}**\n\n"
+                            f"🎬 **{title}**\n\n"
+                            f"👉 [Xem video ngay]({link})"
+                        ),
+                        url=link,
+                        color=0xFE2C55,
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    if thumb:
+                        embed.set_image(url=thumb)          # thumbnail video làm ảnh chính
+                    if avatar_url:
+                        embed.set_thumbnail(url=avatar_url) # avatar góc phải
+                    embed.set_footer(text="TikTok Notification  •  RSS Feed")
+                    try:
+                        await notify_ch.send(embed=embed)
+                        print(f"[TikTok-Video] 📹 Video mới @{username}: {title}")
+                    except Exception as e:
+                        print(f"[TikTok-Video] ❌ Gửi thông báo video lỗi: {e}")
+
+                await asyncio.sleep(2)  # delay nhỏ giữa từng account
+
+            if changed:
+                data["tiktok_last_video"] = last_video
+                save_data(data)
+
+        except Exception as e:
+            print(f"[TikTok-Video] ❌ Lỗi poll loop: {e}")
+
+        await asyncio.sleep(TIKTOK_VIDEO_CHECK_INTERVAL)
+
+# ── Lệnh quản lý TikTok ──
+
+def _is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
+
+@bot.command(name="tiktok")
+async def tiktok_cmd(ctx, sub: str = None, *, arg: str = None):
+    """
+    Quản lý theo dõi TikTok.
+    .tiktok add <username>        — Thêm tài khoản
+    .tiktok remove <username>     — Xoá tài khoản
+    .tiktok list                  — Danh sách đang theo dõi
+    .tiktok setchannel #kênh      — Đặt kênh thông báo
+    .tiktok status                — Xem cấu hình hiện tại
+    """
+    if not _is_admin(ctx.author.id):
+        return await ctx.reply("❌ Chỉ admin mới được dùng lệnh này.")
+
+    data = load_data()
+    accounts     = data.get("tiktok_accounts", [])
+    notify_ch_id = data.get("tiktok_notify_channel")
+
+    if sub is None:
+        embed = discord.Embed(
+            title="📱 TikTok Monitor — Hướng dẫn",
+            color=0xFE2C55,
+            description=(
+                "`.tiktok add <username>` — Thêm tài khoản theo dõi\n"
+                "`.tiktok remove <username>` — Xoá tài khoản\n"
+                "`.tiktok list` — Danh sách đang theo dõi\n"
+                "`.tiktok setchannel #kênh` — Đặt kênh thông báo\n"
+                "`.tiktok status` — Xem cấu hình hiện tại\n"
+            )
+        )
+        return await ctx.reply(embed=embed)
+
+    sub = sub.lower()
+
+    if sub == "add":
+        if not arg:
+            return await ctx.reply("❌ Dùng: `.tiktok add <username>`")
+        username = arg.lstrip("@").strip()
+        if username in accounts:
+            return await ctx.reply(f"⚠️ `@{username}` đã có trong danh sách rồi.")
+        accounts.append(username)
+        data["tiktok_accounts"] = accounts
+        save_data(data)
+        await _sync_live_watchers()   # khởi động WebSocket watcher ngay
+        await ctx.reply(f"✅ Đã thêm `@{username}` vào danh sách theo dõi TikTok.\n🔴 LIVE watcher đã khởi động — bot sẽ thông báo ngay khi `@{username}` bắt đầu live.")
+
+    elif sub == "remove":
+        if not arg:
+            return await ctx.reply("❌ Dùng: `.tiktok remove <username>`")
+        username = arg.lstrip("@").strip()
+        if username not in accounts:
+            return await ctx.reply(f"⚠️ `@{username}` không có trong danh sách.")
+        accounts.remove(username)
+        data["tiktok_accounts"] = accounts
+        # Xoá trạng thái cũ
+        data.get("tiktok_last_video", {}).pop(username, None)
+        data.get("tiktok_live_status", {}).pop(username, None)
+        save_data(data)
+        await _sync_live_watchers()   # huỷ WebSocket watcher của username này
+        await ctx.reply(f"✅ Đã xoá `@{username}` khỏi danh sách theo dõi. LIVE watcher đã dừng.")
+
+    elif sub == "list":
+        if not accounts:
+            return await ctx.reply("📋 Chưa có tài khoản TikTok nào được theo dõi.")
+        live_status = data.get("tiktok_live_status", {})
+        lines = []
+        for u in accounts:
+            status = "🔴 LIVE" if live_status.get(u) else "⚫ offline"
+            lines.append(f"• `@{u}` — {status}")
+        embed = discord.Embed(
+            title=f"📋 TikTok theo dõi ({len(accounts)} tài khoản)",
+            description="\n".join(lines),
+            color=0xFE2C55
+        )
+        ch_mention = f"<#{notify_ch_id}>" if notify_ch_id else "*(chưa đặt)*"
+        embed.add_field(name="📢 Kênh thông báo", value=ch_mention, inline=False)
+        await ctx.reply(embed=embed)
+
+    elif sub == "setchannel":
+        # Lấy kênh từ mention hoặc ID
+        ch = None
+        if ctx.message.channel_mentions:
+            ch = ctx.message.channel_mentions[0]
+        elif arg:
+            try:
+                ch = bot.get_channel(int(arg.strip()))
+            except Exception:
+                pass
+        if not ch:
+            return await ctx.reply("❌ Dùng: `.tiktok setchannel #kênh`")
+        data["tiktok_notify_channel"] = ch.id
+        save_data(data)
+        await ctx.reply(f"✅ Kênh thông báo TikTok đã được đặt thành {ch.mention}.")
+
+    elif sub == "status":
+        ch_mention = f"<#{notify_ch_id}>" if notify_ch_id else "*(chưa đặt)*"
+        embed = discord.Embed(title="📱 TikTok Monitor — Trạng thái", color=0xFE2C55)
+        embed.add_field(name="📢 Kênh thông báo",  value=ch_mention,                      inline=False)
+        embed.add_field(name="👥 Số tài khoản",    value=str(len(accounts)),               inline=True)
+        embed.add_field(name="⏱️ Video check",     value=f"{TIKTOK_VIDEO_CHECK_INTERVAL}s", inline=True)
+        embed.add_field(name="🔴 LIVE engine",     value="TikTokLive WebSocket (realtime)", inline=False)
+        embed.add_field(
+            name="📌 Tính năng bật",
+            value="📹 Video mới (RSS)  |  🔴 LIVE realtime (WebSocket)",
+            inline=False
+        )
+        if accounts:
+            live_status  = data.get("tiktok_live_status", {})
+            watcher_info = []
+            for u in accounts:
+                task    = _live_tasks.get(u)
+                running = task and not task.done()
+                live    = "🔴 LIVE" if live_status.get(u) else "⚫ offline"
+                ws      = "🟢 watcher ON" if running else "🔴 watcher OFF"
+                watcher_info.append(f"• `@{u}` — {live}  |  {ws}")
+            embed.add_field(name="Tài khoản", value="\n".join(watcher_info), inline=False)
+        await ctx.reply(embed=embed)
+
+    else:
+        await ctx.reply("❌ Lệnh không hợp lệ. Dùng `.tiktok` để xem hướng dẫn.")
+
+
+# ================= ON READY =================
+@bot.event
+async def on_ready():
+    # ── Bước 1: Tải data từ Discord channel trước mọi thứ ──
+    await init_data_cache()
+
+    bot.add_view(TicketPanel())
+    bot.add_view(TicketButtons())
+    for guild in bot.guilds:
+        await sync_ticket_counter(guild)
+    try:
+        synced = await tree.sync()
+        print(f"✅ Synced {len(synced)} slash commands")
+    except Exception as e:
+        print(f"❌ Slash sync error: {e}")
+    print(f"✅ Bot online: {bot.user} | {len(bot.guilds)} server(s)")
+
+    # ── Khởi động TikTok monitor ──
+    bot.loop.create_task(_tiktok_video_poll_loop())   # RSS video polling
+    await _sync_live_watchers()                        # WebSocket LIVE watchers
+    print("[TikTok] 🚀 Video poll loop + LIVE watchers đã khởi động")
+
+bot.run(TOKEN)
