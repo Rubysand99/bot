@@ -625,13 +625,4 @@ class AdminCog(commands.Cog):
 
 
 async def setup(bot):
-    cog = AdminCog(bot)
-    await bot.add_cog(cog)
-    bot.tree.add_command(cog.slash_clear)
-    bot.tree.add_command(cog.slash_addrole)
-    bot.tree.add_command(cog.slash_removerole)
-    bot.tree.add_command(cog.slash_ping)
-    bot.tree.add_command(cog.slash_userinfo)
-    bot.tree.add_command(cog.slash_serverinfo)
-    bot.tree.add_command(cog.slash_botinfo)
-    bot.tree.add_command(cog.slash_qr)
+    await bot.add_cog(AdminCog(bot))
