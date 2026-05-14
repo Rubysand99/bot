@@ -344,9 +344,4 @@ class GiveawayCog(commands.Cog):
 
 
 async def setup(bot):
-    cog = GiveawayCog(bot)
-    await bot.add_cog(cog)
-    bot.tree.add_command(cog.slash_giveaway)
-    bot.tree.add_command(cog.slash_gend)
-    bot.tree.add_command(cog.slash_greroll)
-    bot.tree.add_command(cog.slash_gwlist)
+    await bot.add_cog(GiveawayCog(bot))
