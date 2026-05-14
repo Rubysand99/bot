@@ -74,6 +74,7 @@ async def on_ready():
         await sync_ticket_counter(bot, guild)
 
     # Sync slash commands
+    await asyncio.sleep(1)
     try:
         synced = await bot.tree.sync()
         print(f"✅ Synced {len(synced)} slash commands")
