@@ -34,6 +34,7 @@ def _get_mod_data() -> dict:
             "anti_spam": False,
             "banned_words": [],
             "whitelist_roles": [],  # role ID miễn kiểm tra
+            "whitelist_users": [],  # user ID miễn kiểm tra
             "log_violations": True,
         },
         "muted_role_id": 0,
@@ -557,14 +558,18 @@ class ModCog(commands.Cog):
         embed.add_field(name="🚫 Anti-spam",     value=status(am.get("anti_spam")),     inline=True)
         words = am.get("banned_words", [])
         embed.add_field(name="🚷 Từ cấm",        value=f"`{len(words)}` từ" if words else "Chưa có", inline=True)
+        wl_roles = am.get("whitelist_roles", [])
+        wl_users = am.get("whitelist_users", [])
+        embed.add_field(name="🛡️ Whitelist",     value=f"`{len(wl_roles)}` role, `{len(wl_users)}` user", inline=True)
         embed.add_field(name="💡 Lệnh",          value=(
             "`.automod on/off` — Bật/tắt\n"
             "`.automod links on/off` — Xoá link\n"
             "`.automod invites on/off` — Xoá invite\n"
             "`.automod spam on/off` — Anti-spam\n"
-            "`.automod addword <từ>` — Thêm từ cấm\n"
-            "`.automod delword <từ>` — Xoá từ cấm\n"
-            "`.automod words` — Danh sách từ cấm"
+            "`.automod addword/delword <từ>` — Từ cấm\n"
+            "`.automod addrole/delrole @role` — Whitelist role\n"
+            "`.automod adduser/deluser @user` — Whitelist user\n"
+            "`.automod whitelist` — Xem danh sách whitelist"
         ), inline=False)
         await ctx.reply(embed=embed)
 
@@ -631,6 +636,105 @@ class ModCog(commands.Cog):
         await ctx.reply(f"🚷 **Danh sách từ cấm ({len(words)}):**\n" + ", ".join(f"`{w}`" for w in words))
 
     # ══════════════════════════════════════
+    # AUTOMOD WHITELIST
+    # ══════════════════════════════════════
+    @automod_group.command(name="addrole")
+    async def am_addrole(self, ctx, role: discord.Role = None):
+        """Thêm role vào whitelist — bỏ qua auto-mod"""
+        if not self._is_mod(ctx.author): return
+        if not role: return await ctx.reply("❌ Dùng: `.automod addrole @role`")
+        mod = _get_mod_data()
+        wl  = mod["automod"].setdefault("whitelist_roles", [])
+        if role.id in wl: return await ctx.reply(f"❌ {role.mention} đã có trong whitelist rồi.")
+        wl.append(role.id); _save_mod_data(mod)
+        embed = discord.Embed(title="✅ Đã Thêm Whitelist Role", color=0x57F287, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="🏷️ Role",   value=role.mention,           inline=True)
+        embed.add_field(name="📋 Tổng",   value=f"{len(wl)} role",      inline=True)
+        embed.set_footer(text="Role này sẽ không bị kiểm tra bởi auto-mod")
+        await ctx.reply(embed=embed)
+
+    @automod_group.command(name="delrole")
+    async def am_delrole(self, ctx, role: discord.Role = None):
+        """Xoá role khỏi whitelist"""
+        if not self._is_mod(ctx.author): return
+        if not role: return await ctx.reply("❌ Dùng: `.automod delrole @role`")
+        mod = _get_mod_data()
+        wl  = mod["automod"].get("whitelist_roles", [])
+        if role.id not in wl: return await ctx.reply(f"❌ {role.mention} không có trong whitelist.")
+        wl.remove(role.id); _save_mod_data(mod)
+        embed = discord.Embed(title="🗑️ Đã Xoá Whitelist Role", color=0xED4245, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="🏷️ Role", value=role.mention, inline=True)
+        await ctx.reply(embed=embed)
+
+    @automod_group.command(name="adduser")
+    async def am_adduser(self, ctx, member: discord.Member = None):
+        """Thêm user vào whitelist — bỏ qua auto-mod"""
+        if not self._is_mod(ctx.author): return
+        if not member: return await ctx.reply("❌ Dùng: `.automod adduser @user`")
+        mod = _get_mod_data()
+        wu  = mod["automod"].setdefault("whitelist_users", [])
+        if member.id in wu: return await ctx.reply(f"❌ {member.mention} đã có trong whitelist rồi.")
+        wu.append(member.id); _save_mod_data(mod)
+        embed = discord.Embed(title="✅ Đã Thêm Whitelist User", color=0x57F287, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="👤 User",  value=member.mention,           inline=True)
+        embed.add_field(name="📋 Tổng", value=f"{len(wu)} user",         inline=True)
+        embed.set_footer(text="User này sẽ không bị kiểm tra bởi auto-mod")
+        await ctx.reply(embed=embed)
+
+    @automod_group.command(name="deluser")
+    async def am_deluser(self, ctx, member: discord.Member = None):
+        """Xoá user khỏi whitelist"""
+        if not self._is_mod(ctx.author): return
+        if not member: return await ctx.reply("❌ Dùng: `.automod deluser @user`")
+        mod = _get_mod_data()
+        wu  = mod["automod"].get("whitelist_users", [])
+        if member.id not in wu: return await ctx.reply(f"❌ {member.mention} không có trong whitelist.")
+        wu.remove(member.id); _save_mod_data(mod)
+        embed = discord.Embed(title="🗑️ Đã Xoá Whitelist User", color=0xED4245, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="👤 User", value=member.mention, inline=True)
+        await ctx.reply(embed=embed)
+
+    @automod_group.command(name="whitelist")
+    async def am_whitelist(self, ctx):
+        """Xem danh sách whitelist role và user"""
+        if not self._is_mod(ctx.author): return
+        mod = _get_mod_data()
+        am  = mod.get("automod", {})
+        wl_roles = am.get("whitelist_roles", [])
+        wl_users = am.get("whitelist_users", [])
+        embed = discord.Embed(title="🛡️ Whitelist Auto-Mod", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+
+        if wl_roles:
+            lines = []
+            for rid in wl_roles:
+                role = ctx.guild.get_role(rid)
+                lines.append(role.mention if role else f"`ID:{rid}` *(đã xoá)*")
+            embed.add_field(name=f"🏷️ Roles ({len(wl_roles)})", value="\n".join(lines), inline=False)
+        else:
+            embed.add_field(name="🏷️ Roles", value="*(Chưa có)*", inline=False)
+
+        if wl_users:
+            lines = []
+            for uid in wl_users:
+                member = ctx.guild.get_member(uid)
+                lines.append(member.mention if member else f"`ID:{uid}` *(không tìm thấy)*")
+            embed.add_field(name=f"👤 Users ({len(wl_users)})", value="\n".join(lines), inline=False)
+        else:
+            embed.add_field(name="👤 Users", value="*(Chưa có)*", inline=False)
+
+        embed.add_field(
+            name="💡 Lệnh",
+            value=(
+                "`.automod addrole @role` — Thêm role\n"
+                "`.automod delrole @role` — Xoá role\n"
+                "`.automod adduser @user` — Thêm user\n"
+                "`.automod deluser @user` — Xoá user"
+            ),
+            inline=False
+        )
+        await ctx.reply(embed=embed)
+
+    # ══════════════════════════════════════
     # AUTO-MOD EVENT
     # ══════════════════════════════════════
     @commands.Cog.listener()
@@ -642,10 +746,13 @@ class ModCog(commands.Cog):
         if not am.get("enabled"):
             return
 
-        # Bỏ qua whitelist roles
-        whitelist = am.get("whitelist_roles", [])
+        # Bỏ qua whitelist roles và users
+        whitelist_roles = am.get("whitelist_roles", [])
+        whitelist_users = am.get("whitelist_users", [])
         if isinstance(message.author, discord.Member):
-            if any(r.id in whitelist for r in message.author.roles):
+            if message.author.id in whitelist_users:
+                return
+            if any(r.id in whitelist_roles for r in message.author.roles):
                 return
             if self._is_mod(message.author):
                 return
