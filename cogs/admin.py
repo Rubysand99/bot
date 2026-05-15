@@ -514,45 +514,17 @@ class AdminCog(commands.Cog):
         await ctx.reply(embed=embed, file=file)
 
     # ── .help ──
-    @commands.command(name="help")
-    async def help_cmd(self, ctx, *, topic: str = None):
-        embed = discord.Embed(title="📖 Danh Sách Lệnh — TuyTam Bot", color=0x5865F2, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="🎫 Ticket",     value="`.panel` `.setpanel` `.close` `.done <số tiền>` `.addnote` `.ratings`\n`.addseller` `.removeseller` `.listseller`", inline=False)
-        embed.add_field(name="💰 Balance",    value="`.balance` `.balset` `.balreset`\nGõ `+số` / `-số` trong kênh balance để nạp/chi", inline=False)
-        embed.add_field(name="🤖 AI",         value="`.ai <câu hỏi>` `.ai tomtat` `.ai dich` `.ai phantich` `.aireset` `.mychat`", inline=False)
-        embed.add_field(name="📨 Invite",     value="`.invite [@user]` `.invitetop [n]` `.resetinvite [@user|all]`", inline=False)
-        embed.add_field(name="🏪 Dịch vụ",   value="`.sv` — Xem bảng giá\n`.giaset` — Admin sửa bảng giá", inline=False)
-        embed.add_field(name="🎉 Giveaway",   value="`/giveaway` — Tạo giveaway mới\n`/gend <id>` — Kết thúc sớm\n`/greroll <id>` — Quay số lại\n`/gwlist <id>` — Xem danh sách tham gia", inline=False)
-        embed.add_field(
-            name="🔨 Mod",
-            value=(
-                "`.ban` `.unban` `.kick` `.mute` `.unmute`\n"
-                "`.slowmode` `.lock` `.unlock`\n"
-                "`.warn` `.warns` `.clearwarn`\n"
-                "`.automod on/off/links/invites/spam`\n"
-                "`.automod addword/delword/words`\n"
-                "`.automod addrole/delrole/adduser/deluser/whitelist`\n"
-                "`/ban` `/unban` `/kick` `/mute` `/unmute` `/warn`"
-            ),
-            inline=False
-        )
-        embed.add_field(name="⚙️ Admin",      value="`.settings` `.botinfo` `.qr`\n`.clear <n>` `.addrole` `.removerole`\n`.emoji` `.delemoji` `.rename` `.setperm` `.mkchannel`", inline=False)
-        embed.add_field(name="🔧 Slash khác", value="`/clear` `/addrole` `/removerole`\n`/ping` `/userinfo` `/serverinfo` `/botinfo` `/qr`", inline=False)
-        embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  Dùng . trước mỗi lệnh prefix")
-        await ctx.reply(embed=embed)
-
-    # ── .help ──
     @commands.command(name="help", aliases=["h"])
     async def help_cmd(self, ctx, *, topic: str = None):
         embed = discord.Embed(title="📖 Danh Sách Lệnh — TuyTam Bot", color=0x5865F2, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done <tiền>` `.addnote` `.ratings`\n`.addseller` `.removeseller` `.listseller`\n`/close` `/done` `/addnote` `/ratings` `/addseller` `/listseller`", inline=False)
-        embed.add_field(name="💰 Balance",   value="`.balance` (`.bal`) `.balset` `.balreset`\n`/balance` `/balset` `/balreset`\nGõ `+số` / `-số` trong kênh balance để nạp/chi", inline=False)
+        embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done <tiền>` `.addnote`\n`/close` `/done` `/addnote`", inline=False)
         embed.add_field(name="🤖 AI",        value="`.ai <câu hỏi>` `.ai tomtat` `.ai dich` `.ai phantich`\n`.aireset` `.mychat`\n`/ai` `/aireset` `/mychat`", inline=False)
-        embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite`\n`/invite` `/invitetop` `/resetinvite`", inline=False)
-        embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=False)
+        embed.add_field(name="📨 Invite",    value="`.invite [@user]` `.invitetop [n]` `.resetinvite [@user|all]`\n`/invite` `/invitetop` `/resetinvite`", inline=False)
+        embed.add_field(name="🏪 Dịch vụ",  value="`.sv` — Xem bảng giá\n`.giaset` — Admin sửa bảng giá\n`/sv` `/giaset`", inline=False)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend` `/greroll` `/gwlist`", inline=False)
-        embed.add_field(name="⚙️ Admin",     value="`.st` (settings) `.botinfo` `.qr` `.ping`\n`.clear` `.addrole` `.removerole`\n`.userinfo` `.serverinfo`\n`.emoji` `.delemoji` `.rename` `.setperm` `.mkchannel`", inline=False)
-        embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  Mỗi lệnh đều có dạng . và /")
+        embed.add_field(name="🔨 Mod",       value="`.ban` `.unban` `.kick` `.mute` `.unmute`\n`.slowmode` `.lock` `.unlock`\n`.warn` `.warns` `.clearwarn`\n`.automod on/off/links/invites/spam`\n`.automod addword/delword/words`\n`.automod addrole/delrole/adduser/deluser/whitelist`\n`/ban` `/unban` `/kick` `/mute` `/unmute` `/warn`", inline=False)
+        embed.add_field(name="⚙️ Admin",     value="`.st` (settings) `.botinfo` `.qr` `.ping`\n`.clear <n>` `.addrole @user @role` `.removerole @user @role`\n`.userinfo [@user]` (`.ui`) `.serverinfo` (`.si`)\n`.emoji` `.delemoji` `.rename` `.setperm` `.mkchannel`\n`/clear` `/addrole` `/removerole` `/ping` `/userinfo` `/serverinfo` `/botinfo` `/qr`", inline=False)
+        embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  Dùng . hoặc / trước mỗi lệnh")
         await ctx.reply(embed=embed)
 
     # ── PREFIX commands cho các slash ──
