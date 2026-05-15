@@ -78,6 +78,17 @@ def _default_data() -> dict:
         "ticket_notes":     {},
         "invite_counts":    {},
         "ticket_history":   [],   # [{id, user_id, username, amount, opened_at, closed_at, staff}]
+        "user_points":      {},   # {user_id: int}
+        "point_codes":      {},   # {code: {user_id, expires_at, used}}
+        "point_log":        [],   # lịch sử cộng/trừ point
+        "seller_compensation": {},  # {seller_id: {total_owed, paid, records}}
+        "point_cfg": {
+            "points_per_redeem": 100,   # point mỗi lần vượt link
+            "point_value":       100,   # 1 point = 100đ
+            "max_discount_pct":  20,    # giảm tối đa 20% giá trị đơn
+            "cooldown_hours":    24,    # giới hạn 1 lần/ngày
+            "code_expire_mins":  10,    # mã hết hạn sau 10 phút
+        },
     }
 
 # ══════════════════════════════════════════
@@ -305,6 +316,100 @@ def get_monthly_stats(year: int, month: int) -> dict:
     }
 
 
+# ══════════════════════════════════════════
+# POINT SYSTEM
+# ══════════════════════════════════════════
+def get_point_cfg() -> dict:
+    return load_data().get("point_cfg", {
+        "points_per_redeem": 100,
+        "point_value":       100,
+        "max_discount_pct":  20,
+        "cooldown_hours":    24,
+        "code_expire_mins":  10,
+    })
+
+def get_user_points(user_id: int) -> int:
+    return load_data().get("user_points", {}).get(str(user_id), 0)
+
+def add_user_points(user_id: int, points: int, reason: str = "") -> int:
+    data = load_data()
+    data.setdefault("user_points", {})
+    data.setdefault("point_log", [])
+    key = str(user_id)
+    old = data["user_points"].get(key, 0)
+    data["user_points"][key] = max(0, old + points)
+    data["point_log"].append({
+        "user_id": user_id,
+        "delta":   points,
+        "reason":  reason,
+        "balance": data["user_points"][key],
+        "time":    datetime.now(timezone.utc).isoformat(),
+    })
+    save_data(data)
+    return data["user_points"][key]
+
+def set_user_points(user_id: int, points: int):
+    data = load_data()
+    data.setdefault("user_points", {})
+    data["user_points"][str(user_id)] = max(0, points)
+    save_data(data)
+
+def save_point_code(code: str, user_id: int, expires_at: str):
+    data = load_data()
+    data.setdefault("point_codes", {})
+    data["point_codes"][code] = {"user_id": user_id, "expires_at": expires_at, "used": False}
+    save_data(data)
+
+def get_point_code(code: str) -> dict | None:
+    return load_data().get("point_codes", {}).get(code)
+
+def mark_code_used(code: str):
+    data = load_data()
+    if code in data.get("point_codes", {}):
+        data["point_codes"][code]["used"] = True
+        save_data(data)
+
+def get_last_redeem_time(user_id: int) -> str | None:
+    for entry in reversed(load_data().get("point_log", [])):
+        if entry.get("user_id") == user_id and str(entry.get("reason", "")).startswith("redeem"):
+            return entry.get("time")
+    return None
+
+# ══════════════════════════════════════════
+# SELLER COMPENSATION
+# ══════════════════════════════════════════
+def add_seller_compensation(seller_id: int, amount: int, ticket_name: str, buyer_id: int):
+    data = load_data()
+    data.setdefault("seller_compensation", {})
+    key = str(seller_id)
+    if key not in data["seller_compensation"]:
+        data["seller_compensation"][key] = {"total_owed": 0, "paid": 0, "records": []}
+    data["seller_compensation"][key]["total_owed"] += amount
+    data["seller_compensation"][key]["records"].append({
+        "ticket":   ticket_name,
+        "buyer_id": buyer_id,
+        "amount":   amount,
+        "time":     datetime.now(timezone.utc).isoformat(),
+        "paid":     False,
+    })
+    save_data(data)
+
+def mark_seller_paid(seller_id: int, amount: int):
+    data = load_data()
+    key  = str(seller_id)
+    if key in data.get("seller_compensation", {}):
+        data["seller_compensation"][key]["paid"] = data["seller_compensation"][key].get("paid", 0) + amount
+        save_data(data)
+
+def get_seller_compensation(seller_id: int) -> dict:
+    return load_data().get("seller_compensation", {}).get(str(seller_id), {"total_owed": 0, "paid": 0, "records": []})
+
+def get_all_seller_compensation() -> dict:
+    return load_data().get("seller_compensation", {})
+
+# ══════════════════════════════════════════
+# INVITE COUNTS
+# ══════════════════════════════════════════
 def get_invite_counts() -> dict:
     return load_data().get("invite_counts", {})
 
