@@ -15,8 +15,8 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "3.4.0"
-BOT_UPDATED = "2026-05-14"
+BOT_VERSION = "3.4.1"
+BOT_UPDATED = "2026-05-15"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
 TOKEN = os.getenv("TOKEN")
@@ -37,6 +37,7 @@ COGS = [
     "cogs.invite",
     "cogs.giveaway",
     "cogs.admin",
+    "cogs.mod",
 ]
 
 async def load_cogs():

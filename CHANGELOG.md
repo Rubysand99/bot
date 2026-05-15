@@ -7,6 +7,23 @@
 
 ---
 
+## [v3.4.1] — 2026-05-15
+
+### ✨ Thêm mới
+- `cogs/mod.py` — Hệ thống mod đầy đủ:
+  - **Ban/Unban/Kick/Mute/Unmute** — có DM thông báo cho user, log vào kênh log rudy
+  - **Slowmode/Lock/Unlock** — quản lý kênh
+  - **Warn system** — cảnh cáo + tự động phạt theo số warn (mute → kick → ban)
+  - **Auto-mod** — xoá link, xoá invite Discord, anti-spam, từ cấm
+  - Tất cả lệnh đều có cả dạng prefix (`.ban`) và slash (`/ban`)
+- Lệnh automod group: `.automod on/off/links/invites/spam/addword/delword/words`
+
+### 🔧 Thay đổi
+- Thêm `cogs.mod` vào COGS list trong `bot.py`
+- Dữ liệu mod lưu vào MongoDB qua `load_data()`/`save_data()`
+
+---
+
 ## [v3.4.0] — 2026-05-14
 
 ### ✨ Thêm mới
