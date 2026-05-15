@@ -9,6 +9,8 @@ from discord.ui import View, Button
 from datetime import datetime, timezone, timedelta
 import secrets
 import string
+import os
+import httpx
 
 from core.data import (
     ADMIN_IDS,
@@ -19,6 +21,15 @@ from core.data import (
 )
 
 BOT_VERSION = "1.0"
+
+# ══════════════════════════════════════════
+# API CONFIG
+# ══════════════════════════════════════════
+POINT_API_URL    = os.getenv("POINT_API_URL", "")    # https://your-app.onrender.com
+POINT_API_SECRET = os.getenv("POINT_API_SECRET", "") # Phải khớp với API_SECRET trên Render
+
+def _api_headers():
+    return {"X-API-Secret": POINT_API_SECRET, "Content-Type": "application/json"}
 
 # ══════════════════════════════════════════
 # HELPER
@@ -113,47 +124,67 @@ class PointCog(commands.Cog):
 
         code = code.strip().upper()
 
-        # Kiểm tra cooldown
-        remaining = _check_cooldown(ctx.author.id)
-        if remaining is not None:
-            h, m = divmod(remaining // 60, 60)
-            return await ctx.reply(
-                f"⏳ Bạn cần chờ thêm **{h}h {m}m** trước khi redeem tiếp.\n"
-                f"*(Giới hạn 1 lần/{get_point_cfg().get('cooldown_hours',24)}h)*"
-            )
+        # Nếu có API URL → gọi API, không thì fallback local
+        if POINT_API_URL:
+            async with httpx.AsyncClient(timeout=10) as client:
+                try:
+                    res  = await client.post(
+                        f"{POINT_API_URL}/code/redeem",
+                        json={"code": code, "user_id": ctx.author.id},
+                        headers=_api_headers()
+                    )
+                    data = res.json()
+                except Exception:
+                    return await ctx.reply("❌ Không kết nối được server point. Thử lại sau.")
 
-        # Kiểm tra mã
-        record = get_point_code(code)
-        if not record:
-            return await ctx.reply("❌ Mã không tồn tại hoặc không hợp lệ.")
-        if record.get("used"):
-            return await ctx.reply("❌ Mã này đã được sử dụng rồi.")
-        # Kiểm tra hết hạn
-        try:
-            exp = datetime.fromisoformat(record["expires_at"])
-            if datetime.now(timezone.utc) > exp:
-                return await ctx.reply("❌ Mã đã hết hạn.")
-        except Exception:
-            return await ctx.reply("❌ Mã không hợp lệ.")
-        # Kiểm tra giới hạn user
-        if record.get("user_id") and record["user_id"] != 0 and record["user_id"] != ctx.author.id:
-            return await ctx.reply("❌ Mã này không dành cho bạn.")
+            if res.status_code == 429:
+                return await ctx.reply(f"⏳ {data.get('detail', {}).get('message', 'Đang cooldown')}")
+            if res.status_code == 404:
+                return await ctx.reply("❌ Mã không tồn tại hoặc không hợp lệ.")
+            if res.status_code == 400:
+                err = data.get("detail", {}).get("error", "")
+                if err == "used_code":    return await ctx.reply("❌ Mã này đã được sử dụng rồi.")
+                if err == "expired_code": return await ctx.reply("❌ Mã đã hết hạn.")
+                return await ctx.reply(f"❌ {data.get('detail', {}).get('message', 'Lỗi không xác định')}")
+            if res.status_code == 403:
+                return await ctx.reply("❌ Mã này không dành cho bạn.")
+            if res.status_code != 200:
+                return await ctx.reply("❌ Lỗi server. Thử lại sau.")
 
-        # Cộng point
-        cfg      = get_point_cfg()
-        pts      = cfg.get("points_per_redeem", 100)
-        mark_code_used(code)
-        new_pts  = add_user_points(ctx.author.id, pts, f"redeem:{code}")
+            pts      = data.get("points", 100)
+            new_pts  = data.get("new_total", 0)
+            cfg      = get_point_cfg()
+
+        else:
+            # ── Fallback: xử lý local (giữ nguyên logic cũ) ──
+            remaining = _check_cooldown(ctx.author.id)
+            if remaining is not None:
+                h, m = divmod(remaining // 60, 60)
+                return await ctx.reply(f"⏳ Bạn cần chờ thêm **{h}h {m}m** trước khi redeem tiếp.")
+            record = get_point_code(code)
+            if not record:                    return await ctx.reply("❌ Mã không tồn tại.")
+            if record.get("used"):            return await ctx.reply("❌ Mã đã được sử dụng.")
+            try:
+                exp = datetime.fromisoformat(record["expires_at"])
+                if datetime.now(timezone.utc) > exp: return await ctx.reply("❌ Mã đã hết hạn.")
+            except Exception:
+                return await ctx.reply("❌ Mã không hợp lệ.")
+            if record.get("user_id") and record["user_id"] != 0 and record["user_id"] != ctx.author.id:
+                return await ctx.reply("❌ Mã này không dành cho bạn.")
+            cfg     = get_point_cfg()
+            pts     = cfg.get("points_per_redeem", 100)
+            mark_code_used(code)
+            new_pts = add_user_points(ctx.author.id, pts, f"redeem:{code}")
 
         embed = discord.Embed(
             title="✅ Redeem Thành Công!",
             color=0x57F287, timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="💎 Nhận được",   value=f"**+{pts:,} point**",    inline=True)
-        embed.add_field(name="💼 Tổng point",  value=f"**{new_pts:,} point**", inline=True)
+        embed.add_field(name="💎 Nhận được",  value=f"**+{pts:,} point**",    inline=True)
+        embed.add_field(name="💼 Tổng point", value=f"**{new_pts:,} point**", inline=True)
         embed.add_field(
             name="💡 Sử dụng",
-            value=f"Point sẽ tự động áp dụng giảm giá khi staff dùng `.done` trong ticket của bạn.",
+            value="Point tự động áp dụng giảm giá khi staff dùng `.done` trong ticket của bạn.",
             inline=False
         )
         embed.set_footer(text=f"Cooldown: {cfg.get('cooldown_hours',24)}h trước lần redeem tiếp")
