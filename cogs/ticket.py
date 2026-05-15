@@ -12,12 +12,13 @@ from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput, Select
 
 from core.data import (
-    ADMIN_IDS, FEEDBACK_CHANNEL_ID, TRANSCRIPT_CHANNEL_ID,
+    ADMIN_IDS, TRANSCRIPT_CHANNEL_ID,
     get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
     get_cfg_counter_channel, get_cfg_proof_channel, get_cfg_balance_channel,
-    get_sellers, get_panel_channel_id, save_panel_channel_id,
+    get_panel_channel_id, save_panel_channel_id,
     get_qr_path, save_qr_path, get_buy_roles, get_user_total_spent,
-    add_user_spent, get_ticket_note, add_ticket_note, save_rating,
+    add_user_spent, get_ticket_note, add_ticket_note,
+    save_ticket_record, get_user_ticket_history, get_monthly_stats,
     load_data, save_data, parse_amount, fmt_amount, is_staff_member,
     _uname, _uname_plain, can_use_dangerous_cmd, QR_FILE,
 )
@@ -267,59 +268,7 @@ async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
         user=closer,
     )
 
-    if creator:
-        try:
-            rate_embed = discord.Embed(
-                title="⭐ Đánh Giá Dịch Vụ",
-                description=f"Ticket `{ticket_name}` của bạn đã được đóng.\nHãy đánh giá dịch vụ để giúp chúng tôi cải thiện!",
-                color=0xF1C40F, timestamp=datetime.now(timezone.utc)
-            )
-            await creator.send(embed=rate_embed, view=RatingView(ticket_name, creator.id))
-        except discord.Forbidden:
-            pass
 
-# ══════════════════════════════════════════
-# RATING MODAL / VIEW
-# ══════════════════════════════════════════
-class RatingModal(Modal):
-    def __init__(self, ticket_name: str, user_id: int):
-        super().__init__(title="⭐ Đánh Giá Dịch Vụ")
-        self.ticket_name = ticket_name
-        self.user_id = user_id
-        self.bot_ref = None  # set bởi RatingView
-
-    stars_input = TextInput(label="Số sao (1-5)", placeholder="Nhập số từ 1 đến 5", min_length=1, max_length=1)
-    comment     = TextInput(label="Nhận xét (tuỳ chọn)", placeholder="Dịch vụ tốt, staff nhiệt tình...", style=discord.TextStyle.paragraph, required=False, max_length=200)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            stars = int(self.stars_input.value)
-            if stars < 1 or stars > 5: raise ValueError
-        except ValueError:
-            return await interaction.response.send_message("❌ Số sao không hợp lệ! Nhập từ 1 đến 5.", ephemeral=True)
-        save_rating(self.ticket_name, self.user_id, stars)
-        star_display = "⭐" * stars + "☆" * (5 - stars)
-        log = interaction.client.get_channel(FEEDBACK_CHANNEL_ID)
-        if log:
-            embed = discord.Embed(title="⭐ Đánh Giá Mới", color=0xF1C40F, timestamp=datetime.now(timezone.utc))
-            embed.add_field(name="Ticket",    value=f"`{self.ticket_name}`",  inline=True)
-            embed.add_field(name="User",      value=f"<@{self.user_id}>",     inline=True)
-            embed.add_field(name="Đánh giá", value=star_display,             inline=True)
-            if self.comment.value: embed.add_field(name="Nhận xét", value=self.comment.value, inline=False)
-            await log.send(embed=embed)
-        await interaction.response.send_message(f"✅ Cảm ơn bạn đã đánh giá! {star_display}", ephemeral=True)
-
-class RatingView(View):
-    def __init__(self, ticket_name: str, user_id: int):
-        super().__init__(timeout=300)
-        self.ticket_name = ticket_name
-        self.user_id     = user_id
-
-    @discord.ui.button(label="⭐ Đánh giá dịch vụ", style=discord.ButtonStyle.blurple)
-    async def rate(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("❌ Chỉ người tạo ticket mới được đánh giá.", ephemeral=True)
-        await interaction.response.send_modal(RatingModal(self.ticket_name, self.user_id))
 
 # ══════════════════════════════════════════
 # MODALS
@@ -509,21 +458,6 @@ class TicketButtons(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Mua", emoji="🛒", style=discord.ButtonStyle.blurple, custom_id="claim_ticket")
-    async def claim_ticket(self, interaction: discord.Interaction, button: Button):
-        if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
-        try:
-            for item in self.children:
-                if item.custom_id == "claim_ticket":
-                    item.disabled = True; item.label = f"Claimed: {_uname_plain(interaction.user)}"; item.emoji = "✅"; break
-            await interaction.response.defer()
-            await interaction.message.edit(view=self)
-            await interaction.followup.send(f"✅ {interaction.user.mention} đã nhận ticket này!")
-        except Exception as e:
-            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
-            except: pass
-
     @discord.ui.button(label="Add Staff", emoji="📎", style=discord.ButtonStyle.grey, custom_id="add_staff")
     async def add_staff(self, interaction: discord.Interaction, button: Button):
         if not is_staff_member(interaction.user):
@@ -625,6 +559,25 @@ class TicketCog(commands.Cog):
         save_data(data)
         new_total = add_user_spent(user_id, amount)
 
+        # Lưu lịch sử đơn
+        parts2 = ctx.channel.topic.split("|")
+        opened_at = None
+        try:
+            # topic format: user_id||trade_type|item_key|open
+            # lấy created_at của channel làm opened_at
+            opened_at = ctx.channel.created_at.isoformat()
+        except Exception:
+            opened_at = datetime.now(timezone.utc).isoformat()
+        save_ticket_record({
+            "ticket_name": ctx.channel.name,
+            "user_id":     user_id,
+            "username":    _uname_plain(buyer),
+            "amount":      amount,
+            "opened_at":   opened_at,
+            "closed_at":   datetime.now(timezone.utc).isoformat(),
+            "staff":       _uname_plain(ctx.author),
+        })
+
         from cogs.admin import auto_give_buy_roles
         role_cfg = await auto_give_buy_roles(ctx.guild, buyer, new_total)
         buy_roles = get_buy_roles()
@@ -662,69 +615,6 @@ class TicketCog(commands.Cog):
         await ctx.reply(embed=embed)
         try: await ctx.message.delete()
         except: pass
-
-    @commands.command(name="ratings")
-    async def ratings_cmd(self, ctx):
-        if ctx.author.id not in ADMIN_IDS: return
-        data    = load_data()
-        ratings = data.get("ratings", [])
-        if not ratings: return await ctx.reply("Chưa có đánh giá nào.")
-        total = len(ratings)
-        avg   = sum(r["stars"] for r in ratings) / total
-        dist  = {i: sum(1 for r in ratings if r["stars"] == i) for i in range(1, 6)}
-        bar   = ""
-        for s in range(5, 0, -1):
-            count  = dist[s]
-            filled = int((count / total) * 10) if total > 0 else 0
-            bar += f"{'⭐'*s}: {'█'*filled}{'░'*(10-filled)} {count}\n"
-        embed = discord.Embed(title="⭐ Thống Kê Đánh Giá", color=0xF1C40F, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="Tổng đánh giá", value=str(total),           inline=True)
-        embed.add_field(name="Trung bình",    value=f"{avg:.1f} ⭐",      inline=True)
-        embed.add_field(name="Phân bố",       value=f"```{bar}```",       inline=False)
-        await ctx.reply(embed=embed)
-
-    @commands.command(name="addseller")
-    async def addseller_cmd(self, ctx, user_id: str = None, *, username: str = None):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Chỉ admin mới dùng được lệnh này.")
-        if not user_id or not username: return await ctx.reply("❌ Cú pháp: `.addseller <ID> <tên hiển thị>`")
-        try: seller_id = int(user_id.strip())
-        except ValueError: return await ctx.reply("❌ ID không hợp lệ!")
-        sellers = get_sellers()
-        if any(s["id"] == seller_id for s in sellers): return await ctx.reply(f"❌ Seller ID `{seller_id}` đã có rồi!")
-        sellers.append({"id": seller_id, "label": username.strip()})
-        from core.data import save_sellers
-        save_sellers(sellers)
-        embed = discord.Embed(title="✅ Đã Thêm Seller", color=0x57F287, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="🏷️ Tên hiển thị", value=f"**{username.strip()}**",   inline=True)
-        embed.add_field(name="📋 Tổng sellers",  value=f"**{len(sellers)}** người", inline=True)
-        await ctx.reply(embed=embed)
-
-    @commands.command(name="removeseller", aliases=["delseller", "xoaseller"])
-    async def removeseller_cmd(self, ctx, *, target: str = None):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Chỉ admin mới dùng được lệnh này.")
-        if not target: return await ctx.reply("❌ Cú pháp: `.removeseller <ID hoặc tên>`")
-        sellers = get_sellers()
-        found   = next((s for s in sellers if str(s["id"]) == target.strip() or s["label"].lower() == target.strip().lower()), None)
-        if not found: return await ctx.reply(f"❌ Không tìm thấy seller `{target}`.")
-        sellers.remove(found)
-        from core.data import save_sellers
-        save_sellers(sellers)
-        embed = discord.Embed(title="🗑️ Đã Xoá Seller", color=0xED4245, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="🏷️ Seller đã xoá", value=f"**{found['label']}** (`{found['id']}`)", inline=False)
-        await ctx.reply(embed=embed)
-
-    @commands.command(name="listseller", aliases=["sellers", "danhsachseller"])
-    async def listseller_cmd(self, ctx):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Chỉ admin mới dùng được lệnh này.")
-        sellers = get_sellers()
-        embed   = discord.Embed(title="📋 Danh Sách Seller", color=0x5865F2, timestamp=datetime.now(timezone.utc))
-        if sellers:
-            lines = [f"`{i+1}.` **{s['label']}** — <@{s['id']}>" for i, s in enumerate(sellers)]
-            embed.description = "\n".join(lines)
-            embed.set_footer(text=f"Tổng: {len(sellers)} seller")
-        else:
-            embed.description = "*(Chưa có seller nào)*\nThêm bằng `.addseller <ID> <tên>`"
-        await ctx.reply(embed=embed)
 
     @commands.command(name="orderbase")
     async def orderbase_cmd(self, ctx):
@@ -813,57 +703,109 @@ class TicketCog(commands.Cog):
         embed.set_footer(text=f"Bởi {interaction.user} • Chỉ staff thấy")
         await interaction.response.send_message(embed=embed)
 
-    @discord.app_commands.command(name="ratings", description="Xem thống kê đánh giá dịch vụ")
-    async def slash_ratings(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
-        data    = load_data()
-        ratings = data.get("ratings", [])
-        if not ratings:
-            return await interaction.response.send_message("Chưa có đánh giá nào.", ephemeral=True)
-        total = len(ratings)
-        avg   = sum(r["stars"] for r in ratings) / total
-        dist  = {i: sum(1 for r in ratings if r["stars"] == i) for i in range(1, 6)}
-        bar   = ""
-        for s in range(5, 0, -1):
-            count  = dist[s]
-            filled = int((count / total) * 10) if total > 0 else 0
-            bar += f"{'⭐'*s}: {'█'*filled}{'░'*(10-filled)} {count}\n"
-        embed = discord.Embed(title="⭐ Thống Kê Đánh Giá", color=0xF1C40F, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="Tổng",      value=str(total),       inline=True)
-        embed.add_field(name="Trung bình",value=f"{avg:.1f} ⭐",  inline=True)
-        embed.add_field(name="Phân bố",   value=f"```{bar}```",   inline=False)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    # ══════════════════════════════════════════
+    # TICKET INFO
+    # ══════════════════════════════════════════
+    @commands.command(name="ticketinfo", aliases=["tinfo"])
+    async def ticketinfo_cmd(self, ctx, member: discord.Member = None):
+        if not is_staff_member(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
+        target = member or ctx.author
+        history = get_user_ticket_history(target.id)
+        total_spent = get_user_total_spent(target.id)
 
-    @discord.app_commands.command(name="addseller", description="Thêm seller vào danh sách")
-    @discord.app_commands.describe(user="Thành viên muốn thêm làm seller", label="Tên hiển thị")
-    async def slash_addseller(self, interaction: discord.Interaction, user: discord.Member, label: str):
-        if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
-        sellers = get_sellers()
-        if any(s["id"] == user.id for s in sellers):
-            return await interaction.response.send_message(f"❌ Seller này đã có rồi!", ephemeral=True)
-        sellers.append({"id": user.id, "label": label})
-        from core.data import save_sellers
-        save_sellers(sellers)
-        embed = discord.Embed(title="✅ Đã Thêm Seller", color=0x57F287)
-        embed.add_field(name="👤 Seller",      value=user.mention,                    inline=True)
-        embed.add_field(name="🏷️ Tên",        value=label,                           inline=True)
-        embed.add_field(name="📋 Tổng",        value=f"{len(sellers)} người",         inline=True)
-        await interaction.response.send_message(embed=embed)
+        embed = discord.Embed(
+            title=f"🎫 Lịch Sử Đơn — {target.display_name}",
+            color=0x5865F2, timestamp=datetime.now(timezone.utc)
+        )
+        embed.set_thumbnail(url=target.display_avatar.url)
+        embed.add_field(name="👤 User",        value=target.mention,                    inline=True)
+        embed.add_field(name="📦 Tổng đơn",    value=f"**{len(history)}** đơn",         inline=True)
+        embed.add_field(name="💰 Tổng đã mua", value=f"**{fmt_amount(total_spent)}**",  inline=True)
 
-    @discord.app_commands.command(name="listseller", description="Xem danh sách seller")
-    async def slash_listseller(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
-        sellers = get_sellers()
-        embed   = discord.Embed(title="📋 Danh Sách Seller", color=0x5865F2)
-        if sellers:
-            lines = [f"`{i+1}.` **{s['label']}** — <@{s['id']}>" for i, s in enumerate(sellers)]
-            embed.description = "\n".join(lines)
+        if history:
+            # Hiện 5 đơn gần nhất
+            recent = history[-5:][::-1]
+            lines = []
+            for t in recent:
+                closed = t.get("closed_at", "")
+                try:
+                    dt  = datetime.fromisoformat(closed)
+                    tstr = dt.strftime("%d/%m/%Y")
+                except Exception:
+                    tstr = "?"
+                lines.append(f"`{tstr}` — **{fmt_amount(t.get('amount',0))}** — `{t.get('ticket_name','?')}` — xác nhận: {t.get('staff','?')}")
+            embed.add_field(name="📋 5 đơn gần nhất", value="\n".join(lines), inline=False)
         else:
-            embed.description = "*(Chưa có seller nào)*"
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+            embed.add_field(name="📋 Lịch sử", value="*(Chưa có đơn nào)*", inline=False)
+
+        embed.set_footer(text=f"Tra cứu bởi {_uname_plain(ctx.author)}")
+        await ctx.reply(embed=embed)
+
+    # ══════════════════════════════════════════
+    # THỐNG KÊ THEO THÁNG
+    # ══════════════════════════════════════════
+    @commands.command(name="thongke", aliases=["tk", "stats"])
+    async def thongke_cmd(self, ctx, month_str: str = None):
+        if not is_staff_member(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
+        now = datetime.now(timezone.utc)
+        year, month = now.year, now.month
+
+        if month_str:
+            try:
+                parts = month_str.split("/")
+                if len(parts) == 2:
+                    month, year = int(parts[0]), int(parts[1])
+                else:
+                    month = int(parts[0])
+            except Exception:
+                return await ctx.reply("❌ Sai định dạng! Dùng `.thongke` hoặc `.thongke 04/2025`")
+
+        stats = get_monthly_stats(year, month)
+        records = stats["records"]
+
+        month_label = f"Tháng {month:02d}/{year}"
+        color = 0x57F287 if records else 0x95a5a6
+
+        embed = discord.Embed(
+            title=f"📊 Thống Kê — {month_label}",
+            color=color, timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="📦 Tổng đơn",   value=f"**{stats['total_orders']}** đơn",          inline=True)
+        embed.add_field(name="💰 Tổng tiền",  value=f"**{fmt_amount(stats['total_amount'])}**",   inline=True)
+
+        if records:
+            avg = stats["total_amount"] // stats["total_orders"]
+            embed.add_field(name="📈 Trung bình/đơn", value=f"**{fmt_amount(avg)}**", inline=True)
+
+            # Top 3 buyer
+            from collections import Counter
+            buyer_totals: dict[int, int] = {}
+            for t in records:
+                uid = t.get("user_id")
+                buyer_totals[uid] = buyer_totals.get(uid, 0) + t.get("amount", 0)
+            top3 = sorted(buyer_totals.items(), key=lambda x: x[1], reverse=True)[:3]
+            top_lines = []
+            medals = ["🥇", "🥈", "🥉"]
+            for i, (uid, amt) in enumerate(top3):
+                top_lines.append(f"{medals[i]} <@{uid}> — **{fmt_amount(amt)}**")
+            embed.add_field(name="🏆 Top Buyer", value="\n".join(top_lines), inline=False)
+
+            # 5 đơn gần nhất
+            recent = records[-5:][::-1]
+            lines = []
+            for t in recent:
+                try:
+                    dt   = datetime.fromisoformat(t.get("closed_at",""))
+                    tstr = dt.strftime("%d/%m %H:%M")
+                except Exception:
+                    tstr = "?"
+                lines.append(f"`{tstr}` <@{t.get('user_id','?')}> — **{fmt_amount(t.get('amount',0))}**")
+            embed.add_field(name="📋 5 đơn gần nhất", value="\n".join(lines), inline=False)
+        else:
+            embed.description = f"*(Không có đơn nào trong {month_label})*"
+
+        embed.set_footer(text=f"Tra cứu bởi {_uname_plain(ctx.author)}  •  Dùng .thongke MM/YYYY để xem tháng khác")
+        await ctx.reply(embed=embed)
 
 
 async def setup(bot):

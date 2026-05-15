@@ -77,6 +77,7 @@ def _default_data() -> dict:
         "ratings":          [],
         "ticket_notes":     {},
         "invite_counts":    {},
+        "ticket_history":   [],   # [{id, user_id, username, amount, opened_at, closed_at, staff}]
     }
 
 # ══════════════════════════════════════════
@@ -265,8 +266,45 @@ def add_ticket_note(channel_id, author, note):
     save_data(data)
 
 # ══════════════════════════════════════════
-# INVITE COUNTS
+# TICKET HISTORY
 # ══════════════════════════════════════════
+def get_ticket_history() -> list:
+    return load_data().get("ticket_history", [])
+
+def save_ticket_record(record: dict):
+    """Lưu 1 đơn đã done vào lịch sử. record gồm:
+    id, user_id, username, amount, opened_at, closed_at, staff, ticket_name
+    """
+    data = load_data()
+    data.setdefault("ticket_history", [])
+    data["ticket_history"].append(record)
+    save_data(data)
+
+def get_user_ticket_history(user_id: int) -> list:
+    return [t for t in get_ticket_history() if t.get("user_id") == user_id]
+
+def get_monthly_stats(year: int, month: int) -> dict:
+    """Trả về thống kê ticket trong tháng: tổng đơn, tổng tiền, danh sách đơn."""
+    history = get_ticket_history()
+    records = []
+    for t in history:
+        closed = t.get("closed_at", "")
+        try:
+            dt = datetime.fromisoformat(closed)
+            if dt.year == year and dt.month == month:
+                records.append(t)
+        except Exception:
+            continue
+    total_amount = sum(t.get("amount", 0) for t in records)
+    return {
+        "year":         year,
+        "month":        month,
+        "total_orders": len(records),
+        "total_amount": total_amount,
+        "records":      records,
+    }
+
+
 def get_invite_counts() -> dict:
     return load_data().get("invite_counts", {})
 
