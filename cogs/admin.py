@@ -523,6 +523,19 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📨 Invite",     value="`.invite [@user]` `.invitetop [n]` `.resetinvite [@user|all]`", inline=False)
         embed.add_field(name="🏪 Dịch vụ",   value="`.sv` — Xem bảng giá\n`.giaset` — Admin sửa bảng giá", inline=False)
         embed.add_field(name="🎉 Giveaway",   value="`/giveaway` — Tạo giveaway mới\n`/gend <id>` — Kết thúc sớm\n`/greroll <id>` — Quay số lại\n`/gwlist <id>` — Xem danh sách tham gia", inline=False)
+        embed.add_field(
+            name="🔨 Mod",
+            value=(
+                "`.ban` `.unban` `.kick` `.mute` `.unmute`\n"
+                "`.slowmode` `.lock` `.unlock`\n"
+                "`.warn` `.warns` `.clearwarn`\n"
+                "`.automod on/off/links/invites/spam`\n"
+                "`.automod addword/delword/words`\n"
+                "`.automod addrole/delrole/adduser/deluser/whitelist`\n"
+                "`/ban` `/unban` `/kick` `/mute` `/unmute` `/warn`"
+            ),
+            inline=False
+        )
         embed.add_field(name="⚙️ Admin",      value="`.settings` `.botinfo` `.qr`\n`.clear <n>` `.addrole` `.removerole`\n`.emoji` `.delemoji` `.rename` `.setperm` `.mkchannel`", inline=False)
         embed.add_field(name="🔧 Slash khác", value="`/clear` `/addrole` `/removerole`\n`/ping` `/userinfo` `/serverinfo` `/botinfo` `/qr`", inline=False)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  Dùng . trước mỗi lệnh prefix")
