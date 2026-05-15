@@ -7,6 +7,44 @@
 
 ---
 
+## [v3.5.0] — 2026-05-16
+
+### ✨ Thêm mới
+- `cogs/point.py` — Hệ thống tích điểm hoàn chỉnh:
+  - `.redeem <mã>` — User nhập mã nhận point (1 lần/24h, cooldown tự động)
+  - `.point [@user]` — Xem point hiện có + cooldown còn lại
+  - `.addpoint @user <số>` — Admin cộng/trừ point thủ công
+  - `.gencode [@user]` — Admin tạo mã (hết hạn theo config)
+  - `.pointcfg [key value]` — Xem và sửa cấu hình point
+  - `.pointlog [@seller]` — Thống kê tiền cần bù cho seller
+  - `.buixong @seller <tiền>` — Đánh dấu đã bù tiền seller
+  - Hỗ trợ `@mention`, ID, hoặc username trong tất cả lệnh
+- `backend/main.py` — FastAPI backend deploy trên Render:
+  - `GET /code/generate` — Website gọi để tạo mã tự động sau khi vượt Linkvertise
+  - `POST /code/redeem` — Bot gọi để xác minh mã và cộng point
+  - `GET /user/{id}/points` — Lấy point của user
+  - Bảo mật bằng `X-API-Secret` header
+- `index.html` — Trang destination Linkvertise tự động hiện mã + đếm ngược hết hạn
+- Tích hợp point vào `.done`:
+  - Nếu buyer có point → bot hỏi staff có dùng không
+  - Tự động trừ point, tính giảm giá (tối đa 20% giá trị đơn)
+  - Tự động ghi nhận tiền cần bù cho seller
+- Thống kê ticket: `.ticketinfo [@user]`, `.thongke [MM/YYYY]`
+- Automod whitelist: `.automod addrole/delrole/adduser/deluser/whitelist`
+
+### 🔧 Thay đổi
+- `core/data.py` — Thêm các field: `user_points`, `point_codes`, `point_log`, `seller_compensation`, `point_cfg`, `ticket_history`
+- `cogs/ticket.py` — Xoá rating, seller management, nút Mua (claim); thêm lịch sử đơn
+- `cogs/admin.py` — Cập nhật help đầy đủ, version 3.5.0
+- `cogs/mod.py` — Thêm whitelist user/role cho automod
+- Biến môi trường mới trên Railway: `POINT_API_URL`, `POINT_API_SECRET`
+
+### 🐛 Sửa lỗi
+- Fix 2 hàm `help_cmd` trùng lặp trong `admin.py`
+- Fix automod check whitelist dùng `whitelist_users` thay vì chỉ `whitelist_roles`
+
+---
+
 ## [v3.4.1] — 2026-05-15
 
 ### ✨ Thêm mới
@@ -86,10 +124,12 @@
 > └── cogs/
 >     ├── __init__.py
 >     ├── logger.py        ← log tập trung
->     ├── ticket.py        ← ticket system
->     ├── balance.py       ← số dư
+>     ├── ticket.py        ← ticket system + lịch sử đơn
+>     ├── balance.py       ← (stub, không dùng)
 >     ├── ai_chat.py       ← Groq AI
 >     ├── invite.py        ← invite tracking
 >     ├── giveaway.py      ← giveaway
->     └── admin.py         ← settings, sv, mod
+>     ├── mod.py           ← ban/kick/mute/warn/automod
+>     ├── point.py         ← hệ thống point + seller compensation
+>     └── admin.py         ← settings, sv, help
 > ```

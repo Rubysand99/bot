@@ -21,8 +21,8 @@ from core.data import (
     QR_FILE, get_qr_path, save_qr_path,
 )
 
-BOT_VERSION = "3.4.0"
-BOT_UPDATED = "2026-05-14"
+BOT_VERSION = "3.5.0"
+BOT_UPDATED = "2026-05-16"
 
 # ══════════════════════════════════════════
 # FONT UTILS
@@ -517,7 +517,8 @@ class AdminCog(commands.Cog):
     @commands.command(name="help", aliases=["h"])
     async def help_cmd(self, ctx, *, topic: str = None):
         embed = discord.Embed(title="📖 Danh Sách Lệnh — TuyTam Bot", color=0x5865F2, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done <tiền>` `.addnote`\n`/close` `/done` `/addnote`", inline=False)
+        embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done <tiền>` `.addnote`\n`.ticketinfo [@user]` `.thongke [MM/YYYY]`\n`/close` `/done` `/addnote`", inline=False)
+        embed.add_field(name="💎 Point",     value="`.redeem <mã>` — Nhận point\n`.point [@user]` — Xem point\n`.addpoint @user <số>` — Admin cộng/trừ\n`.gencode [@user]` — Admin tạo mã\n`.pointcfg` — Admin cấu hình\n`.pointlog [@seller]` — Thống kê bù tiền\n`.buixong @seller <tiền>` — Đánh dấu đã bù", inline=False)
         embed.add_field(name="🤖 AI",        value="`.ai <câu hỏi>` `.ai tomtat` `.ai dich` `.ai phantich`\n`.aireset` `.mychat`\n`/ai` `/aireset` `/mychat`", inline=False)
         embed.add_field(name="📨 Invite",    value="`.invite [@user]` `.invitetop [n]` `.resetinvite [@user|all]`\n`/invite` `/invitetop` `/resetinvite`", inline=False)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` — Xem bảng giá\n`.giaset` — Admin sửa bảng giá\n`/sv` `/giaset`", inline=False)
