@@ -1,178 +1,73 @@
 # 📋 CHANGELOG — TuyTam Bot (Rudeus Bot)
 
-> **Hướng dẫn cho AI:** Mỗi lần sửa code, hãy thêm 1 entry mới vào đầu danh sách bên dưới.
-> Format: `## [vX.X.X] — YYYY-MM-DD` rồi liệt kê thay đổi theo nhóm.
-> Tăng version: patch (x.x.**X**) khi sửa lỗi nhỏ, minor (x.**X**.0) khi thêm tính năng, major (**X**.0.0) khi thay đổi lớn.
-> Cập nhật `BOT_VERSION` trong `bot.py` và `cogs/admin.py` cho khớp.
+> Format: `## [vX.X.X] — YYYY-MM-DD`
+> Tăng version: patch khi sửa lỗi, minor khi thêm tính năng, major khi thay đổi lớn.
+> Cập nhật `BOT_VERSION` trong `bot.py` và `cogs/admin.py`.
+
+---
+
+## [v3.6.1] — 2026-05-16
+
+### 🐛 Sửa lỗi
+
+**`cogs/minigame.py`**
+- **Race condition Nối Từ** — Thêm `asyncio.Lock()` per session: 2 người gửi cùng lúc không còn cả 2 đều pass
+- **Cooldown Nối Từ** — Thêm `player_last_time` dict: mỗi người phải chờ 3s trước khi nối tiếp, tránh spam
+- **Tự chơi một mình (Nối Từ)** — Chặn `last_player == uid` nối 2 lần liên tiếp
+- **Session Vua Tiếng Việt treo** — Thay `asyncio.sleep` giữ coroutine bằng `expire_time` timestamp; session tự dọn khi hết hạn thay vì block người dùng
+- **Dọn session ngay (Vua TV)** — `del vtv_sessions[cid]` ngay khi có người trả lời đúng, không cần chờ timeout
+- **Alias không dấu** — Thêm alias đầy đủ cho Bầu Cua (`bau`, `ca`, `ga`, `tom`) và BKB (`bua`, `keo`)
+- **`cog_unload`** — Dọn tất cả session khi bot restart/reload cog
+
+---
+
+## [v3.6.0] — 2026-05-16
+
+### ✨ Thêm mới
+- `cogs/minigame.py` — 4 minigame: Bầu Cua, Búa Kéo Bao, Nối Từ, Vua Tiếng Việt
+- `data/words_vi.txt` — Từ điển nối từ
+
+### 🔧 Thay đổi
+- Thêm `cogs.minigame` vào COGS list trong `bot.py`
+- `BOT_VERSION = "3.6.0"`
 
 ---
 
 ## [v3.5.2] — 2026-05-16
-
-### ✨ Thêm mới
-- `.clearshop` — Admin xoá toàn bộ item trong shop một lần
-
-### 🏪 Shop quà (cấu hình thực tế)
-Danh sách item chính thức được thêm vào shop:
-
-| ID | Tên | Point | Giá vốn | Thu Work.ink |
-|---|---|---|---|---|
-| `youtube_1m` | 🎬 YouTube Premium 1 Tháng | 300 pt | 19.000đ | ~22.500–60.000đ |
-| `cavan_2m` | 🎨 Canva Pro 2 Tháng | 300 pt | 19.000đ | ~22.500–60.000đ |
-| `capcut_35d` | 🎬 CapCut Pro 35 Ngày | 450 pt | 30.000đ | ~33.750–90.000đ |
-| `capcut_6m` | 🎬 CapCut Pro 6 Tháng | 2.000 pt | 140.000đ | ~150.000–400.000đ |
-| `netflix_1m` | 🎬 Netflix 1 Tháng | 1.000 pt | 70.000đ | ~75.000–200.000đ |
-| `money_1m` | 💰 1M In-game Money | 20 pt | 1.000đ | ~1.500–4.000đ |
-| `skeleton` | 💀 1 Spawner Skeleton | 60 pt | 4.000đ | ~4.500–12.000đ |
-
----
+- `.clearshop` — Admin xoá toàn bộ item shop
 
 ## [v3.5.1] — 2026-05-16
-
-### ✨ Thêm mới
-- `cogs/point.py` — Thêm hệ thống đổi quà:
-  - `.shop` — Xem cửa hàng đổi quà, hiện ✅/❌ theo point hiện có
-  - `.exchange <id>` — Đổi point lấy quà, xác nhận trước khi trừ, tự động tạo ticket
-  - `.addreward <id> <points> <tên>` — Admin thêm quà, hiện ước tính thu Work.ink
-  - `.delreward <id>` — Admin xoá quà khỏi shop
-
-### 🔧 Thay đổi
-- **Point system redesign** — Thay đổi hoàn toàn mô hình kinh tế:
-  - 1 lần vượt Work.ink = **1 point** (thay vì 100)
-  - Point **chỉ dùng để đổi quà** — xoá hoàn toàn giảm giá tiền mặt
-  - `max_discount_pct = 0`, `point_value = 0` — tắt giảm giá trong `.done`
-  - `reward_shop = []` — admin tự thêm item bằng `.addreward`
-- `cogs/ticket.py` — Xoá hoàn toàn `PointConfirmView`, `add_seller_compensation` khỏi `.done`
-- `core/data.py` — Thêm `reward_shop`, `exchange_log`, `get_reward_shop`, `get_reward_item`, `save_reward_shop`, `add_exchange_record`
-
-### 🐛 Sửa lỗi
-- Xoá import thừa `get_user_points`, `add_user_points`, `get_point_cfg`, `add_seller_compensation` khỏi `ticket.py`
-
----
+- Hệ thống đổi quà: `.shop`, `.exchange`, `.addreward`, `.delreward`
+- Point redesign: 1 lần vượt Work.ink = 1 point, chỉ dùng đổi quà
 
 ## [v3.5.0] — 2026-05-16
-
-### ✨ Thêm mới
-- `cogs/point.py` — Hệ thống tích điểm hoàn chỉnh:
-  - `.redeem <mã>` — User nhập mã nhận point (1 lần/24h, cooldown tự động)
-  - `.point [@user]` — Xem point hiện có + cooldown còn lại
-  - `.addpoint @user <số>` — Admin cộng/trừ point thủ công
-  - `.gencode [@user]` — Admin tạo mã (hết hạn theo config)
-  - `.pointcfg [key value]` — Xem và sửa cấu hình point
-  - `.pointlog [@seller]` — Thống kê tiền cần bù cho seller
-  - `.buixong @seller <tiền>` — Đánh dấu đã bù tiền seller
-  - Hỗ trợ `@mention`, ID, hoặc username trong tất cả lệnh
-- `backend/main.py` — FastAPI backend deploy trên Render:
-  - `GET /code/generate` — Website gọi để tạo mã tự động sau khi vượt Linkvertise
-  - `POST /code/redeem` — Bot gọi để xác minh mã và cộng point
-  - `GET /user/{id}/points` — Lấy point của user
-  - Bảo mật bằng `X-API-Secret` header
-- `index.html` — Trang destination Linkvertise tự động hiện mã + đếm ngược hết hạn
-- Tích hợp point vào `.done`:
-  - Nếu buyer có point → bot hỏi staff có dùng không
-  - Tự động trừ point, tính giảm giá (tối đa 20% giá trị đơn)
-  - Tự động ghi nhận tiền cần bù cho seller
-- Thống kê ticket: `.ticketinfo [@user]`, `.thongke [MM/YYYY]`
-- Automod whitelist: `.automod addrole/delrole/adduser/deluser/whitelist`
-
-### 🔧 Thay đổi
-- `core/data.py` — Thêm các field: `user_points`, `point_codes`, `point_log`, `seller_compensation`, `point_cfg`, `ticket_history`
-- `cogs/ticket.py` — Xoá rating, seller management, nút Mua (claim); thêm lịch sử đơn
-- `cogs/admin.py` — Cập nhật help đầy đủ, version 3.5.0
-- `cogs/mod.py` — Thêm whitelist user/role cho automod
-- Biến môi trường mới trên Railway: `POINT_API_URL`, `POINT_API_SECRET`
-
-### 🐛 Sửa lỗi
-- Fix 2 hàm `help_cmd` trùng lặp trong `admin.py`
-- Fix automod check whitelist dùng `whitelist_users` thay vì chỉ `whitelist_roles`
-
----
+- Hệ thống tích điểm: `.redeem`, `.point`, `.addpoint`, `.gencode`, `.pointcfg`, `.pointlog`, `.buixong`
+- FastAPI backend trên Render
+- Tích hợp point vào `.done`
 
 ## [v3.4.1] — 2026-05-15
-
-### ✨ Thêm mới
-- `cogs/mod.py` — Hệ thống mod đầy đủ:
-  - **Ban/Unban/Kick/Mute/Unmute** — có DM thông báo cho user, log vào kênh log rudy
-  - **Slowmode/Lock/Unlock** — quản lý kênh
-  - **Warn system** — cảnh cáo + tự động phạt theo số warn (mute → kick → ban)
-  - **Auto-mod** — xoá link, xoá invite Discord, anti-spam, từ cấm
-  - Tất cả lệnh đều có cả dạng prefix (`.ban`) và slash (`/ban`)
-- Lệnh automod group: `.automod on/off/links/invites/spam/addword/delword/words`
-
-### 🔧 Thay đổi
-- Thêm `cogs.mod` vào COGS list trong `bot.py`
-- Dữ liệu mod lưu vào MongoDB qua `load_data()`/`save_data()`
-
----
+- `cogs/mod.py` — Ban/Kick/Mute/Warn/Automod
 
 ## [v3.4.0] — 2026-05-14
-
-### ✨ Thêm mới
-- `cogs/logger.py` — Hệ thống log tập trung, ghi mọi hoạt động bot vào kênh **log rudy**
-- Slash commands cho tất cả lệnh prefix: `/close`, `/done`, `/addnote`, `/ratings`, `/addseller`, `/listseller`, `/balance`, `/balset`, `/balreset`, `/ai`, `/aireset`, `/mychat`, `/invite`, `/invitetop`, `/resetinvite`
-- Prefix commands mới: `.ping`, `.userinfo`, `.serverinfo`
-- Alias mới: `.st` (settings), `.b` (balance), `.i` (invite), `.h` (help), `.ui` (userinfo), `.si` (serverinfo)
-
-### 🔧 Thay đổi
-- Loại bỏ `cfg_log_channel` — thay bằng `cfg_log_rudy` làm kênh log duy nhất
-- `.help` cập nhật hiển thị đầy đủ cả lệnh `.` và `/`
-- Cấu trúc bot tách thành nhiều Cog: `ticket`, `balance`, `ai_chat`, `invite`, `giveaway`, `admin`, `logger`
-
-### 🐛 Sửa lỗi
-- Fix `CommandAlreadyRegistered` do `bot.tree.add_command()` thủ công trùng với `@app_commands.command`
-- Fix slash sync 0 commands do sync chạy trước khi cog load xong
-
----
+- `cogs/logger.py`, slash commands, `.ping`, `.userinfo`, `.serverinfo`
 
 ## [v3.3.5] — 2026-05-12
-
-### ✨ Thêm mới
-- Tách `bot.py` 6000 dòng thành cấu trúc Cog (`core/`, `cogs/`)
-- `cogs/giveaway.py` — Giveaway với nút tham gia, confirm view, check invite winner
-- `cogs/ai_chat.py` — AI chat tích hợp Groq (llama-3, gemma2) với fallback model
-- `cogs/invite.py` — Invite tracking: đếm net/fake/left, leaderboard, fake detect tự động
-- `cogs/balance.py` — Balance channel: gõ `+số`/`-số` tự động nạp/chi, phí 5%
-- `cogs/ticket.py` — Ticket system: panel, close, done, transcript HTML, rating, seller
-
-### 🔧 Thay đổi
-- Toàn bộ data lưu MongoDB (motor), cache in-memory
-- `bot.py` gọn còn ~150 dòng
+- Tách bot.py thành cấu trúc Cog, MongoDB, tất cả cog cơ bản
 
 ---
-
-## [v3.x.x] — Trước 2026-05-12
-
-- Các phiên bản cũ chạy trên `bot.py` đơn file (~6000 dòng)
-- Tính năng cốt lõi: ticket, balance, giveaway, AI, invite, log transcript, feedback
-
----
-
-> **Kênh log trong bot:**
-> | Kênh | Mục đích | Cài bằng |
-> |------|----------|----------|
-> | Log Rudy (`cfg_log_rudy`) | Mọi hoạt động bot | `.st` → 📋 Log Channel |
-> | Transcript (`TRANSCRIPT_CHANNEL_ID`) | Transcript khi đóng ticket | Hardcode `data.py` |
-> | Feedback (`FEEDBACK_CHANNEL_ID`) | Đánh giá ⭐ từ user | Hardcode `data.py` |
-> | Changelog (`CHANGELOG_CHANNEL_ID`) | Thông báo bot restart | Hardcode `data.py` |
 
 > **Cấu trúc file:**
 > ```
 > tuytam_bot/
 > ├── bot.py
-> ├── CHANGELOG.md         ← file này
-> ├── requirements.txt
-> ├── core/
-> │   ├── __init__.py
-> │   └── data.py          ← MongoDB, cache, helpers
+> ├── CHANGELOG.md
+> ├── core/data.py
+> ├── data/words_vi.txt     ← từ điển nối từ
 > └── cogs/
->     ├── __init__.py
->     ├── logger.py        ← log tập trung
->     ├── ticket.py        ← ticket system + lịch sử đơn
->     ├── balance.py       ← (stub, không dùng)
->     ├── ai_chat.py       ← Groq AI
->     ├── invite.py        ← invite tracking
->     ├── giveaway.py      ← giveaway
->     ├── mod.py           ← ban/kick/mute/warn/automod
->     ├── point.py         ← hệ thống point + seller compensation
->     └── admin.py         ← settings, sv, help
+>     ├── minigame.py       ← v3.6.1
+>     ├── point.py
+>     ├── ticket.py
+>     ├── mod.py
+>     ├── admin.py
+>     └── ...
 > ```
