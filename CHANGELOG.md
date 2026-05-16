@@ -7,6 +7,29 @@
 
 ---
 
+## [v3.5.1] — 2026-05-16
+
+### ✨ Thêm mới
+- `cogs/point.py` — Thêm hệ thống đổi quà:
+  - `.shop` — Xem cửa hàng đổi quà, hiện ✅/❌ theo point hiện có
+  - `.exchange <id>` — Đổi point lấy quà, xác nhận trước khi trừ, tự động tạo ticket
+  - `.addreward <id> <points> <tên>` — Admin thêm quà, hiện ước tính thu Work.ink
+  - `.delreward <id>` — Admin xoá quà khỏi shop
+
+### 🔧 Thay đổi
+- **Point system redesign** — Thay đổi hoàn toàn mô hình kinh tế:
+  - 1 lần vượt Work.ink = **1 point** (thay vì 100)
+  - Point **chỉ dùng để đổi quà** — xoá hoàn toàn giảm giá tiền mặt
+  - `max_discount_pct = 0`, `point_value = 0` — tắt giảm giá trong `.done`
+  - `reward_shop = []` — admin tự thêm item bằng `.addreward`
+- `cogs/ticket.py` — Xoá hoàn toàn `PointConfirmView`, `add_seller_compensation` khỏi `.done`
+- `core/data.py` — Thêm `reward_shop`, `exchange_log`, `get_reward_shop`, `get_reward_item`, `save_reward_shop`, `add_exchange_record`
+
+### 🐛 Sửa lỗi
+- Xoá import thừa `get_user_points`, `add_user_points`, `get_point_cfg`, `add_seller_compensation` khỏi `ticket.py`
+
+---
+
 ## [v3.5.0] — 2026-05-16
 
 ### ✨ Thêm mới
