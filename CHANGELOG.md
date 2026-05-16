@@ -7,6 +7,26 @@
 
 ---
 
+## [v3.5.2] — 2026-05-16
+
+### ✨ Thêm mới
+- `.clearshop` — Admin xoá toàn bộ item trong shop một lần
+
+### 🏪 Shop quà (cấu hình thực tế)
+Danh sách item chính thức được thêm vào shop:
+
+| ID | Tên | Point | Giá vốn | Thu Work.ink |
+|---|---|---|---|---|
+| `youtube_1m` | 🎬 YouTube Premium 1 Tháng | 300 pt | 19.000đ | ~22.500–60.000đ |
+| `cavan_2m` | 🎨 Canva Pro 2 Tháng | 300 pt | 19.000đ | ~22.500–60.000đ |
+| `capcut_35d` | 🎬 CapCut Pro 35 Ngày | 450 pt | 30.000đ | ~33.750–90.000đ |
+| `capcut_6m` | 🎬 CapCut Pro 6 Tháng | 2.000 pt | 140.000đ | ~150.000–400.000đ |
+| `netflix_1m` | 🎬 Netflix 1 Tháng | 1.000 pt | 70.000đ | ~75.000–200.000đ |
+| `money_1m` | 💰 1M In-game Money | 20 pt | 1.000đ | ~1.500–4.000đ |
+| `skeleton` | 💀 1 Spawner Skeleton | 60 pt | 4.000đ | ~4.500–12.000đ |
+
+---
+
 ## [v3.5.1] — 2026-05-16
 
 ### ✨ Thêm mới
