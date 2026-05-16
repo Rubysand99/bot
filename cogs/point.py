@@ -556,6 +556,16 @@ class PointCog(commands.Cog):
     # ══════════════════════════════════════
     # .addreward — Admin thêm quà vào shop
     # ══════════════════════════════════════
+    @commands.command(name="clearshop")
+    async def clearshop_cmd(self, ctx):
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới dùng được.")
+        items = get_reward_shop()
+        if not items:
+            return await ctx.reply("Shop đang trống rồi.")
+        save_reward_shop([])
+        await ctx.reply(f"✅ Đã xoá toàn bộ **{len(items)}** item khỏi shop.")
+
     @commands.command(name="addreward")
     async def addreward_cmd(self, ctx, item_id: str = None, points: str = None, *, name: str = None):
         if ctx.author.id not in ADMIN_IDS:
