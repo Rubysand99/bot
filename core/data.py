@@ -84,11 +84,17 @@ def _default_data() -> dict:
         "seller_compensation": {},  # {seller_id: {total_owed, paid, records}}
         "point_cfg": {
             "points_per_redeem": 100,   # point mỗi lần vượt link
-            "point_value":       100,   # 1 point = 100đ
-            "max_discount_pct":  20,    # giảm tối đa 20% giá trị đơn
-            "cooldown_hours":    24,    # giới hạn 1 lần/ngày
-            "code_expire_mins":  10,    # mã hết hạn sau 10 phút
+            "point_value":       5,     # 1 point = 5đ giảm giá (100pt = 500đ)
+            "max_discount_pct":  5,     # giảm tối đa 5% giá trị đơn
+            "cooldown_hours":    24,
+            "code_expire_mins":  10,
         },
+        "reward_shop": [
+            {"id": "money_1m",   "name": "💰 1M In-game Money",      "points": 500,  "description": "1.000.000 tiền trong game"},
+            {"id": "skeleton",   "name": "💀 Skeleton Spawn Egg x16","points": 800,  "description": "16 Skeleton Spawn Egg"},
+            {"id": "gear_full",  "name": "🛡️ Full Diamond Gear",     "points": 2000, "description": "Bộ trang bị Full Diamond"},
+            {"id": "elytra",     "name": "🦋 Elytra",                "points": 3000, "description": "1 Elytra"},
+        ],
     }
 
 # ══════════════════════════════════════════
@@ -406,6 +412,30 @@ def get_seller_compensation(seller_id: int) -> dict:
 
 def get_all_seller_compensation() -> dict:
     return load_data().get("seller_compensation", {})
+
+def get_reward_shop() -> list:
+    return load_data().get("reward_shop", [])
+
+def get_reward_item(item_id: str) -> dict | None:
+    return next((i for i in get_reward_shop() if i["id"] == item_id), None)
+
+def save_reward_shop(items: list):
+    data = load_data()
+    data["reward_shop"] = items
+    save_data(data)
+
+def add_exchange_record(user_id: int, item_id: str, item_name: str, points_used: int):
+    data = load_data()
+    data.setdefault("exchange_log", [])
+    data["exchange_log"].append({
+        "user_id":    user_id,
+        "item_id":    item_id,
+        "item_name":  item_name,
+        "points":     points_used,
+        "time":       datetime.now(timezone.utc).isoformat(),
+        "status":     "pending",  # pending → done
+    })
+    save_data(data)
 
 # ══════════════════════════════════════════
 # INVITE COUNTS

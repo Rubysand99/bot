@@ -17,6 +17,7 @@ from core.data import (
     get_user_points, add_user_points, set_user_points, get_point_cfg,
     save_point_code, get_point_code, mark_code_used, get_last_redeem_time,
     get_seller_compensation, get_all_seller_compensation, mark_seller_paid,
+    get_reward_shop, get_reward_item, save_reward_shop, add_exchange_record,
     fmt_amount, is_staff_member, _uname_plain,
 )
 
@@ -409,6 +410,183 @@ class PointCog(commands.Cog):
         embed.add_field(name="⏳ Còn lại",  value=f"**{fmt_amount(max(0,remain))}**", inline=True)
         embed.set_footer(text=f"Bởi {_uname_plain(ctx.author)}")
         await ctx.reply(embed=embed)
+
+
+    # ══════════════════════════════════════
+    # .shop — Xem cửa hàng đổi quà
+    # ══════════════════════════════════════
+    @commands.command(name="shop", aliases=["store", "cuahang"])
+    async def shop_cmd(self, ctx):
+        items  = get_reward_shop()
+        pts    = get_user_points(ctx.author.id)
+
+        embed = discord.Embed(
+            title="🏪 Cửa Hàng Đổi Point",
+            color=0xF1C40F, timestamp=datetime.now(timezone.utc)
+        )
+        embed.description = f"Point của bạn: **{pts:,} pt**\nDùng `.exchange <id>` để đổi quà.\n"
+
+        if items:
+            lines = []
+            for item in items:
+                can = "✅" if pts >= item["points"] else "❌"
+                lines.append(
+                    f"{can} `{item['id']}` — **{item['name']}**\n"
+                    f"　　💎 {item['points']:,} point  •  {item['description']}"
+                )
+            embed.add_field(name="📦 Danh Sách Quà", value="\n\n".join(lines), inline=False)
+        else:
+            embed.description += "\n*(Chưa có quà nào trong shop)*"
+
+        embed.set_footer(text="✅ = đủ point  •  ❌ = chưa đủ")
+        await ctx.reply(embed=embed)
+
+    # ══════════════════════════════════════
+    # .exchange — Đổi point lấy quà
+    # ══════════════════════════════════════
+    @commands.command(name="exchange", aliases=["doi", "redeemdoi"])
+    async def exchange_cmd(self, ctx, item_id: str = None):
+        if not item_id:
+            return await ctx.reply("❌ Dùng: `.exchange <id>` — Xem danh sách: `.shop`")
+
+        item = get_reward_item(item_id.lower().strip())
+        if not item:
+            return await ctx.reply(f"❌ Không tìm thấy item `{item_id}`. Xem `.shop` để biết danh sách.")
+
+        pts = get_user_points(ctx.author.id)
+        if pts < item["points"]:
+            need = item["points"] - pts
+            return await ctx.reply(
+                f"❌ Bạn chưa đủ point!\n"
+                f"Cần: **{item['points']:,} pt** | Hiện có: **{pts:,} pt** | Thiếu: **{need:,} pt**"
+            )
+
+        # Xác nhận trước khi đổi
+        confirm_embed = discord.Embed(
+            title="💎 Xác Nhận Đổi Quà",
+            color=0xF1C40F, timestamp=datetime.now(timezone.utc)
+        )
+        confirm_embed.add_field(name="📦 Quà",         value=f"**{item['name']}**",         inline=True)
+        confirm_embed.add_field(name="💎 Point dùng",  value=f"**{item['points']:,} pt**",  inline=True)
+        confirm_embed.add_field(name="💼 Còn lại",     value=f"**{pts - item['points']:,} pt**", inline=True)
+        confirm_embed.add_field(name="📝 Mô tả",       value=item["description"],           inline=False)
+        confirm_embed.set_footer(text="Bấm ✅ để xác nhận hoặc ❌ để huỷ (60 giây)")
+
+        class ConfirmView(View):
+            def __init__(self):
+                super().__init__(timeout=60)
+                self.choice = None
+
+            @discord.ui.button(label="✅ Xác nhận", style=discord.ButtonStyle.green)
+            async def confirm(self, inter: discord.Interaction, btn: Button):
+                if inter.user.id != ctx.author.id:
+                    return await inter.response.send_message("❌ Không phải lệnh của bạn.", ephemeral=True)
+                self.choice = True; self.stop()
+                await inter.response.defer()
+
+            @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.red)
+            async def cancel(self, inter: discord.Interaction, btn: Button):
+                if inter.user.id != ctx.author.id:
+                    return await inter.response.send_message("❌ Không phải lệnh của bạn.", ephemeral=True)
+                self.choice = False; self.stop()
+                await inter.response.defer()
+
+        view = ConfirmView()
+        msg  = await ctx.reply(embed=confirm_embed, view=view)
+        await view.wait()
+
+        if not view.choice:
+            await msg.edit(content="❌ Đã huỷ đổi quà.", embed=None, view=None)
+            return
+
+        # Trừ point và ghi log
+        new_pts = add_user_points(ctx.author.id, -item["points"], f"exchange:{item_id}")
+        add_exchange_record(ctx.author.id, item_id, item["name"], item["points"])
+
+        # Tạo ticket tự động
+        guild = ctx.guild
+        try:
+            from core.data import get_cfg_category, get_cfg_support_role
+            from cogs.ticket import _build_ticket_overwrites, get_next_ticket_number, TicketButtons
+
+            number     = await get_next_ticket_number(ctx.bot)
+            overwrites = _build_ticket_overwrites(guild, ctx.author)
+            category   = discord.utils.get(guild.categories, id=get_cfg_category())
+            channel    = await guild.create_text_channel(
+                name=f"exchange-{number}",
+                overwrites=overwrites,
+                category=category,
+                topic=f"{ctx.author.id}||exchange|{item_id}|open"
+            )
+
+            created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+            ticket_embed = discord.Embed(
+                title=f"💎 ĐỔI QUÀ  •  #{number}",
+                description=f"Xin chào {ctx.author.mention}! 👋\nYêu cầu đổi quà của bạn đã được ghi nhận.\nStaff sẽ xử lý sớm nhất có thể.",
+                color=0xF1C40F, timestamp=datetime.now(timezone.utc)
+            )
+            ticket_embed.add_field(name="👤 Người dùng", value=ctx.author.mention,      inline=True)
+            ticket_embed.add_field(name="📦 Quà",        value=f"**{item['name']}**",  inline=True)
+            ticket_embed.add_field(name="💎 Point đã dùng", value=f"**{item['points']:,} pt**", inline=True)
+            ticket_embed.add_field(name="📝 Mô tả",      value=item["description"],    inline=True)
+            ticket_embed.add_field(name="🕐 Thời gian",  value=created_at,              inline=True)
+            ticket_embed.set_thumbnail(url=ctx.author.display_avatar.url)
+            ticket_embed.set_footer(text="TuyTam Store  •  Exchange System")
+
+            await channel.send(f"<@&{get_cfg_support_role()}> | {ctx.author.mention}", embed=ticket_embed, view=TicketButtons())
+
+            # Thông báo thành công
+            success_embed = discord.Embed(title="✅ Đổi Quà Thành Công!", color=0x57F287, timestamp=datetime.now(timezone.utc))
+            success_embed.add_field(name="📦 Quà",        value=f"**{item['name']}**",     inline=True)
+            success_embed.add_field(name="💎 Đã dùng",    value=f"**{item['points']:,} pt**", inline=True)
+            success_embed.add_field(name="💼 Point còn",  value=f"**{new_pts:,} pt**",      inline=True)
+            success_embed.add_field(name="🎫 Ticket",     value=channel.mention,            inline=False)
+            success_embed.set_footer(text="Staff sẽ xử lý đơn đổi quà của bạn trong ticket")
+            await msg.edit(embed=success_embed, view=None)
+
+        except Exception as e:
+            # Nếu tạo ticket lỗi, vẫn thông báo thành công nhưng báo liên hệ admin
+            success_embed = discord.Embed(title="✅ Đổi Quà Ghi Nhận!", color=0x57F287)
+            success_embed.add_field(name="📦 Quà",       value=f"**{item['name']}**",      inline=True)
+            success_embed.add_field(name="💎 Đã dùng",   value=f"**{item['points']:,} pt**", inline=True)
+            success_embed.add_field(name="💼 Point còn", value=f"**{new_pts:,} pt**",       inline=True)
+            success_embed.add_field(name="⚠️ Lưu ý",    value="Không tạo được ticket tự động. Vui lòng liên hệ admin để nhận quà!", inline=False)
+            await msg.edit(embed=success_embed, view=None)
+
+    # ══════════════════════════════════════
+    # .addreward — Admin thêm quà vào shop
+    # ══════════════════════════════════════
+    @commands.command(name="addreward")
+    async def addreward_cmd(self, ctx, item_id: str = None, points: str = None, *, name: str = None):
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới dùng được.")
+        if not item_id or not points or not name:
+            return await ctx.reply("❌ Dùng: `.addreward <id> <points> <tên>`\nVí dụ: `.addreward money_5m 2000 💰 5M In-game Money`")
+        try: pts = int(points)
+        except ValueError: return await ctx.reply("❌ Point phải là số nguyên.")
+
+        items = get_reward_shop()
+        if any(i["id"] == item_id for i in items):
+            return await ctx.reply(f"❌ ID `{item_id}` đã có rồi.")
+        items.append({"id": item_id, "name": name, "points": pts, "description": name})
+        save_reward_shop(items)
+        await ctx.reply(f"✅ Đã thêm **{name}** (`{item_id}`) — {pts:,} pt vào shop!")
+
+    # ══════════════════════════════════════
+    # .delreward — Admin xoá quà khỏi shop
+    # ══════════════════════════════════════
+    @commands.command(name="delreward")
+    async def delreward_cmd(self, ctx, item_id: str = None):
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới dùng được.")
+        if not item_id:
+            return await ctx.reply("❌ Dùng: `.delreward <id>`")
+        items = get_reward_shop()
+        found = next((i for i in items if i["id"] == item_id), None)
+        if not found: return await ctx.reply(f"❌ Không tìm thấy item `{item_id}`.")
+        items.remove(found)
+        save_reward_shop(items)
+        await ctx.reply(f"✅ Đã xoá **{found['name']}** khỏi shop!")
 
 
 async def setup(bot):
