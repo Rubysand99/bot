@@ -40,7 +40,6 @@ COGS = [
     "cogs.mod",
     "cogs.point",
     "cogs.minigame",
-    "cogs.minigame",
 ]
 
 async def load_cogs():
