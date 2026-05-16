@@ -561,7 +561,17 @@ class PointCog(commands.Cog):
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin mới dùng được.")
         if not item_id or not points or not name:
-            return await ctx.reply("❌ Dùng: `.addreward <id> <points> <tên>`\nVí dụ: `.addreward money_5m 2000 💰 5M In-game Money`")
+            return await ctx.reply(
+                "❌ Dùng: `.addreward <id> <points> <tên>`\n\n"
+                "**Ví dụ:**\n"
+                "`.addreward money_1m 50 💰 1M In-game Money`\n"
+                "`.addreward elytra 300 🦋 Elytra`\n\n"
+                "**Lưu ý về giá trị point:**\n"
+                "> 1 lần vượt link = **1 point**\n"
+                "> 50 point = user phải vượt link **50 lần**\n"
+                "> Bạn thu Work.ink: 50 lần × ~75–200đ = **~3.750–10.000đ**\n"
+                "> Đặt point sao cho thu đủ bù giá vốn item!"
+            )
         try: pts = int(points)
         except ValueError: return await ctx.reply("❌ Point phải là số nguyên.")
 
@@ -570,7 +580,19 @@ class PointCog(commands.Cog):
             return await ctx.reply(f"❌ ID `{item_id}` đã có rồi.")
         items.append({"id": item_id, "name": name, "points": pts, "description": name})
         save_reward_shop(items)
-        await ctx.reply(f"✅ Đã thêm **{name}** (`{item_id}`) — {pts:,} pt vào shop!")
+
+        embed = discord.Embed(title="✅ Đã Thêm Quà Vào Shop", color=0x57F287, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="📦 Tên",        value=f"**{name}**",   inline=True)
+        embed.add_field(name="🔑 ID",         value=f"`{item_id}`",  inline=True)
+        embed.add_field(name="💎 Point cần",  value=f"**{pts:,} pt** ({pts} lần vượt link)", inline=True)
+        earn_min = pts * 75
+        earn_max = pts * 200
+        embed.add_field(
+            name="💰 Ước tính thu Work.ink",
+            value=f"**{earn_min:,}đ – {earn_max:,}đ** trước khi user đổi được",
+            inline=False
+        )
+        await ctx.reply(embed=embed)
 
     # ══════════════════════════════════════
     # .delreward — Admin xoá quà khỏi shop

@@ -83,18 +83,13 @@ def _default_data() -> dict:
         "point_log":        [],   # lịch sử cộng/trừ point
         "seller_compensation": {},  # {seller_id: {total_owed, paid, records}}
         "point_cfg": {
-            "points_per_redeem": 100,   # point mỗi lần vượt link
-            "point_value":       5,     # 1 point = 5đ giảm giá (100pt = 500đ)
-            "max_discount_pct":  5,     # giảm tối đa 5% giá trị đơn
+            "points_per_redeem": 1,     # 1 point mỗi lần vượt link
+            "point_value":       0,     # Không giảm giá tiền mặt — point chỉ dùng đổi quà
+            "max_discount_pct":  0,     # Tắt giảm giá
             "cooldown_hours":    24,
             "code_expire_mins":  10,
         },
-        "reward_shop": [
-            {"id": "money_1m",   "name": "💰 1M In-game Money",      "points": 500,  "description": "1.000.000 tiền trong game"},
-            {"id": "skeleton",   "name": "💀 Skeleton Spawn Egg x16","points": 800,  "description": "16 Skeleton Spawn Egg"},
-            {"id": "gear_full",  "name": "🛡️ Full Diamond Gear",     "points": 2000, "description": "Bộ trang bị Full Diamond"},
-            {"id": "elytra",     "name": "🦋 Elytra",                "points": 3000, "description": "1 Elytra"},
-        ],
+        "reward_shop": [],  # Admin tự thêm bằng .addreward <id> <points> <tên — giá trị tương đương Xpt>
     }
 
 # ══════════════════════════════════════════

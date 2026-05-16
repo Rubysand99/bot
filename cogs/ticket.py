@@ -557,6 +557,7 @@ class TicketCog(commands.Cog):
 
         data[completed_key] = True
         save_data(data)
+
         new_total = add_user_spent(user_id, amount)
 
         # Lưu lịch sử đơn
@@ -576,6 +577,7 @@ class TicketCog(commands.Cog):
             "opened_at":   opened_at,
             "closed_at":   datetime.now(timezone.utc).isoformat(),
             "staff":       _uname_plain(ctx.author),
+            "staff_id":    ctx.author.id,
         })
 
         from cogs.admin import auto_give_buy_roles
@@ -583,8 +585,8 @@ class TicketCog(commands.Cog):
         buy_roles = get_buy_roles()
 
         embed = discord.Embed(title="✅ Hoàn Thành Đơn", color=0x57F287, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="👤 Buyer",       value=buyer.mention,               inline=True)
-        embed.add_field(name="💵 Đơn này",     value=f"**{fmt_amount(amount)}**", inline=True)
+        embed.add_field(name="👤 Buyer",       value=buyer.mention,                  inline=True)
+        embed.add_field(name="💵 Đơn này",     value=f"**{fmt_amount(amount)}**",    inline=True)
         embed.add_field(name="💰 Tổng đã mua", value=f"**{fmt_amount(new_total)}**", inline=True)
         if role_cfg:
             role_obj = ctx.guild.get_role(role_cfg.get("role_id", 0))
