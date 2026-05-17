@@ -1,87 +1,60 @@
-# cogs/minigame.py — v3.6.3 (fixed)
-# Dùng record_win_async, get_noitu_channel, set_noitu_channel từ core/data.py
+# cogs/minigame.py — v3.7.0
+# Bầu Cua nhiều người: .bc open, embed nút bấm, tự chọn mặt + point
+# Giữ: Búa Kéo Bao, BXH, Thống kê
+# Bỏ: Nối Từ, Vua Tiếng Việt
 
 import discord
 from discord.ext import commands
 from discord import app_commands
-import random, asyncio, os, time
+from discord.ui import View, Button, Modal, TextInput
+import random, asyncio, time
 from datetime import datetime, timezone
 
 from core.data import (
     load_data, save_data, ADMIN_IDS, is_staff_member,
     get_user_points, add_user_points,
     get_mg_stats, record_win_async, get_leaderboard,
-    get_noitu_channel, set_noitu_channel,
 )
 
-WIN_RATE  = 0.9
-LOSE_RATE = 1.0
+WIN_RATE = 0.9
 
-# ── Bầu Cua ────────────────────────────────────────────────
-BAU_CUA_ICONS = {"bầu":"🎃","cua":"🦀","cá":"🐟","gà":"🐓","tôm":"🦐","nai":"🦌"}
+# ══════════════════════════════════════════
+# CONFIG KÊNH BẦU CUA
+# ══════════════════════════════════════════
+def get_baucua_channel() -> int:
+    return load_data().get("baucua_channel_id", 0)
+
+def set_baucua_channel(cid: int):
+    data = load_data()
+    data["baucua_channel_id"] = cid
+    save_data(data)
+
+# ══════════════════════════════════════════
+# BẦU CUA DATA
+# ══════════════════════════════════════════
+BAU_CUA_ICONS = {
+    "bầu": "🎃", "cua": "🦀", "cá": "🐟",
+    "gà":  "🐓", "tôm": "🦐", "nai": "🦌",
+}
 BAU_CUA_KEYS  = list(BAU_CUA_ICONS.keys())
 BAU_CUA_ALIAS = {"bau":"bầu","cua":"cua","ca":"cá","ga":"gà","tom":"tôm","nai":"nai"}
 
-# ── Búa Kéo Bao ────────────────────────────────────────────
+# ══════════════════════════════════════════
+# BÚA KÉO BAO
+# ══════════════════════════════════════════
 BKB_CHOICES = {"búa":"🔨","kéo":"✂️","bao":"📄"}
 BKB_WIN     = {"búa":"kéo","kéo":"bao","bao":"búa"}
 BKB_ALIAS   = {"bua":"búa","keo":"kéo","bao":"bao","búa":"búa","kéo":"kéo"}
 
-# ── Từ điển ────────────────────────────────────────────────
-WORD_LIST_PATH = os.path.join(os.path.dirname(__file__), "../data/words_vi.txt")
-FALLBACK_WORDS = [
-    "học sinh","sinh viên","viên chức","chức năng","năng lực","lực lượng",
-    "lượng giá","giá trị","trị giá","giá cả","cả nhà","nhà trường",
-    "trường học","học hành","hành động","động lực","lực sĩ","sĩ quan",
-    "quan tâm","tâm hồn","hồn nhiên","nhiên liệu","liệu pháp","pháp luật",
-    "luật pháp","pháp lý","lý luận","luận văn","văn hóa","hóa học",
-    "học thuật","thuật toán","toán học","học bổng","bổng lộc","lộc trời",
-    "trời đất","đất nước","nước nhà","nhà nước","nước mắt","mắt xích",
-    "xích lô","lô đề","đề thi","thi cử","cử nhân","nhân vật","vật lý",
-    "lý thuyết","thuyết phục","phục vụ","vụ án","án lệ","lệ phí",
-    "phí tổn","tổn thất","thất bại","bại trận","trận đấu","đấu tranh",
-    "tranh luận","luận điểm","điểm số","số lượng","sinh hoạt","hoạt động",
-    "động vật","vật chất","chất lượng","lượng tử","tử tế","tế bào",
-]
+# ══════════════════════════════════════════
+# SESSION ĐANG CHẠY
+# baucua_sessions[channel_id] = {
+#   host_id, bets: {user_id: {choice, amount}},
+#   min_players, max_players, status, message, task
+# }
+# ══════════════════════════════════════════
+baucua_sessions: dict = {}
 
-# ── Vua Tiếng Việt ─────────────────────────────────────────
-VTV_QUESTIONS = [
-    {"q":"Từ nào sau đây là từ láy?","choices":["A. học sinh","B. lung linh","C. đất nước","D. bàn ghế"],"ans":"B"},
-    {"q":"\"Cô ấy có đôi mắt ___ như sao.\" Điền từ:","choices":["A. sáng","B. long lanh","C. đen","D. to"],"ans":"B"},
-    {"q":"Câu nào dùng biện pháp nhân hóa?","choices":["A. Mặt trăng tròn như cái đĩa","B. Gió ơi gió hỡi gió về đâu","C. Con sông dài như dải lụa","D. Hoa nở rộ khắp vườn"],"ans":"B"},
-    {"q":"Từ \"kiên nhẫn\" thuộc loại từ gì?","choices":["A. Danh từ","B. Động từ","C. Tính từ","D. Trạng từ"],"ans":"C"},
-    {"q":"\"Nước chảy đá mòn\" có nghĩa là gì?","choices":["A. Đá rất cứng","B. Kiên trì ắt thành công","C. Nước rất mạnh","D. Không thể thay đổi"],"ans":"B"},
-    {"q":"\"Trẻ em như búp trên cành\" dùng biện pháp tu từ nào?","choices":["A. Nhân hóa","B. Ẩn dụ","C. So sánh","D. Hoán dụ"],"ans":"C"},
-    {"q":"Từ nào KHÔNG phải từ ghép?","choices":["A. học hành","B. xinh xắn","C. bàn tay","D. cây cối"],"ans":"B"},
-    {"q":"\"Bán anh em xa mua láng giềng gần\" thuộc thể loại gì?","choices":["A. Ca dao","B. Tục ngữ","C. Thành ngữ","D. Thơ"],"ans":"B"},
-    {"q":"Chủ ngữ trong \"Mưa rơi lộp độp trên mái nhà\" là gì?","choices":["A. Mưa","B. Mái nhà","C. Lộp độp","D. Rơi"],"ans":"A"},
-    {"q":"Từ nào viết đúng chính tả?","choices":["A. giản dị","B. dản dị","C. giản rị","D. zản dị"],"ans":"A"},
-    {"q":"Từ nào là từ Hán Việt?","choices":["A. nhà cửa","B. gia đình","C. bàn ghế","D. cơm nước"],"ans":"B"},
-    {"q":"\"Một con ngựa đau cả tàu bỏ cỏ\" nói lên điều gì?","choices":["A. Ngựa ăn ít","B. Tinh thần đoàn kết","C. Nuôi ngựa tốn kém","D. Ngựa yếu thì bỏ"],"ans":"B"},
-    {"q":"Câu \"Hoa hồng nở rực rỡ\" — vị ngữ là gì?","choices":["A. Hoa hồng","B. nở rực rỡ","C. rực rỡ","D. nở"],"ans":"B"},
-    {"q":"\"Đầu xuôi đuôi lọt\" có nghĩa là gì?","choices":["A. Bơi giỏi","B. Bắt đầu tốt thì kết thúc thuận lợi","C. Làm việc nhanh","D. Đầu to đuôi nhỏ"],"ans":"B"},
-    {"q":"Từ \"xanh\" trong \"Trời xanh\" và \"Xanh lá\" quan hệ là gì?","choices":["A. Từ đồng âm","B. Từ nhiều nghĩa","C. Từ trái nghĩa","D. Từ đồng nghĩa"],"ans":"B"},
-]
-
-NOITU_COOLDOWN = 3
-noi_tu_sessions: dict = {}
-vtv_sessions: dict    = {}
-
-def load_words():
-    try:
-        with open(WORD_LIST_PATH, encoding="utf-8") as f:
-            return [w.strip().lower() for w in f if w.strip()]
-    except Exception:
-        return FALLBACK_WORDS
-
-WORDS_VI = load_words()
-
-def last_syl(p: str) -> str:  return p.strip().split()[-1].lower()
-def first_syl(p: str) -> str: return p.strip().split()[0].lower()
-
-def find_next(syl: str, used: set):
-    c = [w for w in WORDS_VI if first_syl(w) == syl and w not in used]
-    return random.choice(c) if c else None
 
 def parse_bet(s: str) -> int | None:
     s = s.lower().strip().rstrip("ppt").strip()
@@ -91,202 +64,338 @@ def parse_bet(s: str) -> int | None:
     except ValueError:
         return None
 
-async def _process_word(session: dict, word: str, author: discord.Member, channel: discord.TextChannel):
-    async with session["lock"]:
-        uid, now = author.id, time.time()
-        if now - session["player_last_time"].get(uid, 0) < NOITU_COOLDOWN:
-            wait = int(NOITU_COOLDOWN - (now - session["player_last_time"].get(uid, 0)))
-            await channel.send(f"⏳ {author.mention} chờ **{wait}s**!", delete_after=4)
-            return
-        if session["last_player"] == uid and len(session["used"]) > 2:
-            await channel.send(f"❌ {author.mention} phải để người khác nối trước!", delete_after=4)
-            return
-        if word in session["used"]:
-            await channel.send(f"❌ Từ **{word}** đã dùng rồi!", delete_after=6)
-            return
-        if word not in WORDS_VI:
-            await channel.send(f"❌ Từ **{word}** không có trong từ điển!", delete_after=6)
-            return
-        req = last_syl(session["word"])
-        if first_syl(word) != req:
-            await channel.send(f"❌ {author.mention} phải nối từ bắt đầu bằng **`{req}`**!", delete_after=6)
-            return
 
-        session["used"].add(word)
-        session["word"]                  = word
-        session["last_player"]           = uid
-        session["player_last_time"][uid] = now
+# ══════════════════════════════════════════
+# MODAL — Nhập số point cược
+# ══════════════════════════════════════════
+class BetModal(Modal, title="💰 Nhập số point cược"):
+    amount = TextInput(
+        label="Số point muốn cược (tối thiểu 1)",
+        placeholder="VD: 10",
+        min_length=1,
+        max_length=10,
+    )
 
-        nxt   = last_syl(word)
-        bot_w = find_next(nxt, session["used"])
+    def __init__(self, choice: str, session: dict):
+        super().__init__()
+        self.choice  = choice
+        self.session = session
 
-        if bot_w:
-            session["used"].add(bot_w)
-            session["word"] = bot_w
-            e = discord.Embed(color=discord.Color.green())
-            e.add_field(name=f"✅ {author.display_name}", value=f"**{word}**",  inline=True)
-            e.add_field(name="🤖 Bot Rudeus",             value=f"**{bot_w}**", inline=True)
-            e.set_footer(text=f"Nối từ bắt đầu bằng '{last_syl(bot_w)}'")
-            await channel.send(embed=e)
-        else:
-            await record_win_async(uid, "noitu")  # FIX: async lock
-            bet = session.get("bet", 0)
-            msg = (
-                f"✅ **{author.display_name}** nối: **{word}**\n"
-                f"🤖 Bot hết từ bắt đầu bằng **`{nxt}`**!\n"
-                f"🏆 **{author.display_name} THẮNG!**"
+    async def on_submit(self, interaction: discord.Interaction):
+        uid = interaction.user.id
+
+        # Parse số tiền
+        try:
+            amount = int(self.amount.value.strip())
+        except ValueError:
+            return await interaction.response.send_message("❌ Số point không hợp lệ!", ephemeral=True)
+
+        if amount < 1:
+            return await interaction.response.send_message("❌ Tối thiểu 1 point!", ephemeral=True)
+
+        # Kiểm tra point
+        pts = get_user_points(uid)
+        if pts < amount:
+            return await interaction.response.send_message(
+                f"❌ Bạn chỉ có **{pts} point**, không đủ cược **{amount} point**!", ephemeral=True
             )
-            if bet > 0:
-                gain = int(bet * WIN_RATE)
-                add_user_points(uid, +gain, "noitu_win")
-                msg += f"\n💎 Nhận **+{gain} point** (cược {bet}pt)"
-            del noi_tu_sessions[channel.id]
-            await channel.send(msg)
+
+        # Nếu đã đặt rồi thì đổi
+        old = self.session["bets"].get(uid)
+        self.session["bets"][uid] = {"choice": self.choice, "amount": amount}
+
+        icon = BAU_CUA_ICONS[self.choice]
+        if old:
+            msg = f"🔄 Đã đổi cược: {BAU_CUA_ICONS[old['choice']]} **{old['choice']}** {old['amount']}pt → {icon} **{self.choice}** **{amount}pt**"
+        else:
+            msg = f"✅ Đã đặt cược: {icon} **{self.choice}** — **{amount} point**"
+
+        await interaction.response.send_message(msg, ephemeral=True)
+
+        # Cập nhật embed
+        await _update_session_embed(self.session)
+
+        # Nếu đủ người tối thiểu và tất cả đã chọn → lắc ngay
+        await _check_auto_shake(self.session)
 
 
+# ══════════════════════════════════════════
+# VIEW — Embed bầu cua với 6 nút
+# ══════════════════════════════════════════
+class BauCuaView(View):
+    def __init__(self, session: dict):
+        super().__init__(timeout=30)
+        self.session = session
+
+        for key, icon in BAU_CUA_ICONS.items():
+            btn = Button(
+                label=key.capitalize(),
+                emoji=icon,
+                style=discord.ButtonStyle.primary,
+                custom_id=f"baucua_{key}",
+            )
+            btn.callback = self._make_callback(key)
+            self.add_item(btn)
+
+    def _make_callback(self, choice: str):
+        async def callback(interaction: discord.Interaction):
+            session = self.session
+            if session.get("status") != "open":
+                return await interaction.response.send_message("❌ Phiên đã kết thúc!", ephemeral=True)
+
+            # Hiện modal nhập point
+            modal = BetModal(choice=choice, session=session)
+            await interaction.response.send_modal(modal)
+        return callback
+
+    async def on_timeout(self):
+        session = self.session
+        if session.get("status") == "open":
+            await _shake_and_result(session)
+
+
+# ══════════════════════════════════════════
+# HELPERS SESSION
+# ══════════════════════════════════════════
+def _build_embed(session: dict, title: str = "🎲 Bầu Cua Tôm Cá — Đang mở cược!") -> discord.Embed:
+    bets   = session["bets"]
+    total  = len(bets)
+    min_p  = session["min_players"]
+    max_p  = session["max_players"]
+
+    e = discord.Embed(title=title, color=discord.Color.gold())
+    e.description = (
+        f"Nhấn nút để chọn mặt và nhập point cược!\n"
+        f"👥 Người chơi: **{total}/{min_p}-{max_p}**\n"
+        f"⏰ Tự động lắc sau **30 giây** hoặc khi đủ người"
+    )
+
+    # Danh sách người đã đặt
+    if bets:
+        lines = []
+        for uid, b in bets.items():
+            icon = BAU_CUA_ICONS[b["choice"]]
+            lines.append(f"{icon} **{b['choice']}** — <@{uid}> ({b['amount']}pt)")
+        e.add_field(name="📋 Danh sách cược", value="\n".join(lines), inline=False)
+    else:
+        e.add_field(name="📋 Danh sách cược", value="*Chưa có ai đặt cược*", inline=False)
+
+    e.set_footer(text="Tỉ lệ: x1→+0.9pt | x2→+1.8pt | x3→+2.7pt | Thua→-1pt")
+    return e
+
+
+async def _update_session_embed(session: dict):
+    try:
+        msg = session.get("message")
+        if msg:
+            await msg.edit(embed=_build_embed(session))
+    except Exception:
+        pass
+
+
+async def _check_auto_shake(session: dict):
+    """Lắc ngay nếu tất cả người đã đặt và đủ người tối thiểu."""
+    bets  = session["bets"]
+    total = len(bets)
+    if total >= session["min_players"] and session.get("status") == "open":
+        # Hủy task timeout nếu có
+        task = session.get("task")
+        if task and not task.done():
+            task.cancel()
+        await _shake_and_result(session)
+
+
+async def _shake_and_result(session: dict):
+    if session.get("status") != "open":
+        return
+    session["status"] = "done"
+
+    cid  = session["channel_id"]
+    bets = session["bets"]
+
+    # Xóa session
+    baucua_sessions.pop(cid, None)
+
+    # Disable view
+    msg = session.get("message")
+    if msg:
+        view = BauCuaView(session)
+        for item in view.children:
+            item.disabled = True
+        try:
+            await msg.edit(view=view)
+        except Exception:
+            pass
+
+    # Không có ai đặt
+    if not bets:
+        channel = session.get("channel_obj")
+        if channel:
+            await channel.send("⚠️ Không có ai đặt cược, phiên kết thúc!")
+        return
+
+    # Lắc xúc xắc
+    dice = [random.choice(BAU_CUA_KEYS) for _ in range(3)]
+    dice_str = "  ".join(BAU_CUA_ICONS[d] for d in dice)
+
+    # Tính kết quả từng người
+    winners = []
+    losers  = []
+    for uid, b in bets.items():
+        choice = b["choice"]
+        amount = b["amount"]
+        hits   = dice.count(choice)
+        icon   = BAU_CUA_ICONS[choice]
+        if hits > 0:
+            gain = int(amount * hits * WIN_RATE)
+            add_user_points(uid, +gain, f"baucua_multi_win hits={hits} bet={amount}")
+            await record_win_async(uid, "baucua")
+            winners.append((uid, choice, amount, hits, gain, icon))
+        else:
+            add_user_points(uid, -amount, f"baucua_multi_lose bet={amount}")
+            losers.append((uid, choice, amount, icon))
+
+    # Build kết quả embed
+    e = discord.Embed(
+        title="🎲 Kết Quả Bầu Cua!",
+        color=discord.Color.green() if winners else discord.Color.red(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    e.add_field(name="🎯 Xúc xắc lắc được", value=dice_str, inline=False)
+
+    if winners:
+        win_lines = []
+        for uid, choice, amount, hits, gain, icon in winners:
+            win_lines.append(f"🏆 <@{uid}> — {icon} **{choice}** x{hits} → **+{gain}pt**")
+        e.add_field(name="✅ Thắng", value="\n".join(win_lines), inline=False)
+
+    if losers:
+        lose_lines = []
+        for uid, choice, amount, icon in losers:
+            lose_lines.append(f"💸 <@{uid}> — {icon} **{choice}** → **-{amount}pt**")
+        e.add_field(name="❌ Thua", value="\n".join(lose_lines), inline=False)
+
+    channel = session.get("channel_obj")
+    if channel:
+        await channel.send(embed=e)
+
+
+async def _session_timeout(session: dict):
+    """Task chạy ngầm đếm 30s rồi lắc."""
+    await asyncio.sleep(30)
+    if session.get("status") == "open":
+        await _shake_and_result(session)
+
+
+# ══════════════════════════════════════════
+# COG
+# ══════════════════════════════════════════
 class Minigame(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        if message.author.bot or not message.guild:
-            return
-        cid       = message.channel.id
-        noitu_cid = get_noitu_channel()
-        if cid != noitu_cid or cid not in noi_tu_sessions:
-            return
-        content = message.content.strip().lower()
-        if content.startswith(".") or content.startswith("/"):
-            return
-        if len(content.split()) > 3:
-            return
-        session = noi_tu_sessions.get(cid)
-        if session and session.get("dedicated"):
-            await _process_word(session, content, message.author, message.channel)
-
-    @commands.command(name="setnoitu")
-    async def set_noitu_cmd(self, ctx, channel: discord.TextChannel = None):
+    # ════════════════════════════════════════
+    # .setbaucua — Admin cài kênh
+    # ════════════════════════════════════════
+    @commands.command(name="setbaucua")
+    async def set_baucua_cmd(self, ctx, channel: discord.TextChannel = None):
+        """Admin chỉ định kênh chơi bầu cua."""
         if ctx.author.id not in ADMIN_IDS and not is_staff_member(ctx.author):
             return await ctx.reply("❌ Chỉ admin/staff mới dùng được.")
         if channel is None:
-            cid = get_noitu_channel()
+            cid = get_baucua_channel()
             if cid:
                 ch = ctx.guild.get_channel(cid)
-                return await ctx.reply(f"🔤 Kênh nối từ: {ch.mention if ch else f'<#{cid}>'}")
-            return await ctx.reply("🔤 Chưa cài. Dùng `.setnoitu #kênh`.")
-        set_noitu_channel(channel.id)
-        await ctx.reply(f"✅ Đã cài kênh nối từ: {channel.mention}\nDùng `.start` để bắt đầu.")
+                return await ctx.reply(f"🎲 Kênh bầu cua: {ch.mention if ch else f'<#{cid}>'}")
+            return await ctx.reply("🎲 Chưa cài. Dùng `.setbaucua #kênh`.")
+        set_baucua_channel(channel.id)
+        await ctx.reply(f"✅ Đã cài kênh bầu cua: {channel.mention}")
 
-    @commands.command(name="start")
-    async def noitu_start(self, ctx, bet_str: str = None):
-        """🔤 Bắt đầu Nối Từ. Tùy chọn: .start <point_cược>"""
+    # ════════════════════════════════════════
+    # .bc open — Mở phiên bầu cua
+    # ════════════════════════════════════════
+    @commands.group(name="bc", invoke_without_command=True)
+    async def bc_group(self, ctx):
+        await ctx.reply(
+            "🎲 **Bầu Cua Tôm Cá**\n"
+            "`.bc open` — Mở phiên cược nhiều người\n"
+            "`.bkb <búa|kéo|bao> [point]` — Búa Kéo Bao với bot\n"
+            "`.rank` — Bảng xếp hạng\n"
+            "`.mgstats` — Thống kê cá nhân"
+        )
+
+    @bc_group.command(name="open")
+    async def bc_open(self, ctx):
+        """Mở phiên Bầu Cua nhiều người (4-6 người, 30 giây)."""
         cid       = ctx.channel.id
-        noitu_cid = get_noitu_channel()
-        if noitu_cid and cid != noitu_cid and ctx.author.id not in ADMIN_IDS:
-            ch = ctx.guild.get_channel(noitu_cid)
-            return await ctx.reply(f"❌ Game chỉ chạy trong {ch.mention if ch else f'<#{noitu_cid}>'}!")
-        if cid in noi_tu_sessions:
-            return await ctx.reply("⚠️ Đang có game rồi! Dùng `.stop` để dừng.")
-        bet = 0
-        if bet_str:
-            bet = parse_bet(bet_str) or 0
-            if bet > 0:
-                pts = get_user_points(ctx.author.id)
-                if pts < bet:
-                    return await ctx.reply(f"❌ Bạn chỉ có **{pts} point**, không đủ cược **{bet} point**!")
-        w = random.choice(WORDS_VI)
-        noi_tu_sessions[cid] = {
-            "word": w, "used": {w}, "lock": asyncio.Lock(),
-            "last_player": None, "player_last_time": {},
-            "dedicated": (cid == noitu_cid and noitu_cid != 0),
-            "bet": bet,
+        bc_cid    = get_baucua_channel()
+
+        # Kiểm tra kênh
+        if bc_cid and cid != bc_cid and ctx.author.id not in ADMIN_IDS:
+            ch = ctx.guild.get_channel(bc_cid)
+            return await ctx.reply(f"❌ Bầu Cua chỉ chơi trong {ch.mention if ch else f'<#{bc_cid}>'}!")
+
+        # Kiểm tra phiên đang mở
+        if cid in baucua_sessions:
+            return await ctx.reply("⚠️ Đang có phiên Bầu Cua! Chờ phiên kết thúc.")
+
+        # Tạo session
+        session = {
+            "channel_id":  cid,
+            "channel_obj": ctx.channel,
+            "host_id":     ctx.author.id,
+            "bets":        {},
+            "min_players": 4,
+            "max_players": 6,
+            "status":      "open",
+            "message":     None,
+            "task":        None,
         }
-        bet_info = f"\n💰 Cược: **{bet}pt** — thắng **+{int(bet*WIN_RATE)}pt**, thua **-{bet}pt**" if bet > 0 else ""
-        e = discord.Embed(title="🔤 Nối Từ bắt đầu!", color=discord.Color.blue(),
-            description=f"Từ đầu tiên: **{w}**\nNối từ bắt đầu bằng **`{last_syl(w)}`**!\n💬 Nhắn thẳng từ vào kênh!{bet_info}")
-        e.set_footer(text=".stop để dừng game")
-        await ctx.send(embed=e)
+        baucua_sessions[cid] = session
 
-    @app_commands.command(name="start", description="🔤 Bắt đầu game Nối Từ")
-    @app_commands.describe(cuoc="Số point muốn cược (không bắt buộc)")
-    async def start_slash(self, interaction, cuoc: int = 0):
-        await self.noitu_start(await commands.Context.from_interaction(interaction), str(cuoc) if cuoc else None)
+        # Gửi embed + view
+        view = BauCuaView(session)
+        embed = _build_embed(session)
+        msg  = await ctx.send(embed=embed, view=view)
+        session["message"] = msg
 
-    @commands.command(name="stop")
-    async def noitu_stop(self, ctx):
-        """🔤 Dừng game Nối Từ."""
+        # Task timeout 30s
+        task = asyncio.create_task(_session_timeout(session))
+        session["task"] = task
+
+    # ════════════════════════════════════════
+    # .bc cancel — Hủy phiên (host/admin)
+    # ════════════════════════════════════════
+    @bc_group.command(name="cancel")
+    async def bc_cancel(self, ctx):
+        """Hủy phiên Bầu Cua đang mở."""
         cid = ctx.channel.id
-        if cid not in noi_tu_sessions:
-            return await ctx.reply("❌ Không có game nào đang chạy.")
-        del noi_tu_sessions[cid]
-        await ctx.reply("🛑 Game Nối Từ đã dừng!")
+        if cid not in baucua_sessions:
+            return await ctx.reply("❌ Không có phiên nào đang mở.")
+        session = baucua_sessions[cid]
+        if ctx.author.id != session["host_id"] and ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ người mở phiên hoặc admin mới hủy được.")
+        session["status"] = "cancelled"
+        task = session.get("task")
+        if task and not task.done():
+            task.cancel()
+        baucua_sessions.pop(cid, None)
+        await ctx.reply("🛑 Phiên Bầu Cua đã bị hủy!")
 
-    @app_commands.command(name="stop", description="🔤 Dừng game Nối Từ")
-    async def stop_slash(self, interaction):
-        await self.noitu_stop(await commands.Context.from_interaction(interaction))
-
-    @commands.command(name="baucua", aliases=["bc"])
-    async def bau_cua(self, ctx, bet_or_choice: str = None, bet_str: str = None):
-        """🎲 Bầu Cua — .baucua <mặt> [point_cược]"""
-        if not bet_or_choice:
-            icons = "  ".join(f"{v}`{k}`" for k, v in BAU_CUA_ICONS.items())
-            return await ctx.reply(f"🎲 **Bầu Cua Tôm Cá**\n{icons}\nVD: `.baucua bầu 10`")
-        bet_target = BAU_CUA_ALIAS.get(bet_or_choice.lower().strip(), bet_or_choice.lower().strip())
-        if bet_target not in BAU_CUA_KEYS:
-            return await ctx.reply(f"❌ Chọn: {', '.join(BAU_CUA_KEYS)}")
-        bet = 0
-        if bet_str:
-            bet = parse_bet(bet_str) or 0
-            if bet > 0:
-                pts = get_user_points(ctx.author.id)
-                if pts < bet:
-                    return await ctx.reply(f"❌ Bạn chỉ có **{pts} point**, không đủ cược **{bet} point**!")
-        dice = [random.choice(BAU_CUA_KEYS) for _ in range(3)]
-        hits = dice.count(bet_target)
-        icon = BAU_CUA_ICONS[bet_target]
-        win  = hits > 0
-        msgs = {
-            0: (f"❌ Thua! Không có **{icon} {bet_target}**.", discord.Color.red()),
-            1: (f"✅ Thắng x1! **{icon} {bet_target}** 1 lần.",  discord.Color.green()),
-            2: (f"🎉 Thắng x2! **{icon} {bet_target}** 2 lần!", discord.Color.gold()),
-            3: (f"🏆 JACKPOT x3! **{icon} {bet_target}** cả 3!", discord.Color.orange()),
-        }
-        out, color = msgs[hits]
-        bet_result = ""
-        if bet > 0:
-            if win:
-                gain = int(bet * hits * WIN_RATE)
-                add_user_points(ctx.author.id, +gain, f"baucua_win hits={hits} bet={bet}")
-                await record_win_async(ctx.author.id, "baucua")
-                bet_result = f"\n💎 **+{gain} point** | Tổng: **{get_user_points(ctx.author.id)} pt**"
-            else:
-                add_user_points(ctx.author.id, -bet, f"baucua_lose bet={bet}")
-                bet_result = f"\n💸 **-{bet} point** | Tổng: **{get_user_points(ctx.author.id)} pt**"
-        elif win:
-            await record_win_async(ctx.author.id, "baucua")
-        e = discord.Embed(title="🎲 Bầu Cua Tôm Cá", color=color)
-        e.add_field(name="Bạn chọn",    value=f"{icon} **{bet_target}**",                    inline=True)
-        if bet > 0: e.add_field(name="Cược", value=f"**{bet} point**",                       inline=True)
-        e.add_field(name="Kết quả lắc", value="  ".join(BAU_CUA_ICONS[d] for d in dice),     inline=False)
-        e.add_field(name="Kết quả",     value=out + bet_result,                               inline=False)
-        e.set_footer(text=ctx.author.display_name)
-        await ctx.reply(embed=e)
-
-    @app_commands.command(name="baucua", description="🎲 Chơi Bầu Cua Tôm Cá")
-    @app_commands.describe(chon="bầu, cua, cá, gà, tôm, nai", cuoc="Số point muốn cược")
-    async def bau_cua_slash(self, interaction, chon: str, cuoc: int = 0):
-        await self.bau_cua(await commands.Context.from_interaction(interaction), chon, str(cuoc) if cuoc else None)
-
+    # ════════════════════════════════════════
+    # ✂️ BÚA KÉO BAO
+    # ════════════════════════════════════════
     @commands.command(name="bkb", aliases=["bukebao", "rps"])
     async def bkb(self, ctx, choice: str = None, bet_str: str = None):
         """✂️ Búa Kéo Bao — .bkb <búa|kéo|bao> [point_cược]"""
         if not choice:
             opts = "  ".join(f"{v}`{k}`" for k, v in BKB_CHOICES.items())
             return await ctx.reply(f"✂️ **Búa Kéo Bao**\n{opts}\nVD: `.bkb búa 10`")
+
         choice = BKB_ALIAS.get(choice.lower().strip(), choice.lower().strip())
         if choice not in BKB_CHOICES:
             return await ctx.reply("❌ Chọn: `búa`, `kéo`, `bao`")
+
         bet = 0
         if bet_str:
             bet = parse_bet(bet_str) or 0
@@ -294,12 +403,15 @@ class Minigame(commands.Cog):
                 pts = get_user_points(ctx.author.id)
                 if pts < bet:
                     return await ctx.reply(f"❌ Bạn chỉ có **{pts} point**, không đủ cược **{bet} point**!")
+
         bot_c = random.choice(list(BKB_CHOICES.keys()))
         draw  = (choice == bot_c)
         win   = (not draw and BKB_WIN[choice] == bot_c)
+
         if draw:  result, color = "🤝 **Hòa!**",        discord.Color.yellow()
         elif win: result, color = "🏆 **Bạn thắng!**",  discord.Color.green()
         else:     result, color = "💀 **Bot thắng!**",  discord.Color.red()
+
         bet_result = ""
         if bet > 0 and not draw:
             if win:
@@ -312,12 +424,14 @@ class Minigame(commands.Cog):
                 bet_result = f"\n💸 **-{bet} point** | Tổng: **{get_user_points(ctx.author.id)} pt**"
         elif win and bet == 0:
             await record_win_async(ctx.author.id, "bkb")
+
         e = discord.Embed(title="✂️ Búa Kéo Bao", color=color)
         e.add_field(name=ctx.author.display_name, value=f"{BKB_CHOICES[choice]} **{choice}**",    inline=True)
         e.add_field(name="vs",                    value="⚔️",                                      inline=True)
         e.add_field(name="Bot Rudeus",            value=f"{BKB_CHOICES[bot_c]} **{bot_c}**",       inline=True)
         e.add_field(name="Kết quả",               value=result + bet_result,                       inline=False)
-        if bet > 0: e.set_footer(text=f"Cược: {bet}pt | Thắng +{int(bet*WIN_RATE)}pt | Thua -{bet}pt")
+        if bet > 0:
+            e.set_footer(text=f"Cược: {bet}pt | Thắng +{int(bet*WIN_RATE)}pt | Thua -{bet}pt | Hòa hoàn tiền")
         await ctx.reply(embed=e)
 
     @app_commands.command(name="bkb", description="✂️ Búa Kéo Bao với bot")
@@ -325,124 +439,68 @@ class Minigame(commands.Cog):
     async def bkb_slash(self, interaction, chon: str, cuoc: int = 0):
         await self.bkb(await commands.Context.from_interaction(interaction), chon, str(cuoc) if cuoc else None)
 
-    @commands.command(name="vtviet", aliases=["vtv", "vuatv"])
-    async def vtv(self, ctx, action: str = None):
-        """👑 Vua Tiếng Việt — .vtviet [point_cược] | .vtviet A/B/C/D"""
-        cid = ctx.channel.id
-        if action and action.upper() in ["A", "B", "C", "D"]:
-            if cid not in vtv_sessions:
-                return await ctx.reply("❌ Không có câu hỏi! Dùng `.vtviet`.")
-            s = vtv_sessions[cid]
-            if time.time() > s["expire_time"]:
-                del vtv_sessions[cid]
-                return await ctx.reply("⏰ Câu hỏi đã hết hạn!")
-            uid = ctx.author.id
-            if uid in s["answered"]:
-                return await ctx.reply("⚠️ Bạn đã trả lời rồi!")
-            s["answered"].add(uid)
-            ans, correct = action.upper(), s["question"]["ans"]
-            bet = s.get("bet", 0)
-            bet_result = ""
-            if ans == correct:
-                await record_win_async(uid, "vtv")
-                if bet > 0:
-                    gain = int(bet * WIN_RATE)
-                    add_user_points(uid, +gain, f"vtv_win bet={bet}")
-                    bet_result = f"\n💎 **+{gain} point** | Tổng: **{get_user_points(uid)} pt**"
-                del vtv_sessions[cid]
-                e = discord.Embed(title="✅ Chính xác!",
-                    description=f"**{ctx.author.display_name}** đúng! Đáp án: **{correct}**{bet_result}",
-                    color=discord.Color.green())
-            else:
-                if bet > 0:
-                    add_user_points(uid, -bet, f"vtv_lose bet={bet}")
-                    bet_result = f"\n💸 **-{bet} point** | Tổng: **{get_user_points(uid)} pt**"
-                e = discord.Embed(title="❌ Sai rồi!",
-                    description=f"**{ctx.author.display_name}** chọn **{ans}**, đúng là **{correct}**.\nNgười khác vẫn có thể trả lời!{bet_result}",
-                    color=discord.Color.red())
-            return await ctx.send(embed=e)
-
-        if cid in vtv_sessions:
-            if time.time() > vtv_sessions[cid]["expire_time"]:
-                del vtv_sessions[cid]
-            else:
-                return await ctx.reply("⚠️ Đang có câu chưa ai đúng! Dùng `.vtviet A/B/C/D`.")
-
-        bet = 0
-        if action and action.isdigit():
-            bet = int(action)
-            if bet > 0:
-                pts = get_user_points(ctx.author.id)
-                if pts < bet:
-                    return await ctx.reply(f"❌ Bạn chỉ có **{pts} point**, không đủ cược **{bet} point**!")
-
-        q      = random.choice(VTV_QUESTIONS)
-        expire = time.time() + 60
-        vtv_sessions[cid] = {"question": q, "answered": set(), "expire_time": expire, "bet": bet}
-        bet_info = f"\n💰 Cược: **{bet}pt** — đúng **+{int(bet*WIN_RATE)}pt**, sai **-{bet}pt**" if bet > 0 else ""
-        e = discord.Embed(title="👑 Vua Tiếng Việt",
-            description=f"**{q['q']}**\n\n" + "\n".join(q["choices"]) + bet_info,
-            color=discord.Color.purple())
-        e.set_footer(text="Trả lời .vtviet A/B/C/D | Hết hạn sau 60 giây")
-        await ctx.send(embed=e)
-        await asyncio.sleep(60)
-        if cid in vtv_sessions and vtv_sessions[cid]["expire_time"] == expire:
-            del vtv_sessions[cid]
-            try: await ctx.send(f"⏰ Hết giờ! Đáp án đúng là **{q['ans']}**.")
-            except: pass
-
-    @app_commands.command(name="vtviet", description="👑 Vua Tiếng Việt")
-    @app_commands.describe(tra_loi="A/B/C/D để trả lời, hoặc số point để cược")
-    async def vtv_slash(self, interaction, tra_loi: str = None):
-        await self.vtv(await commands.Context.from_interaction(interaction), action=tra_loi)
-
+    # ════════════════════════════════════════
+    # 🏆 BẢNG XẾP HẠNG
+    # ════════════════════════════════════════
     @commands.command(name="rank", aliases=["xephang", "leaderboard"])
     async def rank_cmd(self, ctx, game: str = "total"):
-        """🏆 Bảng xếp hạng — .rank [baucua|bkb|noitu|vtv]"""
+        """🏆 Bảng xếp hạng — .rank [baucua|bkb]"""
         game_map = {
             "baucua":"baucua","bc":"baucua",
             "bkb":"bkb","rps":"bkb",
-            "noitu":"noitu","nt":"noitu",
-            "vtv":"vtv","vtviet":"vtv",
             "total":"total","all":"total",
         }
         game_key = game_map.get(game.lower(), "total")
-        labels   = {"baucua":"🎲 Bầu Cua","bkb":"✂️ Búa Kéo Bao","noitu":"🔤 Nối Từ","vtv":"👑 Vua Tiếng Việt","total":"🎮 Tất cả game"}
-        rows     = get_leaderboard(game_key, top=10)
+        labels   = {
+            "baucua": "🎲 Bầu Cua",
+            "bkb":    "✂️ Búa Kéo Bao",
+            "total":  "🎮 Tất cả game",
+        }
+        rows = get_leaderboard(game_key, top=10)
         if not rows:
             return await ctx.reply(f"📊 Chưa có dữ liệu thắng cho **{labels.get(game_key,'?')}**.")
+
         medals = ["🥇","🥈","🥉"] + ["🏅"]*7
         lines  = []
         for i, (uid, wins) in enumerate(rows):
             member = ctx.guild.get_member(uid)
             name   = member.display_name if member else f"User {uid}"
             lines.append(f"{medals[i]} **{name}** — **{wins}** lần thắng")
-        e = discord.Embed(title=f"🏆 Bảng Xếp Hạng — {labels.get(game_key,'?')}",
-            description="\n".join(lines), color=discord.Color.gold(),
-            timestamp=datetime.now(timezone.utc))
-        e.set_footer(text="Dùng .rank <game> để xem từng game")
+
+        e = discord.Embed(
+            title=f"🏆 Bảng Xếp Hạng — {labels.get(game_key,'?')}",
+            description="\n".join(lines),
+            color=discord.Color.gold(),
+            timestamp=datetime.now(timezone.utc)
+        )
+        e.set_footer(text="Dùng .rank baucua | .rank bkb")
         await ctx.reply(embed=e)
 
     @app_commands.command(name="rank", description="🏆 Bảng xếp hạng minigame")
-    @app_commands.describe(game="total / baucua / bkb / noitu / vtv")
+    @app_commands.describe(game="total / baucua / bkb")
     async def rank_slash(self, interaction, game: str = "total"):
         await self.rank_cmd(await commands.Context.from_interaction(interaction), game)
 
+    # ════════════════════════════════════════
+    # 📊 THỐNG KÊ CÁ NHÂN
+    # ════════════════════════════════════════
     @commands.command(name="mgstats", aliases=["gamestats", "mystats"])
     async def mgstats_cmd(self, ctx, member: discord.Member = None):
         """📊 Thống kê minigame cá nhân."""
         target = member or ctx.author
         stats  = get_mg_stats().get(str(target.id), {})
         pts    = get_user_points(target.id)
-        e = discord.Embed(title=f"📊 Thống Kê — {target.display_name}",
-            color=discord.Color.blurple(), timestamp=datetime.now(timezone.utc))
+
+        e = discord.Embed(
+            title=f"📊 Thống Kê — {target.display_name}",
+            color=discord.Color.blurple(),
+            timestamp=datetime.now(timezone.utc)
+        )
         e.set_thumbnail(url=target.display_avatar.url)
-        e.add_field(name="🎲 Bầu Cua",       value=f"**{stats.get('baucua',0)}** lần thắng", inline=True)
-        e.add_field(name="✂️ Búa Kéo Bao",   value=f"**{stats.get('bkb',0)}** lần thắng",   inline=True)
-        e.add_field(name="🔤 Nối Từ",         value=f"**{stats.get('noitu',0)}** lần thắng", inline=True)
-        e.add_field(name="👑 Vua Tiếng Việt", value=f"**{stats.get('vtv',0)}** lần thắng",   inline=True)
-        e.add_field(name="🏆 Tổng thắng",     value=f"**{stats.get('total',0)}** lần",        inline=True)
-        e.add_field(name="💎 Point hiện có",  value=f"**{pts:,} pt**",                        inline=True)
+        e.add_field(name="🎲 Bầu Cua",     value=f"**{stats.get('baucua',0)}** lần thắng", inline=True)
+        e.add_field(name="✂️ Búa Kéo Bao", value=f"**{stats.get('bkb',0)}** lần thắng",   inline=True)
+        e.add_field(name="🏆 Tổng thắng",  value=f"**{stats.get('total',0)}** lần",        inline=True)
+        e.add_field(name="💎 Point",        value=f"**{pts:,} pt**",                        inline=True)
         await ctx.reply(embed=e)
 
     @app_commands.command(name="mgstats", description="📊 Thống kê minigame cá nhân")
@@ -450,32 +508,48 @@ class Minigame(commands.Cog):
     async def mgstats_slash(self, interaction, thanh_vien: discord.Member = None):
         await self.mgstats_cmd(await commands.Context.from_interaction(interaction), thanh_vien)
 
+    # ════════════════════════════════════════
+    # ℹ️ HELP
+    # ════════════════════════════════════════
     @commands.command(name="minigame", aliases=["mg", "games"])
     async def mg_help(self, ctx):
-        noitu_cid = get_noitu_channel()
-        nt_kenh   = f"📌 Kênh: <#{noitu_cid}>" if noitu_cid else "💡 Chưa cài — `.setnoitu #kênh`"
+        bc_cid  = get_baucua_channel()
+        bc_kenh = f"📌 Kênh: <#{bc_cid}>" if bc_cid else "💡 Chưa cài — `.setbaucua #kênh`"
         e = discord.Embed(title="🎮 Minigame — Hướng Dẫn", color=discord.Color.blurple())
-        e.add_field(name="🔤 Nối Từ",
-            value=f"`.start` — Bắt đầu | `.stop` — Dừng\n`.start <point>` — Cược\n{nt_kenh}\nSau start: nhắn từ thẳng vào kênh!",
-            inline=False)
-        e.add_field(name="🎲 Bầu Cua",
-            value="`.baucua <mặt>` hoặc `.baucua <mặt> <point>`\nThắng x1→**+0.9pt** | x2→**+1.8pt** | x3→**+2.7pt**",
-            inline=False)
-        e.add_field(name="✂️ Búa Kéo Bao",
-            value="`.bkb <lựa chọn>` hoặc `.bkb <lựa chọn> <point>`\nThắng:**+0.9pt/pt** | Thua:**-1pt/pt** | Hòa: hoàn tiền",
-            inline=False)
-        e.add_field(name="👑 Vua Tiếng Việt",
-            value="`.vtviet` — Câu hỏi\n`.vtviet <point>` — Câu hỏi kèm cược\n`.vtviet A/B/C/D` — Trả lời (60s)",
-            inline=False)
-        e.add_field(name="🏆 Xếp hạng & Thống kê",
-            value="`.rank` / `.rank baucua|bkb|noitu|vtv`\n`.mgstats` / `.mgstats @user`",
-            inline=False)
+        e.add_field(
+            name="🎲 Bầu Cua Tôm Cá (Nhiều người)",
+            value=(
+                f"`.bc open` — Mở phiên 30s\n"
+                f"Nhấn nút chọn mặt → nhập point cược\n"
+                f"4-6 người, tự động lắc khi đủ người\n"
+                f"{bc_kenh}\n"
+                f"Tỉ lệ: x1→**+0.9pt** | x2→**+1.8pt** | x3→**+2.7pt**"
+            ),
+            inline=False
+        )
+        e.add_field(
+            name="✂️ Búa Kéo Bao (1 người vs Bot)",
+            value=(
+                "`.bkb <búa|kéo|bao>` — Chơi không cược\n"
+                "`.bkb <lựa chọn> <point>` — Cược point\n"
+                "Thắng: **+0.9pt/pt** | Thua: **-1pt/pt** | Hòa: hoàn tiền"
+            ),
+            inline=False
+        )
+        e.add_field(
+            name="🏆 Xếp hạng & Thống kê",
+            value=(
+                "`.rank` — BXH tổng\n"
+                "`.rank baucua` / `.rank bkb` — BXH từng game\n"
+                "`.mgstats` / `.mgstats @user` — Thống kê cá nhân"
+            ),
+            inline=False
+        )
         e.set_footer(text="Tất cả đều có slash command /tên tương ứng")
         await ctx.reply(embed=e)
 
     def cog_unload(self):
-        noi_tu_sessions.clear()
-        vtv_sessions.clear()
+        baucua_sessions.clear()
 
 
 async def setup(bot):

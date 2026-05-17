@@ -110,7 +110,8 @@ def _default_data() -> dict:
         },
         "reward_shop":      [],
         "exchange_log":     [],
-        "noitu_channel_id": 0,        # Kênh nối từ chỉ định
+        "noitu_channel_id": 0,        # Kênh nối từ chỉ định (không dùng nữa)
+        "baucua_channel_id": 0,       # Kênh bầu cua nhiều người
         "minigame_stats":   {},        # {user_id: {baucua,bkb,noitu,vtv,total}}
     }
 
