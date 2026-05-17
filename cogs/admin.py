@@ -518,13 +518,14 @@ class AdminCog(commands.Cog):
     async def help_cmd(self, ctx, *, topic: str = None):
         embed = discord.Embed(title="📖 Danh Sách Lệnh — TuyTam Bot", color=0x5865F2, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done <tiền>` `.addnote`\n`.ticketinfo [@user]` `.thongke [MM/YYYY]`\n`/close` `/done` `/addnote`", inline=False)
-        embed.add_field(name="💎 Point",     value="`.redeem <mã>` — Nhận point\n`.point [@user]` — Xem point\n`.addpoint @user <số>` — Admin cộng/trừ\n`.gencode [@user]` — Admin tạo mã\n`.pointcfg` — Admin cấu hình\n`.pointlog [@seller]` — Thống kê bù tiền\n`.buixong @seller <tiền>` — Đánh dấu đã bù", inline=False)
+        embed.add_field(name="💎 Point",     value="`.redeem <mã>` `.point [@user]` `.addpoint @user <số>`\n`.gencode [@user]` `.pointcfg` `.pointlog` `.buixong`\n`.shop` `.exchange <id>` `.addreward` `.delreward` `.clearshop`", inline=False)
+        embed.add_field(name="🎲 Minigame",  value="`.bc open` — Bầu Cua nhiều người (4-6 người, 30s)\n`.bc cancel` — Hủy phiên\n`.setbaucua #kênh` — Cài kênh chơi\n`.bkb <búa|kéo|bao> [point]` — Búa Kéo Bao vs Bot\n`.rank [baucua|bkb]` — BXH | `.mgstats [@user]` — Thống kê", inline=False)
         embed.add_field(name="🤖 AI",        value="`.ai <câu hỏi>` `.ai tomtat` `.ai dich` `.ai phantich`\n`.aireset` `.mychat`\n`/ai` `/aireset` `/mychat`", inline=False)
         embed.add_field(name="📨 Invite",    value="`.invite [@user]` `.invitetop [n]` `.resetinvite [@user|all]`\n`/invite` `/invitetop` `/resetinvite`", inline=False)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` — Xem bảng giá\n`.giaset` — Admin sửa bảng giá\n`/sv` `/giaset`", inline=False)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend` `/greroll` `/gwlist`", inline=False)
         embed.add_field(name="🔨 Mod",       value="`.ban` `.unban` `.kick` `.mute` `.unmute`\n`.slowmode` `.lock` `.unlock`\n`.warn` `.warns` `.clearwarn`\n`.automod on/off/links/invites/spam`\n`.automod addword/delword/words`\n`.automod addrole/delrole/adduser/deluser/whitelist`\n`/ban` `/unban` `/kick` `/mute` `/unmute` `/warn`", inline=False)
-        embed.add_field(name="⚙️ Admin",     value="`.st` (settings) `.botinfo` `.qr` `.ping`\n`.clear <n>` `.addrole @user @role` `.removerole @user @role`\n`.userinfo [@user]` (`.ui`) `.serverinfo` (`.si`)\n`.emoji` `.delemoji` `.rename` `.setperm` `.mkchannel`\n`/clear` `/addrole` `/removerole` `/ping` `/userinfo` `/serverinfo` `/botinfo` `/qr`", inline=False)
+        embed.add_field(name="⚙️ Admin",     value="`.st` `.botinfo` `.qr` `.ping`\n`.clear <n>` `.addrole` `.removerole`\n`.userinfo` `.serverinfo` `.emoji` `.delemoji`\n`.rename` `.setperm` `.mkchannel`\n`/clear` `/addrole` `/removerole` `/ping` `/userinfo` `/serverinfo`", inline=False)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  Dùng . hoặc / trước mỗi lệnh")
         await ctx.reply(embed=embed)
 
