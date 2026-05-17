@@ -412,6 +412,84 @@ class PointCog(commands.Cog):
         await ctx.reply(embed=embed)
 
 
+
+    # ══════════════════════════════════════
+    # .setpoint — Admin set point chính xác theo ID
+    # ══════════════════════════════════════
+    @commands.command(name="setpoint")
+    async def setpoint_cmd(self, ctx, user_id: str = None, amount: str = None):
+        """Admin set point chính xác cho user theo ID."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới dùng được lệnh này.")
+        if not user_id or not amount:
+            return await ctx.reply("❌ Dùng: `.setpoint <ID> <số>`")
+        try:
+            uid = int(user_id.strip().strip("<@!>"))
+            pts = int(amount)
+            if pts < 0:
+                return await ctx.reply("❌ Point không thể âm!")
+        except ValueError:
+            return await ctx.reply("❌ ID hoặc số point không hợp lệ.")
+
+        from core.data import set_user_points
+        set_user_points(uid, pts)
+
+        member = ctx.guild.get_member(uid)
+        name   = member.mention if member else f"`ID: {uid}`"
+        color  = 0x57F287
+
+        embed = discord.Embed(title="💎 Set Point", color=color, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="👤 User",     value=name,                    inline=True)
+        embed.add_field(name="💼 Point mới", value=f"**{pts:,} point**",   inline=True)
+        embed.set_footer(text=f"Bởi {_uname_plain(ctx.author)}")
+        await ctx.reply(embed=embed)
+
+    # ══════════════════════════════════════
+    # .pointall — Thống kê tất cả user có point
+    # ══════════════════════════════════════
+    @commands.command(name="pointall", aliases=["allpoints", "pointlist"])
+    async def pointall_cmd(self, ctx):
+        """Admin xem thống kê point của tất cả user."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới dùng được lệnh này.")
+
+        from core.data import load_data
+        data     = load_data()
+        all_pts  = data.get("user_points", {})
+
+        if not all_pts:
+            return await ctx.reply("📊 Chưa có user nào có point.")
+
+        # Lọc user có point > 0, sắp xếp giảm dần
+        rows = [(int(uid), pts) for uid, pts in all_pts.items() if pts > 0]
+        rows.sort(key=lambda x: x[1], reverse=True)
+
+        if not rows:
+            return await ctx.reply("📊 Tất cả user đều có 0 point.")
+
+        total_pts = sum(r[1] for r in rows)
+        medals    = ["🥇","🥈","🥉"] + ["▫️"] * 100
+        lines     = []
+
+        for i, (uid, pts) in enumerate(rows[:20]):  # Hiện tối đa 20
+            member = ctx.guild.get_member(uid)
+            name   = member.display_name if member else f"ID:{uid}"
+            lines.append(f"{medals[i]} **{name}** — `{uid}` — **{pts:,} pt**")
+
+        embed = discord.Embed(
+            title=f"💎 Thống Kê Point — {len(rows)} user",
+            description="\n".join(lines),
+            color=0xF1C40F,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="👥 Tổng user có point", value=f"**{len(rows)}**",       inline=True)
+        embed.add_field(name="💰 Tổng point",         value=f"**{total_pts:,} pt**",  inline=True)
+        if len(rows) > 20:
+            embed.set_footer(text=f"Hiện 20/{len(rows)} user | Bởi {_uname_plain(ctx.author)}")
+        else:
+            embed.set_footer(text=f"Bởi {_uname_plain(ctx.author)}")
+        await ctx.reply(embed=embed)
+
     # ══════════════════════════════════════
     # .shop — Xem cửa hàng đổi quà
     # ══════════════════════════════════════
