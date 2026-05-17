@@ -5,6 +5,7 @@ cogs/ticket.py — Ticket system: panel, views, modals, close/done logic.
 import os
 import io
 import asyncio
+_ticket_create_lock = asyncio.Lock()
 from datetime import datetime, timezone
 
 import discord
@@ -73,14 +74,15 @@ async def write_counter_to_channel(bot, number: int):
     except: pass
 
 async def get_next_ticket_number(bot) -> str:
-    channel_num = await read_counter_from_channel(bot)
-    data = load_data()
-    current = max(channel_num, data.get("ticket", 0))
-    next_num = current + 1
-    data["ticket"] = next_num
-    save_data(data)
-    asyncio.create_task(write_counter_to_channel(bot, next_num))
-    return f"{next_num:03d}"
+    async with _ticket_create_lock:
+        channel_num = await read_counter_from_channel(bot)
+        data = load_data()
+        current = max(channel_num, data.get("ticket", 0))
+        next_num = current + 1
+        data["ticket"] = next_num
+        save_data(data)
+        asyncio.create_task(write_counter_to_channel(bot, next_num))
+        return f"{next_num:03d}"
 
 async def sync_ticket_counter(bot, guild: discord.Guild):
     data = load_data()

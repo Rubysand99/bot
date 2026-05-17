@@ -1,15 +1,24 @@
 """
 core/data.py — MongoDB storage, in-memory cache, và tất cả helper đọc/ghi data.
-Import từ file này trong tất cả các Cog.
+v3.6.3 fixes:
+- save_data() dùng asyncio.create_task thay ensure_future (an toàn hơn)
+- get_ticket_number() có asyncio.Lock tránh trùng số
+- minigame_stats có Lock tránh race condition
+- ADMIN_IDS đọc từ env ADMIN_IDS thay vì hardcode
+- Logging lỗi rõ ràng thay vì except: pass
+- Thêm noitu_channel_id, minigame_stats vào _default_data
 """
 
 import os
 import asyncio
+import logging
 from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorClient
 
+log = logging.getLogger("data")
+
 # ══════════════════════════════════════════
-# CONSTANTS (default — có thể override qua .settings)
+# CONSTANTS
 # ══════════════════════════════════════════
 LOG_CHANNEL           = 1482234024868053083
 TICKET_CATEGORY_ID    = 1464426174611456195
@@ -23,15 +32,25 @@ FEEDBACK_CHANNEL_ID   = 1502464872686948403
 BALANCE_CHANNEL_ID    = 1464999465294369035
 CHANGELOG_CHANNEL_ID  = 1486967511839801414
 
-ADMIN_IDS = [846332174734983219, 1464961078042689588]
+# FIX: ADMIN_IDS đọc từ env, fallback hardcode
+def _load_admin_ids() -> list[int]:
+    env = os.getenv("ADMIN_IDS", "")
+    if env:
+        try:
+            return [int(x.strip()) for x in env.split(",") if x.strip()]
+        except ValueError:
+            log.warning("[DATA] ⚠️ ADMIN_IDS env không hợp lệ, dùng hardcode")
+    return [846332174734983219, 1464961078042689588]
+
+ADMIN_IDS = _load_admin_ids()
 QR_FILE   = "/data/qr_code.png" if os.path.isdir("/data") else "./qr_code.png"
 
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
-    raise RuntimeError("❌ Thiếu biến môi trường MONGO_URI! Hãy thêm vào Railway Variables.")
+    raise RuntimeError("❌ Thiếu biến môi trường MONGO_URI!")
 
 # ══════════════════════════════════════════
-# MONGO CLIENT (lazy init)
+# MONGO CLIENT
 # ══════════════════════════════════════════
 _mongo_client = None
 _col_data     = None
@@ -47,7 +66,7 @@ def _get_mongo():
     return _col_data, _col_giveaway
 
 # ══════════════════════════════════════════
-# DEFAULT DATA STRUCTURE
+# DEFAULT DATA
 # ══════════════════════════════════════════
 def _default_data() -> dict:
     return {
@@ -66,8 +85,8 @@ def _default_data() -> dict:
         "cfg_ai_channel":      0,
         "cfg_font":            "normal",
         "dangerous_cmd_overrides": {},
-        "sellers": [],
-        "sv_prices": [],
+        "sellers":          [],
+        "sv_prices":        [],
         "balance": {
             "current": 0, "total_in": 0, "total_fee": 0,
             "total_out": 0, "tx_count": 0, "history": []
@@ -77,26 +96,30 @@ def _default_data() -> dict:
         "ratings":          [],
         "ticket_notes":     {},
         "invite_counts":    {},
-        "ticket_history":   [],   # [{id, user_id, username, amount, opened_at, closed_at, staff}]
-        "user_points":      {},   # {user_id: int}
-        "point_codes":      {},   # {code: {user_id, expires_at, used}}
-        "point_log":        [],   # lịch sử cộng/trừ point
-        "seller_compensation": {},  # {seller_id: {total_owed, paid, records}}
+        "ticket_history":   [],
+        "user_points":      {},
+        "point_codes":      {},
+        "point_log":        [],
+        "seller_compensation": {},
         "point_cfg": {
-            "points_per_redeem": 1,     # 1 point mỗi lần vượt link
-            "point_value":       0,     # Không giảm giá tiền mặt — point chỉ dùng đổi quà
-            "max_discount_pct":  0,     # Tắt giảm giá
+            "points_per_redeem": 1,
+            "point_value":       0,
+            "max_discount_pct":  0,
             "cooldown_hours":    24,
             "code_expire_mins":  10,
         },
-        "reward_shop": [],  # Admin tự thêm bằng .addreward <id> <points> <tên — giá trị tương đương Xpt>
+        "reward_shop":      [],
+        "exchange_log":     [],
+        "noitu_channel_id": 0,        # Kênh nối từ chỉ định
+        "minigame_stats":   {},        # {user_id: {baucua,bkb,noitu,vtv,total}}
     }
 
 # ══════════════════════════════════════════
-# IN-MEMORY CACHE
+# LOCKS
 # ══════════════════════════════════════════
-_data_cache: dict | None = None
-_save_lock = None
+_save_lock    = None   # Lock ghi MongoDB
+_ticket_lock  = None   # FIX: Lock tránh trùng số ticket
+_mgstats_lock = None   # FIX: Lock tránh race condition minigame_stats
 
 def _get_save_lock():
     global _save_lock
@@ -104,9 +127,23 @@ def _get_save_lock():
         _save_lock = asyncio.Lock()
     return _save_lock
 
+def _get_ticket_lock():
+    global _ticket_lock
+    if _ticket_lock is None:
+        _ticket_lock = asyncio.Lock()
+    return _ticket_lock
+
+def _get_mgstats_lock():
+    global _mgstats_lock
+    if _mgstats_lock is None:
+        _mgstats_lock = asyncio.Lock()
+    return _mgstats_lock
+
 # ══════════════════════════════════════════
 # LOW-LEVEL MongoDB
 # ══════════════════════════════════════════
+_data_cache: dict | None = None
+
 async def _mongo_load() -> dict:
     col, _ = _get_mongo()
     try:
@@ -116,13 +153,16 @@ async def _mongo_load() -> dict:
             await col.insert_one(doc)
             print("[DATA] 🆕 Tạo document mới trong MongoDB")
         else:
+            changed = False
             for k, v in _default_data().items():
                 if k not in doc:
                     doc[k] = v
-            await _mongo_save(doc)
+                    changed = True
+            if changed:
+                await _mongo_save(doc)
         return doc
     except Exception as e:
-        print(f"[DATA] ❌ Lỗi đọc MongoDB: {e}")
+        log.error(f"[DATA] ❌ Lỗi đọc MongoDB: {e}")
         return _default_data()
 
 async def _mongo_save(data: dict):
@@ -131,9 +171,10 @@ async def _mongo_save(data: dict):
         save = {k: v for k, v in data.items() if k != "_id"}
         await col.update_one({"_id": "main"}, {"$set": save}, upsert=True)
     except Exception as e:
-        print(f"[DATA] ❌ Lỗi ghi MongoDB: {e}")
+        log.error(f"[DATA] ❌ Lỗi ghi MongoDB: {e}")
 
 async def _flush_to_mongo():
+    """FIX: Dùng Lock đảm bảo không ghi đồng thời."""
     lock = _get_save_lock()
     async with lock:
         if _data_cache is not None:
@@ -148,14 +189,20 @@ def load_data() -> dict:
     return _default_data()
 
 def save_data(data: dict):
+    """
+    FIX: Dùng asyncio.create_task thay ensure_future.
+    create_task an toàn hơn, có thể track được task.
+    """
     global _data_cache
     _data_cache = data
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(_flush_to_mongo())
-    except Exception:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_flush_to_mongo())
+    except RuntimeError:
+        # Không có event loop (test/init context) — bỏ qua
         pass
+    except Exception as e:
+        log.error(f"[DATA] ❌ Lỗi tạo save task: {e}")
 
 async def init_data_cache():
     global _data_cache
@@ -168,7 +215,7 @@ async def init_data_cache():
             giveaways[mid] = {k: v for k, v in doc.items() if k not in ("_id", "message_id")}
         _data_cache["_giveaways"] = giveaways
     except Exception as e:
-        print(f"[DATA] ⚠️ Không load được giveaways: {e}")
+        log.warning(f"[DATA] ⚠️ Không load được giveaways: {e}")
         _data_cache.setdefault("_giveaways", {})
     print(f"[DATA] ✅ Đã kết nối MongoDB — ticket#{_data_cache.get('ticket', 0):03d}")
 
@@ -215,7 +262,7 @@ def save_balance_data(bal: dict):
     data = load_data(); data["balance"] = bal; save_data(data)
 
 # ══════════════════════════════════════════
-# TICKET COUNTER
+# TICKET COUNTER — FIX: async + Lock
 # ══════════════════════════════════════════
 def get_panel_channel_id():
     return load_data().get("panel_channel_id")
@@ -229,11 +276,22 @@ def get_qr_path():
 def save_qr_path(path: str):
     data = load_data(); data["qr_path"] = path; save_data(data)
 
-def get_ticket_number() -> str:
-    data = load_data()
-    data["ticket"] = data.get("ticket", 0) + 1
-    save_data(data)
-    return f"{data['ticket']:03d}"
+async def get_ticket_number() -> str:
+    """FIX: async + Lock đảm bảo không bao giờ tạo 2 ticket trùng số."""
+    async with _get_ticket_lock():
+        data = load_data()
+        data["ticket"] = data.get("ticket", 0) + 1
+        num = data["ticket"]
+        # Ghi trực tiếp vào MongoDB ngay lập tức (không dùng queue)
+        col, _ = _get_mongo()
+        try:
+            await col.update_one({"_id": "main"}, {"$set": {"ticket": num}}, upsert=True)
+        except Exception as e:
+            log.error(f"[DATA] ❌ Lỗi cập nhật ticket counter: {e}")
+        global _data_cache
+        if _data_cache is not None:
+            _data_cache["ticket"] = num
+        return f"{num:03d}"
 
 # ══════════════════════════════════════════
 # BUYER ROLES
@@ -284,9 +342,6 @@ def get_ticket_history() -> list:
     return load_data().get("ticket_history", [])
 
 def save_ticket_record(record: dict):
-    """Lưu 1 đơn đã done vào lịch sử. record gồm:
-    id, user_id, username, amount, opened_at, closed_at, staff, ticket_name
-    """
     data = load_data()
     data.setdefault("ticket_history", [])
     data["ticket_history"].append(record)
@@ -296,7 +351,6 @@ def get_user_ticket_history(user_id: int) -> list:
     return [t for t in get_ticket_history() if t.get("user_id") == user_id]
 
 def get_monthly_stats(year: int, month: int) -> dict:
-    """Trả về thống kê ticket trong tháng: tổng đơn, tổng tiền, danh sách đơn."""
     history = get_ticket_history()
     records = []
     for t in history:
@@ -309,13 +363,11 @@ def get_monthly_stats(year: int, month: int) -> dict:
             continue
     total_amount = sum(t.get("amount", 0) for t in records)
     return {
-        "year":         year,
-        "month":        month,
+        "year": year, "month": month,
         "total_orders": len(records),
         "total_amount": total_amount,
         "records":      records,
     }
-
 
 # ══════════════════════════════════════════
 # POINT SYSTEM
@@ -340,9 +392,7 @@ def add_user_points(user_id: int, points: int, reason: str = "") -> int:
     old = data["user_points"].get(key, 0)
     data["user_points"][key] = max(0, old + points)
     data["point_log"].append({
-        "user_id": user_id,
-        "delta":   points,
-        "reason":  reason,
+        "user_id": user_id, "delta": points, "reason": reason,
         "balance": data["user_points"][key],
         "time":    datetime.now(timezone.utc).isoformat(),
     })
@@ -387,11 +437,8 @@ def add_seller_compensation(seller_id: int, amount: int, ticket_name: str, buyer
         data["seller_compensation"][key] = {"total_owed": 0, "paid": 0, "records": []}
     data["seller_compensation"][key]["total_owed"] += amount
     data["seller_compensation"][key]["records"].append({
-        "ticket":   ticket_name,
-        "buyer_id": buyer_id,
-        "amount":   amount,
-        "time":     datetime.now(timezone.utc).isoformat(),
-        "paid":     False,
+        "ticket": ticket_name, "buyer_id": buyer_id,
+        "amount": amount, "time": datetime.now(timezone.utc).isoformat(), "paid": False,
     })
     save_data(data)
 
@@ -408,6 +455,9 @@ def get_seller_compensation(seller_id: int) -> dict:
 def get_all_seller_compensation() -> dict:
     return load_data().get("seller_compensation", {})
 
+# ══════════════════════════════════════════
+# REWARD SHOP
+# ══════════════════════════════════════════
 def get_reward_shop() -> list:
     return load_data().get("reward_shop", [])
 
@@ -415,22 +465,49 @@ def get_reward_item(item_id: str) -> dict | None:
     return next((i for i in get_reward_shop() if i["id"] == item_id), None)
 
 def save_reward_shop(items: list):
-    data = load_data()
-    data["reward_shop"] = items
-    save_data(data)
+    data = load_data(); data["reward_shop"] = items; save_data(data)
 
 def add_exchange_record(user_id: int, item_id: str, item_name: str, points_used: int):
     data = load_data()
     data.setdefault("exchange_log", [])
     data["exchange_log"].append({
-        "user_id":    user_id,
-        "item_id":    item_id,
-        "item_name":  item_name,
-        "points":     points_used,
-        "time":       datetime.now(timezone.utc).isoformat(),
-        "status":     "pending",  # pending → done
+        "user_id": user_id, "item_id": item_id, "item_name": item_name,
+        "points": points_used, "time": datetime.now(timezone.utc).isoformat(), "status": "pending",
     })
     save_data(data)
+
+# ══════════════════════════════════════════
+# MINIGAME STATS — FIX: async + Lock
+# ══════════════════════════════════════════
+def get_mg_stats() -> dict:
+    return load_data().get("minigame_stats", {})
+
+async def record_win_async(user_id: int, game: str):
+    """FIX: async + Lock tránh race condition khi nhiều người thắng cùng lúc."""
+    async with _get_mgstats_lock():
+        data = load_data()
+        data.setdefault("minigame_stats", {})
+        key = str(user_id)
+        data["minigame_stats"].setdefault(key, {"baucua": 0, "bkb": 0, "noitu": 0, "vtv": 0, "total": 0})
+        if game in data["minigame_stats"][key]:
+            data["minigame_stats"][key][game] += 1
+        data["minigame_stats"][key]["total"] += 1
+        save_data(data)
+
+def get_leaderboard(game: str = "total", top: int = 10) -> list:
+    stats = get_mg_stats()
+    rows  = [(int(uid), s.get(game, 0)) for uid, s in stats.items() if s.get(game, 0) > 0]
+    rows.sort(key=lambda x: x[1], reverse=True)
+    return rows[:top]
+
+# ══════════════════════════════════════════
+# NOITU CHANNEL
+# ══════════════════════════════════════════
+def get_noitu_channel() -> int:
+    return load_data().get("noitu_channel_id", 0)
+
+def set_noitu_channel(cid: int):
+    data = load_data(); data["noitu_channel_id"] = cid; save_data(data)
 
 # ══════════════════════════════════════════
 # INVITE COUNTS
@@ -451,7 +528,7 @@ def save_price_sections(sections: list):
     data = load_data(); data["sv_prices"] = sections; save_data(data)
 
 # ══════════════════════════════════════════
-# GIVEAWAY PERSISTENCE (collection riêng)
+# GIVEAWAY
 # ══════════════════════════════════════════
 def _load_giveaway_section() -> dict:
     return load_data().get("_giveaways", {})
@@ -465,11 +542,12 @@ def _save_giveaway_section(giveaways: dict):
     data["_giveaways"] = serializable
     save_data(data)
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(_sync_giveaways_to_mongo(serializable))
-    except Exception:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_sync_giveaways_to_mongo(serializable))
+    except RuntimeError:
         pass
+    except Exception as e:
+        log.error(f"[DATA] ❌ Lỗi sync giveaway: {e}")
 
 async def _sync_giveaways_to_mongo(giveaways: dict):
     _, col_gw = _get_mongo()
@@ -479,7 +557,7 @@ async def _sync_giveaways_to_mongo(giveaways: dict):
             doc["message_id"] = int(mid_str)
             await col_gw.update_one({"message_id": int(mid_str)}, {"$set": doc}, upsert=True)
     except Exception as e:
-        print(f"[DATA] ❌ Lỗi sync giveaway MongoDB: {e}")
+        log.error(f"[DATA] ❌ Lỗi sync giveaway MongoDB: {e}")
 
 def load_giveaways_data() -> dict:
     raw = _load_giveaway_section()
@@ -506,7 +584,7 @@ def save_dangerous_overrides(overrides: dict):
     data = load_data(); data["dangerous_cmd_overrides"] = overrides; save_data(data)
 
 # ══════════════════════════════════════════
-# HELPERS FORMAT
+# FORMAT HELPERS
 # ══════════════════════════════════════════
 def _uname(user) -> str:
     if user is None: return "Unknown"
@@ -532,7 +610,7 @@ def parse_amount(raw: str) -> int | None:
     if not m: return None
     num  = float(m.group(1))
     unit = m.group(2) or ""
-    if unit == "k":       return int(num * 1_000)
+    if unit == "k":        return int(num * 1_000)
     if unit in ("tr","m"): return int(num * 1_000_000)
     return int(num)
 
