@@ -518,7 +518,7 @@ class AdminCog(commands.Cog):
     async def help_cmd(self, ctx, *, topic: str = None):
         embed = discord.Embed(title="📖 Danh Sách Lệnh — TuyTam Bot", color=0x5865F2, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done <tiền>` `.addnote`\n`.ticketinfo [@user]` `.thongke [MM/YYYY]`\n`/close` `/done` `/addnote`", inline=False)
-        embed.add_field(name="💎 Point",     value="`.redeem <mã>` `.point [@user]` `.addpoint @user <số>`\n`.gencode [@user]` `.pointcfg` `.pointlog` `.buixong`\n`.shop` `.exchange <id>` `.addreward` `.delreward` `.clearshop`", inline=False)
+        embed.add_field(name="💎 Point",     value="`.redeem <mã>` `.point [@user]` `.addpoint @user <số>`\n`.setpoint <ID> <số>` — Set chính xác theo ID\n`.pointall` — Thống kê tất cả user\n`.gencode [@user]` `.pointcfg` `.pointlog` `.buixong`\n`.shop` `.exchange <id>` `.addreward` `.delreward` `.clearshop`", inline=False)
         embed.add_field(name="🎲 Minigame",  value="`.bc open` — Bầu Cua nhiều người (4-6 người, 30s)\n`.bc cancel` — Hủy phiên\n`.setbaucua #kênh` — Cài kênh chơi\n`.bkb <búa|kéo|bao> [point]` — Búa Kéo Bao vs Bot\n`.rank [baucua|bkb]` — BXH | `.mgstats [@user]` — Thống kê", inline=False)
         embed.add_field(name="🤖 AI",        value="`.ai <câu hỏi>` `.ai tomtat` `.ai dich` `.ai phantich`\n`.aireset` `.mychat`\n`/ai` `/aireset` `/mychat`", inline=False)
         embed.add_field(name="📨 Invite",    value="`.invite [@user]` `.invitetop [n]` `.resetinvite [@user|all]`\n`/invite` `/invitetop` `/resetinvite`", inline=False)
