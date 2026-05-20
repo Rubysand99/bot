@@ -6,6 +6,15 @@
 
 ---
 
+## [v3.7.4] — 2026-05-20
+
+### ✨ Thêm mới
+- `core/data.py` — Thêm `BUILDER_BASE_ROLE_ID = 1484158340849205308`, cập nhật `is_staff_member()` để role **Builder Base** có quyền dùng lệnh staff trong ticket
+- `cogs/ticket.py` — Role **Builder Base** được tự động thêm vào overwrites khi tạo ticket mới (quyền giống role Seller)
+- `BOT_VERSION = "3.7.4"`
+
+---
+
 ## [v3.7.3] — 2026-05-18
 
 ### ✨ Thêm mới
