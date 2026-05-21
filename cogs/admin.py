@@ -503,16 +503,6 @@ class AdminCog(commands.Cog):
         embed.set_footer(text="TuyTam Store  •  Ticket System")
         await ctx.reply(embed=embed)
 
-    @commands.command(name="qr")
-    async def qr_cmd(self, ctx):
-        import os
-        qr_path = get_qr_path()
-        if not qr_path or not os.path.exists(qr_path):
-            return await ctx.reply(embed=discord.Embed(title="❌  Chưa Có Mã QR", description="Admin chưa cài mã QR.\nDùng `.settings` để thêm QR thanh toán.", color=0xED4245))
-        embed = discord.Embed(title="📱  Mã QR Thanh Toán", description="> 🏦 **MB Bank** — HOVANBUT\n> 📱 **Thẻ Viettel** bị trừ thêm **18% thuế**\n> ⚠️ Ghi rõ nội dung: `[tên MC] mua [item]`", color=0x57F287, timestamp=datetime.now(timezone.utc))
-        file = discord.File(qr_path, filename="qr.png"); embed.set_image(url="attachment://qr.png")
-        await ctx.reply(embed=embed, file=file)
-
     # ── .help ──
     @commands.command(name="help", aliases=["h"])
     async def help_cmd(self, ctx, *, topic: str = None):

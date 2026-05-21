@@ -22,11 +22,13 @@ from core.data import (
     save_ticket_record, get_user_ticket_history, get_monthly_stats,
     load_data, save_data, parse_amount, fmt_amount, is_staff_member,
     _uname, _uname_plain, can_use_dangerous_cmd, QR_FILE,
+    get_seller_qr, save_seller_qr, get_all_seller_qr,
+    get_seller_category, save_seller_category,
+    remove_seller_category, get_all_seller_categories,
 )
 from cogs.logger import send_log
 
-BOT_VERSION = "3.3.5"
-BUILDER_BASE_ROLE_ID = 1484158340849205308
+BOT_VERSION = "3.5.0"
 
 BUILDER_BASE_ROLE_ID = 1484158340849205308
 
@@ -486,8 +488,8 @@ class TicketButtons(View):
 
     @discord.ui.button(label="Hoàn thành đơn", emoji="✅", style=discord.ButtonStyle.green, custom_id="complete_order")
     async def complete_order(self, interaction: discord.Interaction, button: Button):
-        if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin mới có quyền.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         await interaction.channel.send(
             f"⚠️ {interaction.user.mention} — hãy dùng lệnh `.done <số tiền>` để hoàn thành đơn.\nVí dụ: `.done 50k`, `.done 1tr5`, `.done 200000`",
@@ -537,7 +539,7 @@ class TicketCog(commands.Cog):
 
     @commands.command(name="done")
     async def done_cmd(self, ctx, amount_str: str = None):
-        if not is_staff_member(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
+        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Chỉ admin mới có quyền dùng lệnh này.")
         if not (ctx.channel.topic and "|" in ctx.channel.topic): return await ctx.reply("❌ Đây không phải kênh ticket.")
         if not amount_str: return await ctx.reply("❌ Thiếu số tiền! Ví dụ: `.done 50k`, `.done 1tr5`")
 
@@ -651,8 +653,8 @@ class TicketCog(commands.Cog):
     @discord.app_commands.command(name="done", description="Hoàn thành đơn hàng trong ticket")
     @discord.app_commands.describe(amount="Số tiền giao dịch, vd: 50k, 1tr5, 200000")
     async def slash_done(self, interaction: discord.Interaction, amount: str):
-        if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin mới có quyền dùng lệnh này.", ephemeral=True)
         if not (interaction.channel.topic and "|" in interaction.channel.topic):
             return await interaction.response.send_message("❌ Đây không phải kênh ticket.", ephemeral=True)
         parsed = parse_amount(amount)
@@ -814,6 +816,348 @@ class TicketCog(commands.Cog):
             embed.description = f"*(Không có đơn nào trong {month_label})*"
 
         embed.set_footer(text=f"Tra cứu bởi {_uname_plain(ctx.author)}  •  Dùng .thongke MM/YYYY để xem tháng khác")
+        await ctx.reply(embed=embed)
+
+
+    # ══════════════════════════════════════════
+    # SELLER: TẠO KÊNH RIÊNG (.mkchannel)
+    # ══════════════════════════════════════════
+    @commands.command(name="mkchannel", aliases=["mkch"])
+    async def mkchannel_cmd(self, ctx, ch_type: str = None, name: str = None, amount: int = 1):
+        """
+        .mkchannel <loại> <tên> [số lượng]
+        Loại: text, voice, stage, forum, announce
+        Ví dụ: .mkchannel text shop 3
+                .mkchannel voice phòng-chờ
+        """
+        guild = ctx.guild
+
+        seller_role = guild.get_role(get_cfg_seller_role())
+        is_admin    = ctx.author.id in ADMIN_IDS
+        is_seller   = seller_role and seller_role in ctx.author.roles
+
+        if not (is_admin or is_seller):
+            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+
+        # Mapping loại kênh hợp lệ
+        _TYPE_MAP = {
+            "text":     "text",
+            "văn-bản":  "text",
+            "voice":    "voice",
+            "voice":    "voice",
+            "thoại":    "voice",
+            "stage":    "stage",
+            "sân-khấu": "stage",
+            "forum":    "forum",
+            "announce": "announce",
+            "thông-báo":"announce",
+        }
+
+        if not ch_type or ch_type.lower() not in _TYPE_MAP:
+            valid = "`, `".join(["text", "voice", "stage", "forum", "announce"])
+            return await ctx.reply(
+                f"❌ Thiếu hoặc sai loại kênh!\n"
+                f"Cú pháp: `.mkchannel <loại> <tên> [số lượng]`\n"
+                f"Loại hợp lệ: `{valid}`\n"
+                f"Ví dụ: `.mkchannel text shop 3` hoặc `.mkchannel voice phòng-chờ`"
+            )
+
+        if not name:
+            return await ctx.reply(
+                f"❌ Thiếu tên kênh!\n"
+                f"Cú pháp: `.mkchannel <loại> <tên> [số lượng]`\n"
+                f"Ví dụ: `.mkchannel text shop 3`"
+            )
+
+        resolved_type = _TYPE_MAP[ch_type.lower()]
+        amount        = max(1, min(amount, 20))
+
+        cat_id   = get_seller_category(ctx.author.id)
+        category = discord.utils.get(guild.categories, id=cat_id) if cat_id else None
+
+        if not category:
+            return await ctx.reply(
+                "❌ Bạn chưa được gán danh mục!\n"
+                "Liên hệ admin để được cấp category bằng lệnh `.setsl @bạn #danh-mục`."
+            )
+
+        safe_name = name.lower().replace(" ", "-")[:100]
+
+        # Quyền chung: seller toàn quyền trừ ping everyone
+        base_seller_ow = discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, read_message_history=True,
+            manage_messages=True, manage_channels=True, manage_permissions=True,
+            attach_files=True, embed_links=True, create_instant_invite=True,
+            add_reactions=True, use_external_emojis=True,
+            mention_everyone=False,
+        )
+        # Voice/Stage cần thêm quyền âm thanh
+        if resolved_type in ("voice", "stage"):
+            base_seller_ow.update(
+                connect=True, speak=True, mute_members=True,
+                deafen_members=True, move_members=True, stream=True,
+            )
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            ctx.author: base_seller_ow,
+        }
+        for aid in ADMIN_IDS:
+            m = guild.get_member(aid)
+            if m:
+                overwrites[m] = discord.PermissionOverwrite(
+                    view_channel=True, send_messages=True, read_message_history=True,
+                    manage_messages=True, manage_channels=True, manage_permissions=True,
+                )
+
+        # Factory theo loại kênh
+        async def _create(n):
+            kw = dict(name=n, category=category, overwrites=overwrites,
+                      reason=f".mkchannel bởi {ctx.author}")
+            if resolved_type == "text":
+                return await guild.create_text_channel(**kw)
+            elif resolved_type == "voice":
+                return await guild.create_voice_channel(**kw)
+            elif resolved_type == "stage":
+                return await guild.create_stage_channel(**kw)
+            elif resolved_type == "forum":
+                return await guild.create_forum(**kw)
+            elif resolved_type == "announce":
+                return await guild.create_text_channel(
+                    **kw, news=True if hasattr(guild, "create_news_channel") else False
+                )
+
+        created = []
+        failed  = 0
+        for _ in range(amount):
+            try:
+                ch = await _create(safe_name)
+                created.append(ch)
+            except discord.Forbidden:
+                failed += 1
+                break
+            except Exception:
+                failed += 1
+
+        if not created:
+            return await ctx.reply("❌ Không tạo được kênh nào! Bot có thể thiếu quyền trong danh mục đó.")
+
+        _TYPE_ICON = {"text": "💬", "voice": "🔊", "stage": "🎙️", "forum": "💭", "announce": "📢"}
+        icon  = _TYPE_ICON.get(resolved_type, "📌")
+        ch_list = "\n".join(f"› {ch.mention}" for ch in created)
+        desc    = f"Đã tạo **{len(created)}** kênh {icon} trong **{category.name}**:\n{ch_list}"
+        if failed:
+            desc += f"\n⚠️ Không tạo được **{failed}** kênh (thiếu quyền hoặc lỗi)."
+
+        embed = discord.Embed(
+            title=f"✅ Kênh {icon} đã được tạo",
+            description=desc,
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.set_footer(text=f"Tạo bởi {_uname_plain(ctx.author)}")
+        await ctx.reply(embed=embed)
+
+    # ══════════════════════════════════════════
+    # ADMIN: GÁN CATEGORY CHO SELLER (.setsl)
+    # ══════════════════════════════════════════
+    @commands.command(name="setsl")
+    async def setsl_cmd(self, ctx, seller: discord.Member = None, category: discord.CategoryChannel = None):
+        """
+        .setsl <@seller | seller_id> #category
+        Admin gán category riêng cho từng seller.
+        """
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền.")
+
+        if not seller:
+            return await ctx.reply(
+                "❌ Thiếu thông tin!\n"
+                "Cú pháp: `.setsl @seller #danh-mục`\n"
+                "Ví dụ: `.setsl @TuyTam #Shop-TuyTam`"
+            )
+
+        if not category:
+            return await ctx.reply(
+                "❌ Thiếu danh mục!\n"
+                "Cú pháp: `.setsl @seller #danh-mục`"
+            )
+
+        save_seller_category(seller.id, category.id)
+
+        # Xem category hiện tại của tất cả seller để hiển thị
+        all_cats = get_all_seller_categories()
+        lines = []
+        for uid_str, cid in all_cats.items():
+            cat = discord.utils.get(ctx.guild.categories, id=cid)
+            cat_name = cat.name if cat else f"`ID:{cid}`"
+            lines.append(f"<@{uid_str}> → **{cat_name}**")
+
+        embed = discord.Embed(
+            title="⚙️ Đã gán Category cho Seller",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="👤 Seller",    value=seller.mention,    inline=True)
+        embed.add_field(name="📁 Category",  value=category.name,     inline=True)
+        embed.add_field(name="🆔 Category ID", value=f"`{category.id}`", inline=True)
+        if lines:
+            embed.add_field(
+                name="📋 Tất cả seller đã gán",
+                value="\n".join(lines) or "*(chưa có)*",
+                inline=False,
+            )
+        embed.set_footer(text=f"Cài bởi {_uname_plain(ctx.author)}")
+        await ctx.reply(embed=embed)
+
+    @commands.command(name="removesl")
+    async def removesl_cmd(self, ctx, seller: discord.Member = None):
+        """Admin xóa category của một seller."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền.")
+        if not seller:
+            return await ctx.reply("❌ Thiếu seller! Ví dụ: `.removesl @seller`")
+
+        remove_seller_category(seller.id)
+        await ctx.reply(f"✅ Đã xóa category của {seller.mention}.")
+
+    @commands.command(name="listsl")
+    async def listsl_cmd(self, ctx):
+        """Admin xem danh sách seller → category."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền.")
+
+        all_cats = get_all_seller_categories()
+        if not all_cats:
+            return await ctx.reply("*(Chưa có seller nào được gán category)*")
+
+        lines = []
+        for uid_str, cid in all_cats.items():
+            cat = discord.utils.get(ctx.guild.categories, id=cid)
+            cat_name = cat.name if cat else f"`ID:{cid}`"
+            lines.append(f"<@{uid_str}> → **{cat_name}**")
+
+        embed = discord.Embed(
+            title="📋 Danh Sách Seller → Category",
+            description="\n".join(lines),
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.set_footer(text=f"Tra cứu bởi {_uname_plain(ctx.author)}")
+        await ctx.reply(embed=embed)
+
+    # ══════════════════════════════════════════
+    # QR CÁ NHÂN (.qr / .addqr)
+    # ══════════════════════════════════════════
+    @commands.command(name="qr")
+    async def qr_cmd(self, ctx, member: discord.Member = None):
+        """
+        .qr          → gửi QR của người nhập lệnh
+        .qr @user    → gửi QR của user được mention (nếu có trong list)
+        """
+        target = member or ctx.author
+
+        # Tìm QR cá nhân
+        qr_path = get_seller_qr(target.id)
+
+        # Nếu là chính mình và không có QR riêng → fallback về QR chung
+        if not qr_path or not os.path.exists(qr_path):
+            if target.id == ctx.author.id:
+                qr_path = get_qr_path()
+                if not qr_path or not os.path.exists(qr_path):
+                    return await ctx.reply(
+                        "❌ Bạn chưa có mã QR!\n"
+                        "Dùng `.addqr` để thêm QR của bạn."
+                    )
+                owner_label = "QR Chung (Store)"
+            else:
+                return await ctx.reply(
+                    f"❌ {target.mention} chưa có mã QR trong danh sách."
+                )
+        else:
+            owner_label = target.display_name
+
+        file  = discord.File(qr_path, filename="qr.png")
+        embed = discord.Embed(
+            title=f"📱 Mã QR — {owner_label}",
+            description=(
+                "> 📌 Vui lòng ghi rõ nội dung chuyển khoản\n"
+                "> ⚠️ Thẻ Viettel bị trừ thêm **18% thuế**"
+            ),
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.set_image(url="attachment://qr.png")
+        embed.set_thumbnail(url=target.display_avatar.url)
+        embed.set_footer(text=f"Yêu cầu bởi {_uname_plain(ctx.author)}")
+        await ctx.send(embed=embed, file=file)
+
+    @commands.command(name="addqr")
+    async def addqr_cmd(self, ctx):
+        """
+        Người nhập lệnh có 60s để gửi ảnh QR của mình.
+        Chỉ staff/seller/admin mới dùng được.
+        """
+        if not is_staff_member(ctx.author):
+            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+
+        prompt = await ctx.reply(
+            "📸 Hãy gửi ảnh mã QR của bạn trong vòng **60 giây**.\n"
+            "*(Chỉ nhận ảnh PNG/JPG/WEBP, tối đa 8 MB)*"
+        )
+
+        def check(m: discord.Message):
+            return (
+                m.author.id == ctx.author.id
+                and m.channel.id == ctx.channel.id
+                and len(m.attachments) > 0
+                and m.attachments[0].content_type
+                and m.attachments[0].content_type.startswith("image/")
+            )
+
+        try:
+            msg: discord.Message = await self.bot.wait_for("message", check=check, timeout=60)
+        except asyncio.TimeoutError:
+            try: await prompt.delete()
+            except: pass
+            return await ctx.send(
+                f"⏰ {ctx.author.mention} Hết giờ! Dùng lại `.addqr` để thử lại.",
+                delete_after=10,
+            )
+
+        attachment = msg.attachments[0]
+        if attachment.size > 8 * 1024 * 1024:
+            return await ctx.reply("❌ Ảnh quá lớn! Tối đa 8 MB.")
+
+        # Xác định đường dẫn lưu
+        qr_dir = "/data" if os.path.isdir("/data") else "."
+        qr_path = os.path.join(qr_dir, f"qr_{ctx.author.id}.png")
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(attachment.url) as resp:
+                    if resp.status != 200:
+                        return await ctx.reply("❌ Không tải được ảnh. Thử lại!")
+                    data_bytes = await resp.read()
+            with open(qr_path, "wb") as f:
+                f.write(data_bytes)
+        except Exception as e:
+            return await ctx.reply(f"❌ Lỗi khi lưu ảnh: `{e}`")
+
+        save_seller_qr(ctx.author.id, qr_path)
+
+        try: await prompt.delete()
+        except: pass
+
+        embed = discord.Embed(
+            title="✅ Đã lưu mã QR",
+            description=f"QR của {ctx.author.mention} đã được cập nhật!\nDùng `.qr` để kiểm tra.",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.set_image(url=attachment.url)
+        embed.set_footer(text=f"Lưu bởi {_uname_plain(ctx.author)}")
         await ctx.reply(embed=embed)
 
 
