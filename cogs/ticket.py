@@ -822,13 +822,13 @@ class TicketCog(commands.Cog):
     # ══════════════════════════════════════════
     # SELLER: TẠO KÊNH RIÊNG (.mkchannel)
     # ══════════════════════════════════════════
-    @commands.command(name="mkchannel", aliases=["mkch"])
+    @commands.command(name="sellerchannel", aliases=["sch"])
     async def mkchannel_cmd(self, ctx, ch_type: str = None, name: str = None, amount: int = 1):
         """
-        .mkchannel <loại> <tên> [số lượng]
+        .sellerchannel <loại> <tên> [số lượng]
         Loại: text, voice, stage, forum, announce
-        Ví dụ: .mkchannel text shop 3
-                .mkchannel voice phòng-chờ
+        Ví dụ: .sellerchannel text shop 3
+                .sellerchannel voice phòng-chờ
         """
         guild = ctx.guild
 
@@ -857,16 +857,16 @@ class TicketCog(commands.Cog):
             valid = "`, `".join(["text", "voice", "stage", "forum", "announce"])
             return await ctx.reply(
                 f"❌ Thiếu hoặc sai loại kênh!\n"
-                f"Cú pháp: `.mkchannel <loại> <tên> [số lượng]`\n"
+                f"Cú pháp: `.sellerchannel <loại> <tên> [số lượng]`\n"
                 f"Loại hợp lệ: `{valid}`\n"
-                f"Ví dụ: `.mkchannel text shop 3` hoặc `.mkchannel voice phòng-chờ`"
+                f"Ví dụ: `.sellerchannel text shop 3` hoặc `.sellerchannel voice phòng-chờ`"
             )
 
         if not name:
             return await ctx.reply(
                 f"❌ Thiếu tên kênh!\n"
-                f"Cú pháp: `.mkchannel <loại> <tên> [số lượng]`\n"
-                f"Ví dụ: `.mkchannel text shop 3`"
+                f"Cú pháp: `.sellerchannel <loại> <tên> [số lượng]`\n"
+                f"Ví dụ: `.sellerchannel text shop 3`"
             )
 
         resolved_type = _TYPE_MAP[ch_type.lower()]
