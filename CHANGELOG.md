@@ -6,6 +6,15 @@
 
 ---
 
+## [v3.7.9] — 2026-05-22
+
+### 🐛 Sửa lỗi
+- `core/data.py` — Thêm helper `get_or_fetch_channel(bot, id)`: thử cache trước, nếu không có thì `fetch_channel()` từ API Discord — hỗ trợ kênh private và kênh mới tạo
+- `cogs/admin.py`, `cogs/ticket.py`, `cogs/giveaway.py`, `bot.py` — Thay toàn bộ `bot.get_channel()` bằng `get_or_fetch_channel()` để bot không bị miss kênh ngoài cache
+- `BOT_VERSION = "3.7.9"`
+
+---
+
 ## [v3.7.8] — 2026-05-22
 
 ### ✨ Thêm mới

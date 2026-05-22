@@ -18,10 +18,10 @@ from core.data import (
     save_cfg, load_data, save_data, get_buy_roles, save_buy_roles,
     get_user_total_spent, add_user_spent, get_price_sections, save_price_sections,
     can_use_dangerous_cmd, parse_amount, fmt_amount, _uname, _uname_plain,
-    QR_FILE, get_qr_path, save_qr_path,
+    QR_FILE, get_qr_path, save_qr_path, get_or_fetch_channel,
 )
 
-BOT_VERSION = "3.7.8"
+BOT_VERSION = "3.7.9"
 BOT_UPDATED = "2026-05-16"
 
 # ══════════════════════════════════════════
@@ -721,7 +721,7 @@ class AdminCog(commands.Cog):
         if not legit_ch_id:
             return await ctx.reply("❌ Chưa cài Legit Channel. Vào `.st` để cài trước.")
 
-        channel = self.bot.get_channel(legit_ch_id)
+        channel = await get_or_fetch_channel(self.bot, legit_ch_id)
         if not channel:
             return await ctx.reply(f"❌ Không tìm thấy kênh legit (ID: `{legit_ch_id}`).")
 

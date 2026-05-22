@@ -14,7 +14,7 @@ from discord.ui import View, Button, Modal, TextInput
 
 from core.data import (
     ADMIN_IDS, load_giveaways_data, save_giveaways_data,
-    _uname, _uname_plain,
+    _uname, _uname_plain, get_or_fetch_channel,
 )
 
 # ── State in-memory ──
@@ -47,6 +47,8 @@ async def end_giveaway(message_id, channel, winners_count, prize, host_id):
     entries = list(gw.get("entries", set())) if gw else []
 
     if not entries:
+        embed = discord.Embed(title="🎉  Giveaway Kết Thúc", description="❌ Không có ai tham gia giveaway này.", color=0x99AAB5, timestamp=datetime.now(timezone.utc))
+        await msg.edit(embed=embed, view=None)
         await channel.send("❌ Giveaway kết thúc nhưng không có người tham gia!")
         return
 
@@ -54,14 +56,11 @@ async def end_giveaway(message_id, channel, winners_count, prize, host_id):
     winner_ids   = random.sample(entries, count)
     winner_mentions = ", ".join(f"<@{uid}>" for uid in winner_ids)
 
-    # Giữ nguyên embed gốc, chỉ disable nút tham gia
-    try:
-        await msg.edit(view=None)
-    except Exception:
-        pass
-
-    # Gửi tin nhắn thông báo winner riêng
-    await channel.send(f"🎊 Chúc mừng {winner_mentions}! Bạn đã thắng **{prize}**! [🔗]({msg.jump_url})")
+    embed = discord.Embed(title="🎉  Giveaway Kết Thúc!", description=f"**Phần thưởng:** {prize}\n**🏆 Winner:** {winner_mentions}", color=0xF1C40F, timestamp=datetime.now(timezone.utc))
+    host  = channel.guild.get_member(host_id)
+    embed.set_footer(text=f"Host: {_uname_plain(host) if host else host_id}")
+    await msg.edit(embed=embed, view=None)
+    await channel.send(f"🎊 Chúc mừng {winner_mentions}! Bạn đã thắng **{prize}**!")
 
     if gw:
         gw["winner_ids"] = winner_ids
@@ -253,7 +252,7 @@ async def _giveaway_timer_task(bot, channel_id: int, message_id: int, winners_co
     gw = active_giveaways.get(message_id)
     if not gw or gw.get("ended"):
         return
-    channel = bot.get_channel(channel_id)
+    channel = await get_or_fetch_channel(bot, channel_id)
     if not channel:
         return
     gw["ended"] = True
@@ -282,7 +281,7 @@ class GiveawayCog(commands.Cog):
             remaining   = end_time - now
 
             if remaining <= 0:
-                channel = self.bot.get_channel(channel_id)
+                channel = await get_or_fetch_channel(self.bot, channel_id)
                 if channel:
                     asyncio.create_task(_giveaway_timer_task(self.bot, channel_id, mid, winners_cnt, 0))
             else:
@@ -309,7 +308,7 @@ class GiveawayCog(commands.Cog):
         gw = active_giveaways.get(mid)
         if not gw: return await interaction.response.send_message("❌ Không tìm thấy giveaway đang chạy.", ephemeral=True)
         await interaction.response.send_message("✅ Đang kết thúc giveaway...", ephemeral=True)
-        channel = self.bot.get_channel(gw["channel_id"])
+        channel = await get_or_fetch_channel(self.bot, gw["channel_id"])
         if channel:
             await end_giveaway(mid, channel, gw["winners"], gw.get("prize", "phần thưởng"), gw.get("host", 0))
 

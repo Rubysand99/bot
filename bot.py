@@ -91,7 +91,8 @@ async def on_ready():
     asyncio.create_task(_backfill_legit())
 
     # Gửi changelog — đọc từ CHANGELOG.md
-    ch = bot.get_channel(CHANGELOG_CHANNEL_ID)
+    from core.data import get_or_fetch_channel
+    ch = await get_or_fetch_channel(bot, CHANGELOG_CHANNEL_ID)
     if ch:
         # Đọc entry mới nhất từ CHANGELOG.md
         changelog_text = ""
@@ -200,7 +201,7 @@ async def _backfill_legit():
     Tin nào khớp +1legit mà chưa có reaction ✅ từ bot → thả reaction lại.
     Không đổi tên kênh (tránh đổi trùng), chỉ đảm bảo reaction không bị thiếu."""
     await asyncio.sleep(3)  # Chờ cache sẵn sàng
-    from core.data import get_cfg_legit_channel
+    from core.data import get_cfg_legit_channel, get_or_fetch_channel
     IGNORED = {628400349979344919}
 
     legit_ch_id = get_cfg_legit_channel()
@@ -208,7 +209,7 @@ async def _backfill_legit():
         print("[BACKFILL] ⚠️ Chưa cài legit channel, bỏ qua.")
         return
 
-    channel = bot.get_channel(legit_ch_id)
+    channel = await get_or_fetch_channel(bot, legit_ch_id)
     if not channel:
         print(f"[BACKFILL] ⚠️ Không tìm thấy channel {legit_ch_id}")
         return

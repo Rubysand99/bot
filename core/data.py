@@ -655,6 +655,19 @@ def fmt_amount(amount: int) -> str:
     if amount >= 1_000:     return f"{amount/1_000:g}k"
     return f"{amount:,}đ"
 
+async def get_or_fetch_channel(bot, channel_id: int):
+    """Lấy channel từ cache, nếu không có thì fetch thẳng từ API Discord.
+    Dùng thay cho bot.get_channel() để hỗ trợ kênh private và kênh mới tạo."""
+    if not channel_id:
+        return None
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception:
+            channel = None
+    return channel
+
 def is_staff_member(member) -> bool:
     import discord
     if member.id in ADMIN_IDS: return True

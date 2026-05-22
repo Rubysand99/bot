@@ -25,10 +25,11 @@ from core.data import (
     get_seller_qr, save_seller_qr, get_all_seller_qr,
     get_seller_category, save_seller_category,
     remove_seller_category, get_all_seller_categories,
+    get_or_fetch_channel,
 )
 from cogs.logger import send_log
 
-BOT_VERSION = "3.5.0"
+BOT_VERSION = "3.3.5"
 
 BUILDER_BASE_ROLE_ID = 1484158340849205308
 
@@ -59,7 +60,7 @@ async def has_ticket(guild, user):
 async def read_counter_from_channel(bot) -> int:
     ch_id = get_cfg_counter_channel()
     if not ch_id: return 0
-    channel = bot.get_channel(ch_id)
+    channel = await get_or_fetch_channel(bot, ch_id)
     if not channel: return 0
     try:
         async for msg in channel.history(limit=1):
@@ -71,7 +72,7 @@ async def read_counter_from_channel(bot) -> int:
 async def write_counter_to_channel(bot, number: int):
     ch_id = get_cfg_counter_channel()
     if not ch_id: return
-    channel = bot.get_channel(ch_id)
+    channel = await get_or_fetch_channel(bot, ch_id)
     if not channel: return
     try:
         await channel.purge(limit=5)
@@ -249,7 +250,7 @@ async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
     if creator:    embed.set_thumbnail(url=creator.display_avatar.url)
     embed.set_footer(text="TuyTam Store • Ticket System")
 
-    transcript_ch = bot_instance.get_channel(TRANSCRIPT_CHANNEL_ID)
+    transcript_ch = await get_or_fetch_channel(bot_instance, TRANSCRIPT_CHANNEL_ID)
     if transcript_ch:
         file2 = discord.File(io.BytesIO(html.encode("utf-8")), filename=f"transcript-{channel.name}.html")
         await transcript_ch.send(embed=embed, file=file2)
@@ -488,8 +489,8 @@ class TicketButtons(View):
 
     @discord.ui.button(label="Hoàn thành đơn", emoji="✅", style=discord.ButtonStyle.green, custom_id="complete_order")
     async def complete_order(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin mới có quyền.", ephemeral=True)
+        if not is_staff_member(interaction.user):
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         await interaction.channel.send(
             f"⚠️ {interaction.user.mention} — hãy dùng lệnh `.done <số tiền>` để hoàn thành đơn.\nVí dụ: `.done 50k`, `.done 1tr5`, `.done 200000`",
@@ -539,7 +540,7 @@ class TicketCog(commands.Cog):
 
     @commands.command(name="done")
     async def done_cmd(self, ctx, amount_str: str = None):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Chỉ admin mới có quyền dùng lệnh này.")
+        if not is_staff_member(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
         if not (ctx.channel.topic and "|" in ctx.channel.topic): return await ctx.reply("❌ Đây không phải kênh ticket.")
         if not amount_str: return await ctx.reply("❌ Thiếu số tiền! Ví dụ: `.done 50k`, `.done 1tr5`")
 
@@ -653,8 +654,8 @@ class TicketCog(commands.Cog):
     @discord.app_commands.command(name="done", description="Hoàn thành đơn hàng trong ticket")
     @discord.app_commands.describe(amount="Số tiền giao dịch, vd: 50k, 1tr5, 200000")
     async def slash_done(self, interaction: discord.Interaction, amount: str):
-        if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin mới có quyền dùng lệnh này.", ephemeral=True)
+        if not is_staff_member(interaction.user):
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         if not (interaction.channel.topic and "|" in interaction.channel.topic):
             return await interaction.response.send_message("❌ Đây không phải kênh ticket.", ephemeral=True)
         parsed = parse_amount(amount)
@@ -822,13 +823,13 @@ class TicketCog(commands.Cog):
     # ══════════════════════════════════════════
     # SELLER: TẠO KÊNH RIÊNG (.mkchannel)
     # ══════════════════════════════════════════
-    @commands.command(name="sellerchannel", aliases=["sch"])
+    @commands.command(name="mkchannel", aliases=["mkch"])
     async def mkchannel_cmd(self, ctx, ch_type: str = None, name: str = None, amount: int = 1):
         """
-        .sellerchannel <loại> <tên> [số lượng]
+        .mkchannel <loại> <tên> [số lượng]
         Loại: text, voice, stage, forum, announce
-        Ví dụ: .sellerchannel text shop 3
-                .sellerchannel voice phòng-chờ
+        Ví dụ: .mkchannel text shop 3
+                .mkchannel voice phòng-chờ
         """
         guild = ctx.guild
 
@@ -857,16 +858,16 @@ class TicketCog(commands.Cog):
             valid = "`, `".join(["text", "voice", "stage", "forum", "announce"])
             return await ctx.reply(
                 f"❌ Thiếu hoặc sai loại kênh!\n"
-                f"Cú pháp: `.sellerchannel <loại> <tên> [số lượng]`\n"
+                f"Cú pháp: `.mkchannel <loại> <tên> [số lượng]`\n"
                 f"Loại hợp lệ: `{valid}`\n"
-                f"Ví dụ: `.sellerchannel text shop 3` hoặc `.sellerchannel voice phòng-chờ`"
+                f"Ví dụ: `.mkchannel text shop 3` hoặc `.mkchannel voice phòng-chờ`"
             )
 
         if not name:
             return await ctx.reply(
                 f"❌ Thiếu tên kênh!\n"
-                f"Cú pháp: `.sellerchannel <loại> <tên> [số lượng]`\n"
-                f"Ví dụ: `.sellerchannel text shop 3`"
+                f"Cú pháp: `.mkchannel <loại> <tên> [số lượng]`\n"
+                f"Ví dụ: `.mkchannel text shop 3`"
             )
 
         resolved_type = _TYPE_MAP[ch_type.lower()]
