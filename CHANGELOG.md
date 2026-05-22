@@ -6,6 +6,51 @@
 
 ---
 
+## 🗂️ Kết Cấu Repo
+
+```
+rudeus-bot/
+│
+├── bot.py                  # Entry point: khởi tạo bot, load cogs, on_ready, on_message
+│                           # Xử lý legit (+1legit) và vouch (done) qua on_message
+│                           # Auto-backfill legit lúc khởi động
+│
+├── CHANGELOG.md            # Lịch sử thay đổi
+├── README.md               # Tài liệu dự án
+├── requirements.txt        # Dependencies (discord.py, motor, fastapi…)
+├── runtime.txt             # Chỉ định Python version cho Railway
+├── .env                    # Biến môi trường (TOKEN, MONGO_URI, ADMIN_IDS) — không commit
+├── nohup.out               # Log runtime — không commit
+│
+├── core/
+│   ├── __init__.py
+│   └── data.py             # MongoDB storage, in-memory cache, toàn bộ helper đọc/ghi
+│                           # get_or_fetch_channel(), parse_amount(), fmt_amount()
+│                           # Config getters/setters (cfg_legit, cfg_ticket_category…)
+│
+├── cogs/
+│   ├── __init__.py
+│   ├── admin.py            # Settings (.st), mod commands, .help, .backfill, slash admin
+│   ├── ticket.py           # Ticket system: panel, views, modals, .done, .sellerchannel
+│   ├── giveaway.py         # Giveaway: /giveaway, /gend, /greroll, /gwlist
+│   ├── balance.py          # Hệ thống balance kênh
+│   ├── ai_chat.py          # AI chat tích hợp kênh
+│   ├── invite.py           # Theo dõi invite, leaderboard
+│   ├── logger.py           # Log sự kiện server
+│   ├── mod.py              # Ban/kick/mute/warn/automod
+│   ├── point.py            # Hệ thống point: redeem, shop, gencode, pointlog
+│   └── minigame.py         # Bầu Cua nhiều người, Búa Kéo Bao, leaderboard
+│
+└── data/
+    └── words_vi.txt        # Từ điển tiếng Việt dùng cho minigame Nối Từ
+```
+
+> **Database:** MongoDB Atlas — collection `tuytam_bot.bot_data` (document `_id: "main"`) + `tuytam_bot.giveaways`
+> **Deploy:** Railway (auto-deploy từ GitHub `main` branch, runtime chỉ định qua `runtime.txt`)
+> **Backend:** Repo riêng trên Render (FastAPI, LootLabs postback → Discord webhook)
+
+---
+
 ## [v3.7.9] — 2026-05-22
 
 ### 🐛 Sửa lỗi
