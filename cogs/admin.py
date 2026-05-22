@@ -21,7 +21,7 @@ from core.data import (
     QR_FILE, get_qr_path, save_qr_path,
 )
 
-BOT_VERSION = "3.7.7"
+BOT_VERSION = "3.7.8"
 BOT_UPDATED = "2026-05-16"
 
 # ══════════════════════════════════════════
@@ -641,7 +641,8 @@ class AdminCog(commands.Cog):
                      "`.addrole @user @role` — Thêm role\n"
                      "`.removerole @user @role` — Xóa role\n"
                      "`.userinfo [@user]` — Thông tin thành viên\n"
-                     "`.serverinfo` — Thông tin server", False),
+                     "`.serverinfo` — Thông tin server\n"
+                     "`.backfill [số]` — Quét lại kênh legit, thả ✅ cho tin bị bỏ sót (mặc định 25)", False),
                     ("🎨 Emoji & Kênh",
                      "`.emoji <url/file> <tên>` — Thêm emoji\n"
                      "`.delemoji <tên>` — Xóa emoji\n"
@@ -706,6 +707,55 @@ class AdminCog(commands.Cog):
         embed.add_field(name="⚙️ Admin",     value="`.st` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel` `.qr`", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
+
+    # ── .backfill ──
+    @commands.command(name="backfill")
+    async def backfill_cmd(self, ctx, limit: int = 25):
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền dùng lệnh này.")
+        from core.data import get_cfg_legit_channel
+        import re as _re
+        IGNORED = {628400349979344919}
+
+        legit_ch_id = get_cfg_legit_channel()
+        if not legit_ch_id:
+            return await ctx.reply("❌ Chưa cài Legit Channel. Vào `.st` để cài trước.")
+
+        channel = self.bot.get_channel(legit_ch_id)
+        if not channel:
+            return await ctx.reply(f"❌ Không tìm thấy kênh legit (ID: `{legit_ch_id}`).")
+
+        limit = max(1, min(limit, 100))
+        msg_status = await ctx.reply(f"🔍 Đang quét **{limit}** tin nhắn gần nhất trong {channel.mention}...")
+
+        fixed = 0
+        scanned = 0
+        try:
+            async for msg in channel.history(limit=limit):
+                if msg.author.bot: continue
+                if msg.author.id in IGNORED: continue
+                if not _re.match(r"^\+1\s*legit\b", msg.content.strip(), _re.IGNORECASE): continue
+                scanned += 1
+                already = any(r.emoji == "✅" and r.me for r in msg.reactions)
+                if not already:
+                    try:
+                        await msg.add_reaction("✅")
+                        fixed += 1
+                    except Exception:
+                        pass
+        except Exception as e:
+            return await msg_status.edit(content=f"❌ Lỗi khi quét: `{e}`")
+
+        embed = discord.Embed(
+            title="✅ Backfill Legit Hoàn Tất",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="🔍 Quét", value=f"**{limit}** tin nhắn", inline=True)
+        embed.add_field(name="📝 Khớp +1legit", value=f"**{scanned}** tin", inline=True)
+        embed.add_field(name="✅ Đã thả reaction", value=f"**{fixed}** tin bị bỏ sót", inline=True)
+        embed.add_field(name="📌 Kênh", value=channel.mention, inline=False)
+        await msg_status.edit(content=None, embed=embed)
 
     # ── PREFIX commands cho các slash ──
     @commands.command(name="ping")

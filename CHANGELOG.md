@@ -6,6 +6,14 @@
 
 ---
 
+## [v3.7.8] — 2026-05-22
+
+### ✨ Thêm mới
+- `cogs/admin.py` — Lệnh `.backfill [số]` cho admin: quét lại kênh legit, thả `✅` cho các tin nhắn `+1legit` bị bỏ sót lúc bot offline (mặc định 25, tối đa 100 tin)
+- `BOT_VERSION = "3.7.8"`
+
+---
+
 ## [v3.7.7] — 2026-05-22
 
 ### ✨ Thêm mới
