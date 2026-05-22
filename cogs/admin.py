@@ -21,7 +21,7 @@ from core.data import (
     QR_FILE, get_qr_path, save_qr_path, get_or_fetch_channel,
 )
 
-BOT_VERSION = "3.9.0"
+BOT_VERSION = "3.9.1"
 BOT_UPDATED = "2026-05-23"
 
 # ══════════════════════════════════════════
@@ -464,6 +464,24 @@ class SetupChannelView(View):
         v = View(timeout=60); v.add_item(_CloneChannelSelect(opts))
         await interaction.response.send_message("📋 Chọn kênh cần clone:", view=v, ephemeral=True)
 
+    @discord.ui.button(label="🌐 Font tất cả kênh", style=discord.ButtonStyle.primary, row=2)
+    async def font_all(self, interaction, _):
+        current_font = get_cfg_font()
+        embed = discord.Embed(
+            title="🌐 Đổi Font Tất Cả Kênh & Category",
+            description=(
+                f"Font hiện tại của server: **{FONT_LABELS.get(current_font, current_font)}**\n\n"
+                "⚠️ Thao tác này sẽ đổi tên **toàn bộ kênh và category** trong server.\n"
+                "Discord rate-limit ~2 request/giây — server lớn có thể mất vài phút.\n\n"
+                "Chọn font muốn áp dụng:"
+            ),
+            color=0xFEE75C,
+        )
+        font_opts = [discord.SelectOption(label=lbl[:100], value=key) for key, lbl in FONT_LABELS.items()]
+        v = View(timeout=120)
+        v.add_item(_FontAllSelect(font_opts))
+        await interaction.response.send_message(embed=embed, view=v, ephemeral=True)
+
 
 class CreateChannelModal(discord.ui.Modal, title="➕ Tạo Kênh Mới"):
     name_input = TextInput(label="Tên kênh", placeholder="vd: 💬・general", max_length=100)
@@ -601,6 +619,59 @@ class _CloneChannelSelect(Select):
             await interaction.response.send_message("❌ Bot thiếu quyền.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+class _FontAllSelect(Select):
+    """Chọn font → áp dụng cho toàn bộ kênh + category trong server."""
+    def __init__(self, opts):
+        super().__init__(placeholder="Chọn font muốn áp dụng cho tất cả kênh…", options=opts)
+
+    async def callback(self, interaction: discord.Interaction):
+        font = self.values[0]
+        guild = interaction.guild
+
+        # Lưu font mới vào config
+        set_cfg_font(font)
+
+        # Đếm trước
+        all_channels = [ch for ch in guild.channels]
+        total = len(all_channels)
+
+        await interaction.response.send_message(
+            f"⏳ Đang đổi font **{FONT_LABELS.get(font, font)}** cho **{total}** kênh & category…\n"
+            "Có thể mất vài phút do rate-limit Discord.",
+            ephemeral=True,
+        )
+
+        ok = 0
+        failed = 0
+        # Category trước, sau đó kênh thường (tránh rename trùng trong lúc chạy)
+        ordered = sorted(all_channels, key=lambda c: (0 if isinstance(c, discord.CategoryChannel) else 1, c.position))
+        for ch in ordered:
+            parts = _detect_channel_parts(ch.name)
+            new_name = _rebuild_name(parts, parts["base_text"], font)
+            if new_name == ch.name:
+                ok += 1
+                continue
+            try:
+                await ch.edit(name=new_name, reason=f"Font all → {font} bởi {interaction.user}")
+                ok += 1
+            except discord.Forbidden:
+                failed += 1
+            except Exception:
+                failed += 1
+            await asyncio.sleep(0.55)  # ~1.8 req/s, dưới ngưỡng rate-limit Discord
+
+        embed = discord.Embed(
+            title="✅ Đổi Font Hoàn Tất",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="Font mới",      value=FONT_LABELS.get(font, font), inline=False)
+        embed.add_field(name="✅ Thành công", value=f"**{ok}** kênh",            inline=True)
+        embed.add_field(name="❌ Thất bại",   value=f"**{failed}** kênh",        inline=True)
+        embed.set_footer(text=f"Thực hiện bởi {interaction.user}")
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 # ══════════════════════════════════════════

@@ -51,6 +51,20 @@ rudeus-bot/
 
 ---
 
+## [v3.9.1] — 2026-05-23
+
+### ✨ Thêm mới
+- `cogs/admin.py` — Nút **🌐 Font tất cả kênh** trong menu `.setup → 📋 Kênh`
+  - Hiển thị font đang dùng hiện tại của server
+  - Dropdown chọn font mới (bold / bold_italic / sans_bold / script / double / normal)
+  - Áp dụng font cho **toàn bộ kênh và category** trong server (giữ nguyên icon + separator)
+  - Lưu font mới vào `cfg_font` (dùng cho `.mkchannel`, `.rename`, tạo kênh mới)
+  - Rate-limit safe: delay 0.55s/request (~1.8 req/s), dưới ngưỡng Discord
+  - Kết quả: embed tổng kết số kênh thành công / thất bại
+- `BOT_VERSION = "3.9.1"`
+
+---
+
 ## [v3.9.0] — 2026-05-23
 
 ### ✨ Thêm mới
