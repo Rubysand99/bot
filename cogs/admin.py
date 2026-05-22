@@ -21,8 +21,8 @@ from core.data import (
     QR_FILE, get_qr_path, save_qr_path, get_or_fetch_channel,
 )
 
-BOT_VERSION = "3.7.9"
-BOT_UPDATED = "2026-05-16"
+BOT_VERSION = "3.9.0"
+BOT_UPDATED = "2026-05-23"
 
 # ══════════════════════════════════════════
 # FONT UTILS
@@ -313,6 +313,628 @@ class SetQRModal(Modal):
             await interaction.followup.send("⏰ Hết thời gian!", ephemeral=True)
 
 # ══════════════════════════════════════════
+# SETUP — MAIN MENU
+# ══════════════════════════════════════════
+class SetupMainView(View):
+    def __init__(self, ctx):
+        super().__init__(timeout=180)
+        self.ctx = ctx
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="📋 Kênh", style=discord.ButtonStyle.primary, row=0)
+    async def btn_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=_setup_channel_embed(),
+            view=SetupChannelView(interaction),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="🗂️ Danh mục", style=discord.ButtonStyle.primary, row=0)
+    async def btn_category(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=_setup_category_embed(),
+            view=SetupCategoryView(interaction),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="🏷️ Role", style=discord.ButtonStyle.primary, row=0)
+    async def btn_role(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=_setup_role_embed(),
+            view=SetupRoleView(interaction),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="⚙️ Server", style=discord.ButtonStyle.success, row=0)
+    async def btn_server(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=_setup_server_embed(interaction.guild),
+            view=SetupServerView(interaction),
+            ephemeral=True,
+        )
+
+
+# ─── helpers ───────────────────────────────
+
+def _setup_channel_embed() -> discord.Embed:
+    return discord.Embed(
+        title="📋 Quản Lý Kênh",
+        description=(
+            "**Tạo kênh** — text / voice / stage / forum (public hoặc private)\n"
+            "**Xoá kênh** — chọn kênh cần xoá\n"
+            "**Đổi tên** — đổi tên kênh bất kỳ\n"
+            "**Font tên** — áp dụng Unicode font (bold, italic, gothic…)\n"
+            "**Clone kênh** — tạo bản sao với cùng cấu hình quyền"
+        ),
+        color=0x5865F2,
+    )
+
+def _setup_category_embed() -> discord.Embed:
+    return discord.Embed(
+        title="🗂️ Quản Lý Danh Mục",
+        description=(
+            "**Tạo category** — đặt tên, tuỳ chọn font\n"
+            "**Xoá category** — chọn từ danh sách\n"
+            "**Đổi tên / Font** — đổi tên hoặc font của category\n"
+            "**Di chuyển kênh** — chuyển kênh vào category khác"
+        ),
+        color=0x5865F2,
+    )
+
+def _setup_role_embed() -> discord.Embed:
+    return discord.Embed(
+        title="🏷️ Quản Lý Role",
+        description=(
+            "**Tạo role** — chọn màu, hoist, mentionable\n"
+            "**Xoá role** — chọn từ danh sách\n"
+            "**Gán / Gỡ role** — cho một thành viên cụ thể"
+        ),
+        color=0x5865F2,
+    )
+
+def _setup_server_embed(guild: discord.Guild) -> discord.Embed:
+    data = load_data()
+    def ch(k): c = data.get(k); return f"<#{c}>" if c else "Chưa cài"
+    def ro(k): r = data.get(k); return f"<@&{r}>" if r else "Chưa cài"
+    embed = discord.Embed(title="⚙️ Setup Server", color=0x5865F2)
+    embed.add_field(name="👋 Welcome Channel",  value=ch("cfg_welcome_channel"),  inline=True)
+    embed.add_field(name="👋 Goodbye Channel",  value=ch("cfg_goodbye_channel"),  inline=True)
+    embed.add_field(name="📋 Log Channel",       value=ch("cfg_log_rudy"),          inline=True)
+    embed.add_field(name="🎭 Auto-role Join",    value=ro("cfg_autorole_join"),     inline=True)
+    embed.add_field(name="🔤 Prefix Bot",        value=f"`{data.get('cfg_prefix', '.')}`", inline=True)
+    return embed
+
+
+# ══════════════════════════════════════════
+# SETUP — CHANNEL
+# ══════════════════════════════════════════
+_CHANNEL_TYPE_MAP = {
+    "text":  (discord.ChannelType.text,  "📝"),
+    "voice": (discord.ChannelType.voice, "🔊"),
+    "stage": (discord.ChannelType.stage_voice, "🎙️"),
+    "forum": (discord.ChannelType.forum, "💬"),
+}
+
+class SetupChannelView(View):
+    def __init__(self, src_interaction):
+        super().__init__(timeout=180)
+        self.src = src_interaction
+
+    @discord.ui.button(label="➕ Tạo kênh",   style=discord.ButtonStyle.success,   row=0)
+    async def create(self, interaction, _):  await interaction.response.send_modal(CreateChannelModal())
+
+    @discord.ui.button(label="🗑️ Xoá kênh",  style=discord.ButtonStyle.danger,    row=0)
+    async def delete(self, interaction, _):
+        opts = [discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id))
+                for ch in sorted(interaction.guild.channels, key=lambda c: c.position)
+                if not isinstance(ch, discord.CategoryChannel)][:25]
+        if not opts: return await interaction.response.send_message("❌ Không có kênh nào.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_DeleteChannelSelect(opts))
+        await interaction.response.send_message("🗑️ Chọn kênh cần xoá:", view=v, ephemeral=True)
+
+    @discord.ui.button(label="✏️ Đổi tên",    style=discord.ButtonStyle.secondary, row=0)
+    async def rename(self, interaction, _):
+        opts = [discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id))
+                for ch in sorted(interaction.guild.channels, key=lambda c: c.position)
+                if not isinstance(ch, discord.CategoryChannel)][:25]
+        if not opts: return await interaction.response.send_message("❌ Không có kênh nào.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_RenameChannelSelect(opts))
+        await interaction.response.send_message("✏️ Chọn kênh cần đổi tên:", view=v, ephemeral=True)
+
+    @discord.ui.button(label="🔤 Font tên",   style=discord.ButtonStyle.secondary, row=1)
+    async def font(self, interaction, _):
+        opts = [discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id))
+                for ch in sorted(interaction.guild.channels, key=lambda c: c.position)
+                if not isinstance(ch, discord.CategoryChannel)][:25]
+        if not opts: return await interaction.response.send_message("❌ Không có kênh nào.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_FontChannelSelect(opts))
+        await interaction.response.send_message("🔤 Chọn kênh cần đổi font:", view=v, ephemeral=True)
+
+    @discord.ui.button(label="📋 Clone kênh", style=discord.ButtonStyle.secondary, row=1)
+    async def clone(self, interaction, _):
+        opts = [discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id))
+                for ch in sorted(interaction.guild.channels, key=lambda c: c.position)
+                if not isinstance(ch, discord.CategoryChannel)][:25]
+        if not opts: return await interaction.response.send_message("❌ Không có kênh nào.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_CloneChannelSelect(opts))
+        await interaction.response.send_message("📋 Chọn kênh cần clone:", view=v, ephemeral=True)
+
+
+class CreateChannelModal(discord.ui.Modal, title="➕ Tạo Kênh Mới"):
+    name_input = TextInput(label="Tên kênh", placeholder="vd: 💬・general", max_length=100)
+    type_input = TextInput(label="Loại (text/voice/stage/forum)", placeholder="text", default="text", max_length=10)
+    private_input = TextInput(label="Private? (yes/no)", placeholder="no", default="no", max_length=3)
+    category_input = TextInput(label="Tên hoặc ID category (để trống = không có)", required=False, max_length=100)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        ch_type_key = self.type_input.value.strip().lower()
+        if ch_type_key not in _CHANNEL_TYPE_MAP:
+            return await interaction.response.send_message(
+                "❌ Loại kênh không hợp lệ. Dùng: `text`, `voice`, `stage`, `forum`.", ephemeral=True
+            )
+        _, icon = _CHANNEL_TYPE_MAP[ch_type_key]
+        is_private = self.private_input.value.strip().lower() in ("yes", "y", "true", "1")
+        cat_input   = self.category_input.value.strip() if self.category_input.value else ""
+        category    = None
+        if cat_input:
+            category = discord.utils.find(
+                lambda c: c.name.lower() == cat_input.lower() or str(c.id) == cat_input,
+                interaction.guild.categories,
+            )
+
+        font  = get_cfg_font()
+        parts = _detect_channel_parts(self.name_input.value.strip())
+        name  = _rebuild_name(parts, parts["base_text"], font)
+
+        overwrites = {}
+        if is_private:
+            overwrites[interaction.guild.default_role] = discord.PermissionOverwrite(view_channel=False)
+            overwrites[interaction.guild.me]           = discord.PermissionOverwrite(view_channel=True)
+
+        try:
+            if ch_type_key == "text":
+                ch = await interaction.guild.create_text_channel(name=name, category=category, overwrites=overwrites, reason=f"Setup bởi {interaction.user}")
+            elif ch_type_key == "voice":
+                ch = await interaction.guild.create_voice_channel(name=name, category=category, overwrites=overwrites, reason=f"Setup bởi {interaction.user}")
+            elif ch_type_key == "stage":
+                ch = await interaction.guild.create_stage_channel(name=name, category=category, overwrites=overwrites, reason=f"Setup bởi {interaction.user}")
+            else:  # forum
+                ch = await interaction.guild.create_forum(name=name, category=category, reason=f"Setup bởi {interaction.user}")
+            embed = discord.Embed(title=f"{icon} Đã tạo kênh!", color=0x57F287)
+            embed.add_field(name="Kênh",    value=ch.mention,    inline=True)
+            embed.add_field(name="Loại",    value=ch_type_key,   inline=True)
+            embed.add_field(name="Private", value="✅" if is_private else "❌", inline=True)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền tạo kênh.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Lỗi: {e}", ephemeral=True)
+
+
+class _DeleteChannelSelect(Select):
+    def __init__(self, opts): super().__init__(placeholder="Chọn kênh cần xoá…", options=opts)
+    async def callback(self, interaction: discord.Interaction):
+        ch = interaction.guild.get_channel(int(self.values[0]))
+        if not ch: return await interaction.response.send_message("❌ Không tìm thấy kênh.", ephemeral=True)
+        name = ch.name
+        try:
+            await ch.delete(reason=f"Setup xoá bởi {interaction.user}")
+            await interaction.response.send_message(f"🗑️ Đã xoá kênh `#{name}`.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền xoá kênh.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+class _RenameChannelSelect(Select):
+    def __init__(self, opts): super().__init__(placeholder="Chọn kênh cần đổi tên…", options=opts)
+    async def callback(self, interaction: discord.Interaction):
+        ch = interaction.guild.get_channel(int(self.values[0]))
+        if not ch: return await interaction.response.send_message("❌ Không tìm thấy kênh.", ephemeral=True)
+        await interaction.response.send_modal(_RenameChannelModal(ch))
+
+class _RenameChannelModal(discord.ui.Modal):
+    def __init__(self, ch):
+        super().__init__(title=f"✏️ Đổi tên: #{ch.name[:40]}")
+        self.ch = ch
+        self.new_name = TextInput(label="Tên mới", placeholder="Nhập tên mới…", max_length=100)
+        self.add_item(self.new_name)
+    async def on_submit(self, interaction: discord.Interaction):
+        parts = _detect_channel_parts(self.ch.name)
+        font  = get_cfg_font()
+        final = _rebuild_name(parts, self.new_name.value.strip(), font)
+        old   = self.ch.name
+        try:
+            await self.ch.edit(name=final, reason=f"Setup rename bởi {interaction.user}")
+            await interaction.response.send_message(f"✅ `#{old}` → `#{final}`", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+class _FontChannelSelect(Select):
+    def __init__(self, opts): super().__init__(placeholder="Chọn kênh cần đổi font…", options=opts)
+    async def callback(self, interaction: discord.Interaction):
+        ch = interaction.guild.get_channel(int(self.values[0]))
+        if not ch: return await interaction.response.send_message("❌ Không tìm thấy kênh.", ephemeral=True)
+        font_opts = [discord.SelectOption(label=lbl[:100], value=key) for key, lbl in FONT_LABELS.items()]
+        v = View(timeout=60); v.add_item(_ApplyFontChannelSelect(ch, font_opts))
+        await interaction.response.send_message(f"🔤 Chọn font cho `#{ch.name}`:", view=v, ephemeral=True)
+
+class _ApplyFontChannelSelect(Select):
+    def __init__(self, ch, opts):
+        super().__init__(placeholder="Chọn font…", options=opts)
+        self.ch = ch
+    async def callback(self, interaction: discord.Interaction):
+        font  = self.values[0]
+        parts = _detect_channel_parts(self.ch.name)
+        final = _rebuild_name(parts, parts["base_text"], font)
+        old   = self.ch.name
+        try:
+            await self.ch.edit(name=final, reason=f"Setup font bởi {interaction.user}")
+            await interaction.response.send_message(
+                f"✅ Font `{FONT_LABELS.get(font, font)}` → `#{old}` đã đổi thành `#{final}`", ephemeral=True
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+class _CloneChannelSelect(Select):
+    def __init__(self, opts): super().__init__(placeholder="Chọn kênh cần clone…", options=opts)
+    async def callback(self, interaction: discord.Interaction):
+        ch = interaction.guild.get_channel(int(self.values[0]))
+        if not ch: return await interaction.response.send_message("❌ Không tìm thấy kênh.", ephemeral=True)
+        try:
+            cloned = await ch.clone(reason=f"Setup clone bởi {interaction.user}")
+            await interaction.response.send_message(
+                f"📋 Đã clone `#{ch.name}` → {cloned.mention}", ephemeral=True
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+# ══════════════════════════════════════════
+# SETUP — CATEGORY
+# ══════════════════════════════════════════
+class SetupCategoryView(View):
+    def __init__(self, src):
+        super().__init__(timeout=180)
+        self.src = src
+
+    @discord.ui.button(label="➕ Tạo category",   style=discord.ButtonStyle.success,   row=0)
+    async def create(self, interaction, _): await interaction.response.send_modal(CreateCategoryModal())
+
+    @discord.ui.button(label="🗑️ Xoá category",  style=discord.ButtonStyle.danger,    row=0)
+    async def delete(self, interaction, _):
+        opts = [discord.SelectOption(label=c.name[:100], value=str(c.id)) for c in interaction.guild.categories][:25]
+        if not opts: return await interaction.response.send_message("❌ Không có category nào.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_DeleteCategorySelect(opts))
+        await interaction.response.send_message("🗑️ Chọn category cần xoá:", view=v, ephemeral=True)
+
+    @discord.ui.button(label="✏️ Đổi tên / Font", style=discord.ButtonStyle.secondary, row=0)
+    async def rename(self, interaction, _):
+        opts = [discord.SelectOption(label=c.name[:100], value=str(c.id)) for c in interaction.guild.categories][:25]
+        if not opts: return await interaction.response.send_message("❌ Không có category nào.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_RenameCategorySelect(opts))
+        await interaction.response.send_message("✏️ Chọn category cần đổi tên:", view=v, ephemeral=True)
+
+    @discord.ui.button(label="📂 Di chuyển kênh", style=discord.ButtonStyle.secondary, row=1)
+    async def move(self, interaction, _):
+        ch_opts = [discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id))
+                   for ch in sorted(interaction.guild.channels, key=lambda c: c.position)
+                   if not isinstance(ch, discord.CategoryChannel)][:25]
+        if not ch_opts: return await interaction.response.send_message("❌ Không có kênh nào.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_MoveChannelSelect(ch_opts))
+        await interaction.response.send_message("📂 Chọn kênh cần di chuyển:", view=v, ephemeral=True)
+
+
+class CreateCategoryModal(discord.ui.Modal, title="➕ Tạo Category"):
+    name_input = TextInput(label="Tên category", placeholder="vd: 📁 GENERAL", max_length=100)
+    font_input = TextInput(label="Font (normal/bold/italic/sans_bold/script/double)", default="normal", max_length=20)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        font  = self.font_input.value.strip().lower()
+        if font not in _FONT_MAPS: font = "normal"
+        parts = _detect_channel_parts(self.name_input.value.strip())
+        name  = _rebuild_name(parts, parts["base_text"], font)
+        try:
+            cat = await interaction.guild.create_category(name=name, reason=f"Setup bởi {interaction.user}")
+            await interaction.response.send_message(f"📂 Đã tạo category **{cat.name}**!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+class _DeleteCategorySelect(Select):
+    def __init__(self, opts): super().__init__(placeholder="Chọn category cần xoá…", options=opts)
+    async def callback(self, interaction: discord.Interaction):
+        cat = interaction.guild.get_channel(int(self.values[0]))
+        if not cat: return await interaction.response.send_message("❌ Không tìm thấy.", ephemeral=True)
+        name = cat.name
+        try:
+            await cat.delete(reason=f"Setup xoá category bởi {interaction.user}")
+            await interaction.response.send_message(f"🗑️ Đã xoá category `{name}`.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+class _RenameCategorySelect(Select):
+    def __init__(self, opts): super().__init__(placeholder="Chọn category cần đổi tên…", options=opts)
+    async def callback(self, interaction: discord.Interaction):
+        cat = interaction.guild.get_channel(int(self.values[0]))
+        if not cat: return await interaction.response.send_message("❌ Không tìm thấy.", ephemeral=True)
+        await interaction.response.send_modal(_RenameCategoryModal(cat))
+
+class _RenameCategoryModal(discord.ui.Modal):
+    def __init__(self, cat):
+        super().__init__(title=f"✏️ Đổi tên: {cat.name[:40]}")
+        self.cat = cat
+        self.new_name = TextInput(label="Tên mới", max_length=100)
+        self.font_input = TextInput(label="Font (normal/bold/italic/sans_bold/script/double)", default="normal", max_length=20)
+        self.add_item(self.new_name); self.add_item(self.font_input)
+    async def on_submit(self, interaction: discord.Interaction):
+        font  = self.font_input.value.strip().lower()
+        if font not in _FONT_MAPS: font = "normal"
+        parts = _detect_channel_parts(self.cat.name)
+        final = _rebuild_name(parts, self.new_name.value.strip(), font)
+        old   = self.cat.name
+        try:
+            await self.cat.edit(name=final, reason=f"Setup rename category bởi {interaction.user}")
+            await interaction.response.send_message(f"✅ `{old}` → `{final}`", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+class _MoveChannelSelect(Select):
+    def __init__(self, ch_opts): super().__init__(placeholder="Chọn kênh cần di chuyển…", options=ch_opts)
+    async def callback(self, interaction: discord.Interaction):
+        ch = interaction.guild.get_channel(int(self.values[0]))
+        if not ch: return await interaction.response.send_message("❌ Không tìm thấy kênh.", ephemeral=True)
+        cat_opts = [discord.SelectOption(label=c.name[:100], value=str(c.id)) for c in interaction.guild.categories][:25]
+        cat_opts.insert(0, discord.SelectOption(label="(Không có category)", value="0"))
+        v = View(timeout=60); v.add_item(_MoveToCategorySelect(ch, cat_opts))
+        await interaction.response.send_message(f"📂 Chọn category đích cho `#{ch.name}`:", view=v, ephemeral=True)
+
+class _MoveToCategorySelect(Select):
+    def __init__(self, ch, opts):
+        super().__init__(placeholder="Chọn category đích…", options=opts)
+        self.ch = ch
+    async def callback(self, interaction: discord.Interaction):
+        val = int(self.values[0])
+        cat = interaction.guild.get_channel(val) if val != 0 else None
+        try:
+            await self.ch.edit(category=cat, reason=f"Setup move bởi {interaction.user}")
+            dest = cat.name if cat else "không có category"
+            await interaction.response.send_message(
+                f"📂 Đã di chuyển `#{self.ch.name}` → `{dest}`", ephemeral=True
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+# ══════════════════════════════════════════
+# SETUP — ROLE
+# ══════════════════════════════════════════
+class SetupRoleView(View):
+    def __init__(self, src):
+        super().__init__(timeout=180)
+        self.src = src
+
+    @discord.ui.button(label="➕ Tạo role",   style=discord.ButtonStyle.success,   row=0)
+    async def create(self, interaction, _): await interaction.response.send_modal(CreateRoleModal())
+
+    @discord.ui.button(label="🗑️ Xoá role",  style=discord.ButtonStyle.danger,    row=0)
+    async def delete(self, interaction, _):
+        opts = [discord.SelectOption(label=r.name[:100], value=str(r.id))
+                for r in sorted(interaction.guild.roles, key=lambda r: -r.position)
+                if r.name != "@everyone"][:25]
+        if not opts: return await interaction.response.send_message("❌ Không có role.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_DeleteRoleSelect(opts))
+        await interaction.response.send_message("🗑️ Chọn role cần xoá:", view=v, ephemeral=True)
+
+    @discord.ui.button(label="✅ Gán role",   style=discord.ButtonStyle.secondary, row=0)
+    async def give(self, interaction, _): await interaction.response.send_modal(AssignRoleModal(action="give"))
+
+    @discord.ui.button(label="❌ Gỡ role",   style=discord.ButtonStyle.secondary, row=1)
+    async def take(self, interaction, _): await interaction.response.send_modal(AssignRoleModal(action="take"))
+
+
+class CreateRoleModal(discord.ui.Modal, title="➕ Tạo Role Mới"):
+    name_input    = TextInput(label="Tên role", max_length=100)
+    color_input   = TextInput(label="Màu hex (vd: #FF5733, để trống = mặc định)", required=False, max_length=7)
+    hoist_input   = TextInput(label="Hiển thị riêng? (yes/no)", default="no",  max_length=3)
+    mention_input = TextInput(label="Có thể @mention? (yes/no)",  default="no",  max_length=3)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        color = discord.Color.default()
+        if self.color_input.value.strip():
+            try: color = discord.Color(int(self.color_input.value.strip().lstrip("#"), 16))
+            except: pass
+        hoist       = self.hoist_input.value.strip().lower() in ("yes", "y", "true", "1")
+        mentionable = self.mention_input.value.strip().lower() in ("yes", "y", "true", "1")
+        try:
+            role = await interaction.guild.create_role(
+                name=self.name_input.value.strip(),
+                color=color, hoist=hoist, mentionable=mentionable,
+                reason=f"Setup tạo role bởi {interaction.user}",
+            )
+            embed = discord.Embed(title="✅ Đã tạo role!", color=role.color)
+            embed.add_field(name="Role",      value=role.mention,          inline=True)
+            embed.add_field(name="Màu",       value=str(role.color),       inline=True)
+            embed.add_field(name="Hoist",     value="✅" if hoist else "❌", inline=True)
+            embed.add_field(name="Mentionable", value="✅" if mentionable else "❌", inline=True)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền tạo role.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+class _DeleteRoleSelect(Select):
+    def __init__(self, opts): super().__init__(placeholder="Chọn role cần xoá…", options=opts)
+    async def callback(self, interaction: discord.Interaction):
+        role = interaction.guild.get_role(int(self.values[0]))
+        if not role: return await interaction.response.send_message("❌ Không tìm thấy role.", ephemeral=True)
+        name = role.name
+        if role >= interaction.guild.me.top_role:
+            return await interaction.response.send_message("❌ Role này cao hơn hoặc bằng role của bot.", ephemeral=True)
+        try:
+            await role.delete(reason=f"Setup xoá role bởi {interaction.user}")
+            await interaction.response.send_message(f"🗑️ Đã xoá role `{name}`.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+class AssignRoleModal(discord.ui.Modal):
+    member_input = TextInput(label="User ID hoặc mention (@user)", max_length=30)
+    role_input   = TextInput(label="Role ID hoặc tên role",        max_length=100)
+
+    def __init__(self, action: str):
+        self.action = action
+        super().__init__(title="✅ Gán Role" if action == "give" else "❌ Gỡ Role")
+        self.add_item(self.member_input)
+        self.add_item(self.role_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        # Resolve member
+        raw_m = self.member_input.value.strip().lstrip("<@!").rstrip(">")
+        try: member = guild.get_member(int(raw_m)) or await guild.fetch_member(int(raw_m))
+        except: member = None
+        if not member:
+            return await interaction.response.send_message(f"❌ Không tìm thấy member `{self.member_input.value}`.", ephemeral=True)
+        # Resolve role
+        raw_r = self.role_input.value.strip()
+        role = None
+        try: role = guild.get_role(int(raw_r))
+        except ValueError:
+            role = discord.utils.find(lambda r: r.name.lower() == raw_r.lower(), guild.roles)
+        if not role:
+            return await interaction.response.send_message(f"❌ Không tìm thấy role `{raw_r}`.", ephemeral=True)
+        if role >= guild.me.top_role:
+            return await interaction.response.send_message("❌ Role này cao hơn hoặc bằng role của bot.", ephemeral=True)
+        try:
+            if self.action == "give":
+                await member.add_roles(role, reason=f"Setup gán role bởi {interaction.user}")
+                await interaction.response.send_message(
+                    f"✅ Đã gán {role.mention} cho {member.mention}.", ephemeral=True
+                )
+            else:
+                await member.remove_roles(role, reason=f"Setup gỡ role bởi {interaction.user}")
+                await interaction.response.send_message(
+                    f"✅ Đã gỡ {role.mention} khỏi {member.mention}.", ephemeral=True
+                )
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot thiếu quyền.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+
+
+# ══════════════════════════════════════════
+# SETUP — SERVER
+# ══════════════════════════════════════════
+class SetupServerView(View):
+    def __init__(self, src):
+        super().__init__(timeout=180)
+        self.src = src
+
+    def _ch_select(self, guild, placeholder):
+        return [discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id))
+                for ch in sorted(guild.text_channels, key=lambda c: c.position)][:25]
+
+    def _role_select(self, guild):
+        return [discord.SelectOption(label=r.name[:100], value=str(r.id))
+                for r in sorted(guild.roles, key=lambda r: -r.position) if r.name != "@everyone"][:25]
+
+    @discord.ui.button(label="👋 Welcome Channel", style=discord.ButtonStyle.secondary, row=0)
+    async def welcome(self, interaction, _):
+        opts = self._ch_select(interaction.guild, "Welcome")
+        if not opts: return await interaction.response.send_message("❌ Không có kênh.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_ServerChannelSelect("cfg_welcome_channel", "Welcome Channel", opts))
+        await interaction.response.send_message("👋 Chọn kênh **Welcome**:", view=v, ephemeral=True)
+
+    @discord.ui.button(label="👋 Goodbye Channel", style=discord.ButtonStyle.secondary, row=0)
+    async def goodbye(self, interaction, _):
+        opts = self._ch_select(interaction.guild, "Goodbye")
+        if not opts: return await interaction.response.send_message("❌ Không có kênh.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_ServerChannelSelect("cfg_goodbye_channel", "Goodbye Channel", opts))
+        await interaction.response.send_message("👋 Chọn kênh **Goodbye**:", view=v, ephemeral=True)
+
+    @discord.ui.button(label="📋 Log Channel", style=discord.ButtonStyle.secondary, row=0)
+    async def log(self, interaction, _):
+        opts = self._ch_select(interaction.guild, "Log")
+        if not opts: return await interaction.response.send_message("❌ Không có kênh.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_ServerChannelSelect("cfg_log_rudy", "Log Channel", opts))
+        await interaction.response.send_message("📋 Chọn kênh **Log**:", view=v, ephemeral=True)
+
+    @discord.ui.button(label="🎭 Auto-role Join", style=discord.ButtonStyle.secondary, row=1)
+    async def autorole(self, interaction, _):
+        opts = self._role_select(interaction.guild)
+        if not opts: return await interaction.response.send_message("❌ Không có role.", ephemeral=True)
+        v = View(timeout=60); v.add_item(_ServerRoleSelect("cfg_autorole_join", "Auto-role khi Join", opts))
+        await interaction.response.send_message("🎭 Chọn role **tự động gán** khi member join:", view=v, ephemeral=True)
+
+    @discord.ui.button(label="🔤 Đặt Prefix Bot", style=discord.ButtonStyle.primary, row=1)
+    async def prefix(self, interaction, _): await interaction.response.send_modal(SetPrefixModal())
+
+    @discord.ui.button(label="👁️ Xem trạng thái", style=discord.ButtonStyle.blurple, row=2)
+    async def view_status(self, interaction, _):
+        await interaction.response.send_message(
+            embed=_setup_server_embed(interaction.guild), ephemeral=True
+        )
+
+
+class _ServerChannelSelect(Select):
+    def __init__(self, cfg_key, title, opts):
+        super().__init__(placeholder=f"Chọn kênh cho {title}…", options=opts)
+        self.cfg_key = cfg_key; self.title = title
+    async def callback(self, interaction: discord.Interaction):
+        ch_id = int(self.values[0])
+        save_cfg(self.cfg_key, ch_id)
+        await interaction.response.send_message(
+            f"✅ Đã cài **{self.title}** → <#{ch_id}>", ephemeral=True
+        )
+
+class _ServerRoleSelect(Select):
+    def __init__(self, cfg_key, title, opts):
+        super().__init__(placeholder=f"Chọn role cho {title}…", options=opts)
+        self.cfg_key = cfg_key; self.title = title
+    async def callback(self, interaction: discord.Interaction):
+        role_id = int(self.values[0])
+        save_cfg(self.cfg_key, role_id)
+        await interaction.response.send_message(
+            f"✅ Đã cài **{self.title}** → <@&{role_id}>", ephemeral=True
+        )
+
+class SetPrefixModal(discord.ui.Modal, title="🔤 Đặt Prefix Bot"):
+    prefix_input = TextInput(label="Prefix mới", placeholder="vd: ! hoặc ? hoặc .", max_length=5)
+    async def on_submit(self, interaction: discord.Interaction):
+        prefix = self.prefix_input.value.strip()
+        if not prefix: return await interaction.response.send_message("❌ Prefix không được để trống.", ephemeral=True)
+        save_cfg("cfg_prefix", prefix)
+        await interaction.response.send_message(f"✅ Prefix bot đã đổi thành `{prefix}`.", ephemeral=True)
+
+
+# ══════════════════════════════════════════
 # COG
 # ══════════════════════════════════════════
 class AdminCog(commands.Cog):
@@ -489,6 +1111,27 @@ class AdminCog(commands.Cog):
         except discord.Forbidden: await ctx.reply("❌ Bot thiếu quyền tạo kênh.")
         except Exception as e: await ctx.reply(f"❌ Lỗi: {e}")
 
+    # ── .setup ──
+    @commands.command(name="setup", aliases=["sv_setup", "serversetup"])
+    async def setup_cmd(self, ctx):
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền dùng lệnh này.")
+        embed = discord.Embed(
+            title="🔧  Setup Server — TuyTam Bot",
+            description=(
+                "Chọn nhóm chức năng bạn muốn thiết lập.\n"
+                "Dùng các nút bên dưới để điều hướng."
+            ),
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="📋 Quản lý kênh",    value="Tạo / Xoá / Đổi tên / Font / Clone kênh", inline=True)
+        embed.add_field(name="🗂️ Quản lý danh mục", value="Tạo / Xoá / Đổi tên / Di chuyển kênh",    inline=True)
+        embed.add_field(name="🏷️ Quản lý role",    value="Tạo / Xoá / Gán role cho member",           inline=True)
+        embed.add_field(name="⚙️ Setup server",     value="Welcome / Log / Auto-role / Prefix",        inline=True)
+        embed.set_footer(text=f"Yêu cầu bởi {ctx.author}  •  Timeout 3 phút")
+        await ctx.reply(embed=embed, view=SetupMainView(ctx))
+
     # ── .botinfo / .qr ──
     @commands.command(name="botinfo")
     async def botinfo_cmd(self, ctx):
@@ -635,6 +1278,7 @@ class AdminCog(commands.Cog):
                 "fields": [
                     ("🛠️ Quản lý server",
                      "`.st` — Cài đặt bot\n"
+                     "`.setup` — Setup server (kênh / category / role / server)\n"
                      "`.botinfo` — Thông tin bot\n"
                      "`.ping` — Kiểm tra độ trễ\n"
                      "`.clear <n>` — Xóa n tin nhắn\n"
@@ -704,7 +1348,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`", inline=True)
         embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.mute` `.warn`\n`.slowmode` `.lock` `.automod`", inline=True)
-        embed.add_field(name="⚙️ Admin",     value="`.st` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel` `.qr`", inline=True)
+        embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel` `.qr`", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
 
