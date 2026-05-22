@@ -51,6 +51,14 @@ rudeus-bot/
 
 ---
 
+## [v3.8.0] — 2026-05-22
+
+### 🐛 Sửa lỗi
+- `cogs/ticket.py` — Xóa lệnh `.mkchannel` trùng lặp (conflict với `.mkchannel` trong `cogs/admin.py`), fix `CommandRegistrationError` khiến `cogs.admin` không load được
+- `BOT_VERSION = "3.8.0"`
+
+---
+
 ## [v3.7.9] — 2026-05-22
 
 ### 🐛 Sửa lỗi
