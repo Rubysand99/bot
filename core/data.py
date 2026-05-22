@@ -114,6 +114,8 @@ def _default_data() -> dict:
         "noitu_channel_id": 0,        # Kênh nối từ chỉ định (không dùng nữa)
         "baucua_channel_id": 0,       # Kênh bầu cua nhiều người
         "minigame_stats":   {},        # {user_id: {baucua,bkb,noitu,vtv,total}}
+        "seller_qr":        {},        # {user_id: qr_path} — QR riêng của từng seller
+        "seller_categories": {},       # {user_id: category_id} — category riêng của từng seller
     }
 
 # ══════════════════════════════════════════
@@ -277,6 +279,38 @@ def get_qr_path():
 
 def save_qr_path(path: str):
     data = load_data(); data["qr_path"] = path; save_data(data)
+
+# ── Seller QR (mỗi seller có QR riêng) ──
+def get_seller_qr(user_id: int) -> str | None:
+    return load_data().get("seller_qr", {}).get(str(user_id))
+
+def save_seller_qr(user_id: int, path: str):
+    data = load_data()
+    data.setdefault("seller_qr", {})
+    data["seller_qr"][str(user_id)] = path
+    save_data(data)
+
+def get_all_seller_qr() -> dict:
+    return load_data().get("seller_qr", {})
+
+# ── Seller category (mỗi seller có 1 category riêng) ──
+def get_seller_category(user_id: int) -> int:
+    return load_data().get("seller_categories", {}).get(str(user_id), 0)
+
+def save_seller_category(user_id: int, cat_id: int):
+    data = load_data()
+    data.setdefault("seller_categories", {})
+    data["seller_categories"][str(user_id)] = cat_id
+    save_data(data)
+
+def remove_seller_category(user_id: int):
+    data = load_data()
+    data.setdefault("seller_categories", {})
+    data["seller_categories"].pop(str(user_id), None)
+    save_data(data)
+
+def get_all_seller_categories() -> dict:
+    return load_data().get("seller_categories", {})
 
 async def get_ticket_number() -> str:
     """FIX: async + Lock đảm bảo không bao giờ tạo 2 ticket trùng số."""
