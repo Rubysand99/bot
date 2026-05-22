@@ -87,6 +87,9 @@ async def on_ready():
 
     print(f"✅ Bot online: {bot.user} | {len(bot.guilds)} server(s)")
 
+    # Quét lại legit channel — thả ✅ cho tin nhắn bị bỏ sót lúc bot offline
+    asyncio.create_task(_backfill_legit())
+
     # Gửi changelog — đọc từ CHANGELOG.md
     ch = bot.get_channel(CHANGELOG_CHANNEL_ID)
     if ch:
@@ -184,6 +187,56 @@ async def _handle_vouch(message: discord.Message):
         await ch.edit(name=f"{base}-{new_num}", reason=f"+1 vouch bởi {message.author}")
         await message.add_reaction("✅")
     except: pass
+
+
+
+# ══════════════════════════════════════════
+# BACKFILL LEGIT — Quét lại lúc khởi động
+# ══════════════════════════════════════════
+BACKFILL_LIMIT = 25  # Số tin nhắn gần nhất cần quét
+
+async def _backfill_legit():
+    """Sau khi bot online, quét 25 tin nhắn gần nhất trong kênh legit.
+    Tin nào khớp +1legit mà chưa có reaction ✅ từ bot → thả reaction lại.
+    Không đổi tên kênh (tránh đổi trùng), chỉ đảm bảo reaction không bị thiếu."""
+    await asyncio.sleep(3)  # Chờ cache sẵn sàng
+    from core.data import get_cfg_legit_channel
+    IGNORED = {628400349979344919}
+
+    legit_ch_id = get_cfg_legit_channel()
+    if not legit_ch_id:
+        print("[BACKFILL] ⚠️ Chưa cài legit channel, bỏ qua.")
+        return
+
+    channel = bot.get_channel(legit_ch_id)
+    if not channel:
+        print(f"[BACKFILL] ⚠️ Không tìm thấy channel {legit_ch_id}")
+        return
+
+    fixed = 0
+    try:
+        async for msg in channel.history(limit=BACKFILL_LIMIT):
+            if msg.author.bot: continue
+            if msg.author.id in IGNORED: continue
+            if not _re.match(r"^\+1\s*legit\b", msg.content.strip(), _re.IGNORECASE): continue
+
+            # Kiểm tra xem bot đã thả ✅ chưa
+            already = any(
+                r.emoji == "✅" and r.me
+                for r in msg.reactions
+            )
+            if not already:
+                try:
+                    await msg.add_reaction("✅")
+                    fixed += 1
+                    print(f"[BACKFILL] ✅ Đã thả reaction cho msg {msg.id} của {msg.author}")
+                except Exception as e:
+                    print(f"[BACKFILL] ❌ Không thả được reaction msg {msg.id}: {e}")
+    except Exception as e:
+        print(f"[BACKFILL] ❌ Lỗi khi quét legit channel: {e}")
+        return
+
+    print(f"[BACKFILL] ✅ Hoàn tất — đã xử lý {fixed} tin nhắn bị bỏ sót.")
 
 
 # ══════════════════════════════════════════
