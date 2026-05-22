@@ -47,8 +47,6 @@ async def end_giveaway(message_id, channel, winners_count, prize, host_id):
     entries = list(gw.get("entries", set())) if gw else []
 
     if not entries:
-        embed = discord.Embed(title="🎉  Giveaway Kết Thúc", description="❌ Không có ai tham gia giveaway này.", color=0x99AAB5, timestamp=datetime.now(timezone.utc))
-        await msg.edit(embed=embed, view=None)
         await channel.send("❌ Giveaway kết thúc nhưng không có người tham gia!")
         return
 
@@ -56,11 +54,14 @@ async def end_giveaway(message_id, channel, winners_count, prize, host_id):
     winner_ids   = random.sample(entries, count)
     winner_mentions = ", ".join(f"<@{uid}>" for uid in winner_ids)
 
-    embed = discord.Embed(title="🎉  Giveaway Kết Thúc!", description=f"**Phần thưởng:** {prize}\n**🏆 Winner:** {winner_mentions}", color=0xF1C40F, timestamp=datetime.now(timezone.utc))
-    host  = channel.guild.get_member(host_id)
-    embed.set_footer(text=f"Host: {_uname_plain(host) if host else host_id}")
-    await msg.edit(embed=embed, view=None)
-    await channel.send(f"🎊 Chúc mừng {winner_mentions}! Bạn đã thắng **{prize}**!")
+    # Giữ nguyên embed gốc, chỉ disable nút tham gia
+    try:
+        await msg.edit(view=None)
+    except Exception:
+        pass
+
+    # Gửi tin nhắn thông báo winner riêng
+    await channel.send(f"🎊 Chúc mừng {winner_mentions}! Bạn đã thắng **{prize}**! [🔗]({msg.jump_url})")
 
     if gw:
         gw["winner_ids"] = winner_ids

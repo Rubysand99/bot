@@ -6,6 +6,24 @@
 
 ---
 
+## [v3.7.6] — 2026-05-22
+
+### 🐛 Sửa lỗi
+- `cogs/giveaway.py` — Embed giveaway sau khi kết thúc giữ nguyên, không bị thay thế; chỉ disable nút tham gia và gửi 1 tin nhắn thông báo winner riêng (có link dẫn đến embed gốc)
+
+---
+
+## [v3.7.5] — 2026-05-22
+
+### 🐛 Sửa lỗi
+- `cogs/admin.py` — Xóa lệnh `.qr` (prefix) bị trùng với phiên bản đầy đủ hơn trong `cogs/ticket.py`
+- `cogs/ticket.py` — Đổi tên lệnh `.mkchannel` (seller) thành `.sellerchannel` / `.sch` để fix `CommandRegistrationError` conflict với `.mkchannel` của admin
+- `cogs/ticket.py` — Lệnh `.done` và `/done` và nút "Hoàn thành đơn" chỉ cho phép `ADMIN_IDS`, seller không dùng được
+- `core/data.py` — Thêm `get_seller_qr`, `save_seller_qr`, `get_all_seller_qr` (fix `ImportError` khiến `cogs.ticket` không load được)
+- Đồng bộ `BOT_VERSION = "3.5.0"` thống nhất giữa `ticket.py` và `admin.py`
+
+---
+
 ## [v3.7.4] — 2026-05-20
 
 ### ✨ Thêm mới
