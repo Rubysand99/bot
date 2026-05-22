@@ -6,6 +6,17 @@
 
 ---
 
+## [v3.7.7] — 2026-05-22
+
+### ✨ Thêm mới
+- `cogs/admin.py` — Lệnh `.help` hỗ trợ sub-topic: `.help mod`, `.help ticket`, `.help point`, `.help minigame`, `.help ai`, `.help invite`, `.help dichvu`, `.help giveaway`, `.help admin`
+- `.help` không có tham số → embed tổng quan gọn (3 cột inline), có hướng dẫn dùng `.help <mục>`
+- `.help <mục>` → embed chi tiết từng phần với đầy đủ cú pháp, alias, mô tả
+- Hỗ trợ alias tiếng Việt: `.help dịch vụ`, `.help điểm`, `.help game`…
+- `BOT_VERSION = "3.7.7"`
+
+---
+
 ## [v3.7.6] — 2026-05-22
 
 ### 🐛 Sửa lỗi

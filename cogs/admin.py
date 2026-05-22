@@ -21,7 +21,7 @@ from core.data import (
     QR_FILE, get_qr_path, save_qr_path,
 )
 
-BOT_VERSION = "3.5.0"
+BOT_VERSION = "3.7.7"
 BOT_UPDATED = "2026-05-16"
 
 # ══════════════════════════════════════════
@@ -328,7 +328,7 @@ class AdminCog(commands.Cog):
         def ch(k, d): c = data.get(k, d); return f"<#{c}>" if c else "Chưa cài"
         def ro(k, d): r = data.get(k, d); return f"<@&{r}>" if r else "Chưa cài"
         embed.add_field(name="📋 Log Channel (Rudy)", value=ch("cfg_log_rudy", 0),                                    inline=True)
-        embed.add_field(name="🎫 Ticket Category",    value=f"`{data.get('cfg_ticket_category','default')}`",         inline=True)
+        embed.add_field(name="🎫 Ticket Category",    value=ch("cfg_ticket_category", 0),                              inline=True)
         embed.add_field(name="🛡️ Support Role",      value=ro("cfg_support_role",    1474572393908404305), inline=True)
         embed.add_field(name="🏪 Seller Role",       value=ro("cfg_seller_role",     0),                   inline=True)
         embed.add_field(name="💰 Balance Channel",   value=ch("cfg_balance_channel", 1464999465294369035), inline=True)
@@ -336,7 +336,8 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📸 Proof Channel",    value=ch("cfg_proof_channel",   1469647159560241318), inline=True)
         embed.add_field(name="🤖 AI Channel",        value=ch("cfg_ai_channel",      0),                   inline=True)
         embed.add_field(name="🔤 Font server",       value=FONT_LABELS.get(data.get("cfg_font","normal"),"normal"), inline=True)
-        embed.add_field(name="🖼️ QR Path",           value=f"`{data.get('qr_path','Chưa cài')}`",                   inline=False)
+        qr_val = data.get("qr_path") or "Chưa cài"
+        embed.add_field(name="🖼️ QR Path",           value=f"`{qr_val}`",                                              inline=False)
         embed.set_footer(text=f"Nhấn nút bên dưới để thay đổi  •  Yêu cầu bởi {ctx.author}")
         await ctx.reply(embed=embed, view=SettingsView(ctx.guild))
 
@@ -506,17 +507,204 @@ class AdminCog(commands.Cog):
     # ── .help ──
     @commands.command(name="help", aliases=["h"])
     async def help_cmd(self, ctx, *, topic: str = None):
-        embed = discord.Embed(title="📖 Danh Sách Lệnh — TuyTam Bot", color=0x5865F2, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done <tiền>` `.addnote`\n`.ticketinfo [@user]` `.thongke [MM/YYYY]`\n`/close` `/done` `/addnote`", inline=False)
-        embed.add_field(name="💎 Point",     value="`.redeem <mã>` `.point [@user]` `.addpoint @user <số>`\n`.setpoint <ID> <số>` — Set chính xác theo ID\n`.pointall` — Thống kê tất cả user\n`.gencode [@user]` `.pointcfg` `.pointlog` `.buixong`\n`.shop` `.exchange <id>` `.addreward` `.delreward` `.clearshop`", inline=False)
-        embed.add_field(name="🎲 Minigame",  value="`.bc open` — Bầu Cua nhiều người (4-6 người, 30s)\n`.bc cancel` — Hủy phiên\n`.setbaucua #kênh` — Cài kênh chơi\n`.bkb <búa|kéo|bao> [point]` — Búa Kéo Bao vs Bot\n`.rank [baucua|bkb]` — BXH | `.mgstats [@user]` — Thống kê", inline=False)
-        embed.add_field(name="🤖 AI",        value="`.ai <câu hỏi>` `.ai tomtat` `.ai dich` `.ai phantich`\n`.aireset` `.mychat`\n`/ai` `/aireset` `/mychat`", inline=False)
-        embed.add_field(name="📨 Invite",    value="`.invite [@user]` `.invitetop [n]` `.resetinvite [@user|all]`\n`/invite` `/invitetop` `/resetinvite`", inline=False)
-        embed.add_field(name="🏪 Dịch vụ",  value="`.sv` — Xem bảng giá\n`.giaset` — Admin sửa bảng giá\n`/sv` `/giaset`", inline=False)
-        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend` `/greroll` `/gwlist`", inline=False)
-        embed.add_field(name="🔨 Mod",       value="`.ban` `.unban` `.kick` `.mute` `.unmute`\n`.slowmode` `.lock` `.unlock`\n`.warn` `.warns` `.clearwarn`\n`.automod on/off/links/invites/spam`\n`.automod addword/delword/words`\n`.automod addrole/delrole/adduser/deluser/whitelist`\n`/ban` `/unban` `/kick` `/mute` `/unmute` `/warn`", inline=False)
-        embed.add_field(name="⚙️ Admin",     value="`.st` `.botinfo` `.qr` `.ping`\n`.clear <n>` `.addrole` `.removerole`\n`.userinfo` `.serverinfo` `.emoji` `.delemoji`\n`.rename` `.setperm` `.mkchannel`\n`/clear` `/addrole` `/removerole` `/ping` `/userinfo` `/serverinfo`", inline=False)
-        embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  Dùng . hoặc / trước mỗi lệnh")
+        TOPICS = {
+            "ticket": {
+                "emoji": "🎫", "title": "Ticket",
+                "fields": [
+                    ("📋 Lệnh cơ bản",
+                     "`.panel` — Đăng panel mua/bán\n"
+                     "`.close` — Đóng ticket hiện tại\n"
+                     "`.done <tiền>` — Hoàn thành đơn (chỉ admin)\n"
+                     "`.addnote <ghi chú>` — Thêm ghi chú vào ticket", False),
+                    ("📊 Thống kê",
+                     "`.ticketinfo [@user]` — Xem lịch sử ticket của user\n"
+                     "`.thongke [MM/YYYY]` — Thống kê doanh thu theo tháng", False),
+                    ("🔷 Slash commands",
+                     "`/close` `/done` `/addnote`", False),
+                ]
+            },
+            "point": {
+                "emoji": "💎", "title": "Point",
+                "fields": [
+                    ("👤 User",
+                     "`.redeem <mã>` — Nhập mã đổi point\n"
+                     "`.point [@user]` — Xem point của bản thân / người khác\n"
+                     "`.shop` — Xem danh sách quà đổi\n"
+                     "`.exchange <id>` — Đổi quà bằng point", False),
+                    ("🛡️ Admin",
+                     "`.addpoint @user <số>` — Cộng point cho user\n"
+                     "`.setpoint <ID> <số>` — Set point chính xác theo ID\n"
+                     "`.pointall` — Thống kê point toàn server (top 20)\n"
+                     "`.gencode [@user]` — Tạo mã point\n"
+                     "`.pointcfg` — Cấu hình hệ thống point\n"
+                     "`.pointlog` — Xem log point\n"
+                     "`.buixong` — Reset trạng thái\n"
+                     "`.addreward` `.delreward` `.clearshop` — Quản lý quà", False),
+                ]
+            },
+            "minigame": {
+                "emoji": "🎲", "title": "Minigame",
+                "fields": [
+                    ("🦀 Bầu Cua (nhiều người)",
+                     "`.bc open` — Mở phiên cược (4-6 người, 30s)\n"
+                     "`.bc cancel` — Hủy phiên đang mở\n"
+                     "`.setbaucua #kênh` — Cài kênh chơi Bầu Cua\n"
+                     "Tỉ lệ: x1→+0.9pt | x2→+1.8pt | x3→+2.7pt | Thua→-1pt", False),
+                    ("✂️ Búa Kéo Bao",
+                     "`.bkb <búa|kéo|bao> [point]` — Chơi vs Bot\n"
+                     "Thắng nhận x0.9 point cược", False),
+                    ("📊 Xếp hạng & Thống kê",
+                     "`.rank [baucua|bkb]` — Bảng xếp hạng\n"
+                     "`.mgstats [@user]` — Thống kê cá nhân", False),
+                ]
+            },
+            "ai": {
+                "emoji": "🤖", "title": "AI Chat",
+                "fields": [
+                    ("💬 Lệnh",
+                     "`.ai <câu hỏi>` — Hỏi AI\n"
+                     "`.ai tomtat` — Tóm tắt đoạn hội thoại\n"
+                     "`.ai dich` — Dịch văn bản\n"
+                     "`.ai phantich` — Phân tích nội dung\n"
+                     "`.aireset` — Reset lịch sử chat với AI\n"
+                     "`.mychat` — Xem lịch sử chat của bạn", False),
+                    ("🔷 Slash commands",
+                     "`/ai` `/aireset` `/mychat`", False),
+                ]
+            },
+            "invite": {
+                "emoji": "📨", "title": "Invite",
+                "fields": [
+                    ("📋 Lệnh",
+                     "`.invite [@user]` — Xem thống kê invite của bản thân / người khác\n"
+                     "`.invitetop [n]` — Top người invite nhiều nhất (mặc định top 10)\n"
+                     "`.resetinvite [@user|all]` — Reset invite của 1 người hoặc tất cả (admin)", False),
+                    ("🔷 Slash commands",
+                     "`/invite` `/invitetop` `/resetinvite`", False),
+                ]
+            },
+            "dichvu": {
+                "emoji": "🏪", "title": "Dịch Vụ",
+                "fields": [
+                    ("📋 Lệnh",
+                     "`.sv` — Xem bảng giá dịch vụ\n"
+                     "`.giaset` — Admin chỉnh sửa bảng giá\n"
+                     "`/sv` `/giaset`", False),
+                ]
+            },
+            "giveaway": {
+                "emoji": "🎉", "title": "Giveaway",
+                "fields": [
+                    ("📋 Slash commands",
+                     "`/giveaway` — Tạo giveaway mới\n"
+                     "`/gend <message_id>` — Kết thúc giveaway sớm\n"
+                     "`/greroll <message_id>` — Quay số lại\n"
+                     "`/gwlist <message_id>` — Xem danh sách người tham gia", False),
+                ]
+            },
+            "mod": {
+                "emoji": "🔨", "title": "Mod",
+                "fields": [
+                    ("⚖️ Xử lý thành viên",
+                     "`.ban @user [lý do]` — Ban vĩnh viễn\n"
+                     "`.unban <user_id>` — Unban\n"
+                     "`.kick @user [lý do]` — Kick khỏi server\n"
+                     "`.mute @user <thời gian> [lý do]` — Timeout (vd: 10m, 1h, 1d)\n"
+                     "`.unmute @user` — Gỡ timeout", False),
+                    ("⚠️ Cảnh cáo",
+                     "`.warn @user [lý do]` — Cảnh cáo user\n"
+                     "`.warns [@user]` — Xem danh sách cảnh cáo\n"
+                     "`.clearwarn @user` — Xóa toàn bộ cảnh cáo", False),
+                    ("🔧 Kênh",
+                     "`.slowmode <giây>` — Cài chế độ chậm (0 = tắt)\n"
+                     "`.lock [#kênh]` — Khóa kênh\n"
+                     "`.unlock [#kênh]` — Mở khóa kênh", False),
+                    ("🛡️ AutoMod",
+                     "`.automod on/off` — Bật/tắt automod\n"
+                     "`.automod links/invites/spam` — Bật/tắt lọc link, invite, spam\n"
+                     "`.automod addword/delword/words` — Quản lý từ cấm\n"
+                     "`.automod addrole/delrole` — Role bypass automod\n"
+                     "`.automod adduser/deluser` — User bypass automod\n"
+                     "`.automod whitelist` — Xem danh sách bypass", False),
+                    ("🔷 Slash commands",
+                     "`/ban` `/unban` `/kick` `/mute` `/unmute` `/warn`", False),
+                ]
+            },
+            "admin": {
+                "emoji": "⚙️", "title": "Admin",
+                "fields": [
+                    ("🛠️ Quản lý server",
+                     "`.st` — Cài đặt bot\n"
+                     "`.botinfo` — Thông tin bot\n"
+                     "`.ping` — Kiểm tra độ trễ\n"
+                     "`.clear <n>` — Xóa n tin nhắn\n"
+                     "`.addrole @user @role` — Thêm role\n"
+                     "`.removerole @user @role` — Xóa role\n"
+                     "`.userinfo [@user]` — Thông tin thành viên\n"
+                     "`.serverinfo` — Thông tin server", False),
+                    ("🎨 Emoji & Kênh",
+                     "`.emoji <url/file> <tên>` — Thêm emoji\n"
+                     "`.delemoji <tên>` — Xóa emoji\n"
+                     "`.rename #kênh <tên mới>` — Đổi tên kênh\n"
+                     "`.setperm #kênh @role <quyền>` — Cài quyền kênh\n"
+                     "`.mkchannel <text|voice|category> <tên>` — Tạo kênh\n"
+                     "`.sellerchannel <text|voice|category> <tên>` — Tạo kênh (seller)", False),
+                    ("💳 QR",
+                     "`.qr [@user]` — Xem mã QR thanh toán\n"
+                     "`/qr` — Slash tương đương", False),
+                    ("🔷 Slash commands",
+                     "`/clear` `/addrole` `/removerole` `/ping`\n"
+                     "`/userinfo` `/serverinfo` `/botinfo`", False),
+                ]
+            },
+        }
+
+        # Normalize topic aliases
+        ALIASES = {
+            "ticket": "ticket", "vé": "ticket",
+            "point": "point", "điểm": "point", "pts": "point",
+            "minigame": "minigame", "game": "minigame", "mini": "minigame", "mg": "minigame",
+            "ai": "ai",
+            "invite": "invite", "inv": "invite",
+            "dichvu": "dichvu", "dịch vụ": "dichvu", "dv": "dichvu", "sv": "dichvu",
+            "giveaway": "giveaway", "gw": "giveaway",
+            "mod": "mod",
+            "admin": "admin", "adm": "admin",
+        }
+
+        if topic:
+            key = ALIASES.get(topic.lower().strip())
+            if not key:
+                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "point", "minigame", "ai", "invite", "dichvu", "giveaway", "mod", "admin"])
+                return await ctx.reply(f"❌ Không tìm thấy mục `{topic}`.\nCác mục hợp lệ: {topics_list}")
+            t = TOPICS[key]
+            embed = discord.Embed(
+                title=f"{t['emoji']}  Help — {t['title']}",
+                color=0x5865F2,
+                timestamp=datetime.now(timezone.utc)
+            )
+            for name, value, inline in t["fields"]:
+                embed.add_field(name=name, value=value, inline=inline)
+            embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help để về trang chính")
+            return await ctx.reply(embed=embed)
+
+        # Embed tổng quan
+        embed = discord.Embed(
+            title="📖  Danh Sách Lệnh — TuyTam Bot",
+            description="Dùng `.help <mục>` để xem chi tiết từng phần.\nVí dụ: `.help mod` | `.help ticket` | `.help admin`",
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke`", inline=True)
+        embed.add_field(name="💎 Point",     value="`.redeem` `.point` `.shop` `.exchange`\n`.addpoint` `.setpoint` `.pointall`", inline=True)
+        embed.add_field(name="🎲 Minigame",  value="`.bc open` `.bc cancel` `.setbaucua`\n`.bkb` `.rank` `.mgstats`", inline=True)
+        embed.add_field(name="🤖 AI",        value="`.ai` `.aireset` `.mychat`\n`/ai` `/aireset`", inline=True)
+        embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite`\n`/invite` `/invitetop`", inline=True)
+        embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
+        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`", inline=True)
+        embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.mute` `.warn`\n`.slowmode` `.lock` `.automod`", inline=True)
+        embed.add_field(name="⚙️ Admin",     value="`.st` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel` `.qr`", inline=True)
+        embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
 
     # ── PREFIX commands cho các slash ──
