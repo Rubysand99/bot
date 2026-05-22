@@ -728,24 +728,47 @@ class AdminCog(commands.Cog):
         limit = max(1, min(limit, 100))
         msg_status = await ctx.reply(f"🔍 Đang quét **{limit}** tin nhắn gần nhất trong {channel.mention}...")
 
-        fixed = 0
+        # Thu thập các tin nhắn bị bỏ sót (chưa có ✅), sắp xếp từ cũ → mới
+        missed = []
         scanned = 0
         try:
+            msgs = []
             async for msg in channel.history(limit=limit):
+                msgs.append(msg)
+            msgs.reverse()  # cũ → mới để xử lý đúng thứ tự
+
+            for msg in msgs:
                 if msg.author.bot: continue
                 if msg.author.id in IGNORED: continue
                 if not _re.match(r"^\+1\s*legit\b", msg.content.strip(), _re.IGNORECASE): continue
                 scanned += 1
                 already = any(r.emoji == "✅" and r.me for r in msg.reactions)
                 if not already:
-                    try:
-                        await msg.add_reaction("✅")
-                        fixed += 1
-                    except Exception:
-                        pass
+                    missed.append(msg)
         except Exception as e:
             return await msg_status.edit(content=f"❌ Lỗi khi quét: `{e}`")
 
+        # Xử lý từng tin bị bỏ sót: thả reaction + đổi tên kênh +1
+        fixed = 0
+        name_before = channel.name
+        for msg in missed:
+            try:
+                await msg.add_reaction("✅")
+            except Exception:
+                pass
+            # Đổi tên kênh +1
+            try:
+                name = channel.name
+                match = _re.search(r"-(\d+)$", name)
+                new_num = (int(match.group(1)) + 1) if match else 1
+                base = name[:match.start()] if match else name
+                new_name = f"{base}-{new_num}"
+                await channel.edit(name=new_name, reason=f"Backfill +1 legit bởi {ctx.author}")
+                fixed += 1
+            except Exception:
+                pass
+
+        name_after = channel.name
         embed = discord.Embed(
             title="✅ Backfill Legit Hoàn Tất",
             color=0x57F287,
@@ -753,8 +776,8 @@ class AdminCog(commands.Cog):
         )
         embed.add_field(name="🔍 Quét", value=f"**{limit}** tin nhắn", inline=True)
         embed.add_field(name="📝 Khớp +1legit", value=f"**{scanned}** tin", inline=True)
-        embed.add_field(name="✅ Đã thả reaction", value=f"**{fixed}** tin bị bỏ sót", inline=True)
-        embed.add_field(name="📌 Kênh", value=channel.mention, inline=False)
+        embed.add_field(name="✅ Đã xử lý", value=f"**{fixed}** tin bị bỏ sót", inline=True)
+        embed.add_field(name="📌 Kênh", value=f"`{name_before}` → `{name_after}`", inline=False)
         await msg_status.edit(content=None, embed=embed)
 
     # ── PREFIX commands cho các slash ──

@@ -11,6 +11,7 @@
 ### 🐛 Sửa lỗi
 - `core/data.py` — Thêm helper `get_or_fetch_channel(bot, id)`: thử cache trước, nếu không có thì `fetch_channel()` từ API Discord — hỗ trợ kênh private và kênh mới tạo
 - `cogs/admin.py`, `cogs/ticket.py`, `cogs/giveaway.py`, `bot.py` — Thay toàn bộ `bot.get_channel()` bằng `get_or_fetch_channel()` để bot không bị miss kênh ngoài cache
+- `cogs/admin.py` + `bot.py` — `.backfill` và auto-backfill lúc khởi động nay xử lý **đúng thứ tự cũ→mới**, vừa thả `✅` vừa **đổi tên kênh +1** cho mỗi tin bị bỏ sót (vd: `legit-11` → `legit-12`)
 - `BOT_VERSION = "3.7.9"`
 
 ---

@@ -216,23 +216,33 @@ async def _backfill_legit():
 
     fixed = 0
     try:
+        msgs = []
         async for msg in channel.history(limit=BACKFILL_LIMIT):
+            msgs.append(msg)
+        msgs.reverse()  # cũ → mới
+
+        for msg in msgs:
             if msg.author.bot: continue
             if msg.author.id in IGNORED: continue
             if not _re.match(r"^\+1\s*legit\b", msg.content.strip(), _re.IGNORECASE): continue
 
-            # Kiểm tra xem bot đã thả ✅ chưa
-            already = any(
-                r.emoji == "✅" and r.me
-                for r in msg.reactions
-            )
+            already = any(r.emoji == "✅" and r.me for r in msg.reactions)
             if not already:
                 try:
                     await msg.add_reaction("✅")
-                    fixed += 1
-                    print(f"[BACKFILL] ✅ Đã thả reaction cho msg {msg.id} của {msg.author}")
                 except Exception as e:
                     print(f"[BACKFILL] ❌ Không thả được reaction msg {msg.id}: {e}")
+                # Đổi tên kênh +1
+                try:
+                    name = channel.name
+                    match = _re.search(r"-(\d+)$", name)
+                    new_num = (int(match.group(1)) + 1) if match else 1
+                    base = name[:match.start()] if match else name
+                    await channel.edit(name=f"{base}-{new_num}", reason=f"+1 legit backfill bởi {msg.author}")
+                    fixed += 1
+                    print(f"[BACKFILL] ✅ {msg.id} — kênh đổi thành {base}-{new_num}")
+                except Exception as e:
+                    print(f"[BACKFILL] ❌ Không đổi được tên kênh: {e}")
     except Exception as e:
         print(f"[BACKFILL] ❌ Lỗi khi quét legit channel: {e}")
         return
