@@ -21,7 +21,7 @@ from core.data import (
     get_or_fetch_channel,
 )
 
-BOT_VERSION = "3.9.2"
+BOT_VERSION = "3.9.3"
 BOT_UPDATED = "2026-05-23"
 
 # ══════════════════════════════════════════
@@ -1571,6 +1571,62 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📋 Version",  value=f"`v{BOT_VERSION}`",                     inline=True)
         if self.bot.user.avatar: embed.set_thumbnail(url=self.bot.user.avatar.url)
         await interaction.response.send_message(embed=embed)
+
+    # ── Stock → Sold auto-move ──
+    STOCK_CATEGORY_ID = 1506520186063163423
+    SOLD_CATEGORY_ID  = 1506652491779932240
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        # Bỏ qua bot và DM
+        if message.author.bot or not message.guild:
+            return
+
+        # Chỉ xử lý kênh trong danh mục stock
+        channel = message.channel
+        if not isinstance(channel, discord.TextChannel):
+            return
+        if not channel.category_id or channel.category_id != self.STOCK_CATEGORY_ID:
+            return
+
+        # Kiểm tra nội dung: "sold..." hoặc "## sold..."
+        content = message.content.strip().lower()
+        if not (content.startswith("sold") or content.startswith("## sold")):
+            return
+
+        # Chỉ seller (có quyền manage_channels trong kênh) hoặc admin mới trigger
+        perms = channel.permissions_for(message.author)
+        if not (perms.manage_channels or message.author.id in ADMIN_IDS):
+            return
+
+        sold_category = message.guild.get_channel(self.SOLD_CATEGORY_ID)
+        if not sold_category or not isinstance(sold_category, discord.CategoryChannel):
+            await message.add_reaction("⚠️")
+            return
+
+        # Đổi tên: ✔️•... → ❌•...
+        old_name = channel.name
+        if old_name.startswith("✔️•") or old_name.startswith("✔️•"):
+            # Thay ✔️• thành ❌•
+            new_name = "❌•" + old_name.split("•", 1)[-1]
+        elif old_name.startswith("✔"):
+            new_name = "❌" + old_name[1:]
+        else:
+            # Không có prefix ✔️ thì thêm ❌• vào đầu
+            new_name = "❌•" + old_name
+
+        try:
+            await channel.edit(
+                name=new_name,
+                category=sold_category,
+                reason=f"Sold bởi {message.author} — auto-move",
+            )
+            await message.add_reaction("✅")
+        except discord.Forbidden:
+            await message.add_reaction("⚠️")
+        except Exception as e:
+            await message.add_reaction("❌")
+            await message.channel.send(f"⚠️ Lỗi khi chuyển kênh: `{e}`", delete_after=10)
 
     # ── Error handler ──
     @commands.Cog.listener()

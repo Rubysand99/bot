@@ -51,6 +51,20 @@ rudeus-bot/
 
 ---
 
+## [v3.9.3] — 2026-05-23
+
+### ✨ Thêm mới
+- `cogs/admin.py` — Listener `on_message`: **Auto sold detection** trong danh mục Stock
+  - Lắng nghe tất cả kênh trong category Stock (`1506520186063163423`)
+  - Trigger khi tin nhắn bắt đầu bằng `sold...` hoặc `## sold...` (không phân biệt hoa thường)
+  - Chỉ seller (có quyền `manage_channels` trong kênh) hoặc admin mới kích hoạt được
+  - Đổi tên kênh: `✔️•{giá}+{info}` → `❌•{giá}+{info}`
+  - Di chuyển kênh sang category Sold (`1506652491779932240`) trong cùng thao tác `edit`
+  - Phản ứng ✅ nếu thành công, ⚠️ nếu thiếu quyền hoặc không tìm thấy category
+- `BOT_VERSION = "3.9.3"`
+
+---
+
 ## [v3.9.2] — 2026-05-23
 
 ### 🗑️ Xoá
