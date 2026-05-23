@@ -21,7 +21,7 @@ from core.data import (
     get_or_fetch_channel,
 )
 
-BOT_VERSION = "3.9.3"
+BOT_VERSION = "3.9.4"
 BOT_UPDATED = "2026-05-23"
 
 # ══════════════════════════════════════════
@@ -970,6 +970,187 @@ class SetPrefixModal(discord.ui.Modal, title="🔤 Đặt Prefix Bot"):
 
 
 # ══════════════════════════════════════════
+# MKCHANNEL — VIEW + MODAL
+# ══════════════════════════════════════════
+_CH_TYPE_OPTIONS = [
+    discord.SelectOption(label="📝  Text Channel",   value="text",  description="Kênh chat thông thường"),
+    discord.SelectOption(label="🔊  Voice Channel",  value="voice", description="Kênh thoại"),
+    discord.SelectOption(label="🎙️  Stage Channel",  value="stage", description="Kênh sân khấu"),
+    discord.SelectOption(label="💬  Forum Channel",  value="forum", description="Kênh diễn đàn"),
+    discord.SelectOption(label="📂  Category",       value="category", description="Tạo danh mục mới"),
+]
+
+class MkChannelView(View):
+    """Bước 1: chọn loại kênh + danh mục → mở modal nhập tên."""
+    def __init__(self, ctx, cat_opts: list):
+        super().__init__(timeout=120)
+        self.ctx       = ctx
+        self.ch_type   = "text"
+        self.cat_id    = 0
+
+        type_select = _MkTypeSelect(_CH_TYPE_OPTIONS)
+        cat_select  = _MkCatSelect(cat_opts)
+        type_select.view_ref = self
+        cat_select.view_ref  = self
+        self.add_item(type_select)
+        self.add_item(cat_select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.ctx.author.id:
+            await interaction.response.send_message("❌ Chỉ người gõ lệnh mới dùng được.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Tiếp tục →", style=discord.ButtonStyle.primary, row=2)
+    async def proceed(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(
+            MkChannelModal(self.ch_type, self.cat_id)
+        )
+
+
+class _MkTypeSelect(Select):
+    def __init__(self, opts):
+        super().__init__(
+            placeholder="① Chọn loại kênh…",
+            options=opts,
+            row=0,
+        )
+        self.view_ref = None
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.view_ref:
+            self.view_ref.ch_type = self.values[0]
+        await interaction.response.defer()
+
+
+class _MkCatSelect(Select):
+    def __init__(self, opts):
+        super().__init__(
+            placeholder="② Chọn danh mục chứa kênh…",
+            options=opts,
+            row=1,
+        )
+        self.view_ref = None
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.view_ref:
+            self.view_ref.cat_id = int(self.values[0])
+        await interaction.response.defer()
+
+
+class MkChannelModal(discord.ui.Modal, title="➕ Tạo Kênh Mới"):
+    name_input = TextInput(
+        label="Tên kênh",
+        placeholder="vd: ✔️•5k+roblox  hoặc  💬・general",
+        max_length=100,
+    )
+    count_input = TextInput(
+        label="Số lượng kênh cần tạo",
+        placeholder="1",
+        default="1",
+        max_length=2,
+    )
+
+    def __init__(self, ch_type: str, cat_id: int):
+        super().__init__()
+        self.ch_type = ch_type
+        self.cat_id  = cat_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Validate số lượng
+        try:
+            count = int(self.count_input.value.strip())
+            if count < 1 or count > 20:
+                raise ValueError
+        except ValueError:
+            return await interaction.response.send_message(
+                "❌ Số lượng phải từ 1 đến 20.", ephemeral=True
+            )
+
+        raw_name = self.name_input.value.strip()
+        font     = get_cfg_font()
+        parts    = _detect_channel_parts(raw_name)
+        styled   = _rebuild_name(parts, parts["base_text"], font)
+
+        # Resolve category
+        category = interaction.guild.get_channel(self.cat_id) if self.cat_id else None
+        if category and not isinstance(category, discord.CategoryChannel):
+            category = None
+
+        _TYPE_ICON = {
+            "text": "📝", "voice": "🔊", "stage": "🎙️",
+            "forum": "💬", "category": "📂",
+        }
+        icon = _TYPE_ICON.get(self.ch_type, "📝")
+
+        await interaction.response.defer(ephemeral=True)
+
+        created = []
+        failed  = 0
+        for i in range(count):
+            # Số hậu tố nếu tạo nhiều hơn 1
+            suffix    = f"-{i+1}" if count > 1 else ""
+            ch_name   = styled + suffix
+            try:
+                if self.ch_type == "text":
+                    ch = await interaction.guild.create_text_channel(
+                        name=ch_name, category=category,
+                        reason=f"mkchannel bởi {interaction.user}"
+                    )
+                elif self.ch_type == "voice":
+                    ch = await interaction.guild.create_voice_channel(
+                        name=ch_name, category=category,
+                        reason=f"mkchannel bởi {interaction.user}"
+                    )
+                elif self.ch_type == "stage":
+                    ch = await interaction.guild.create_stage_channel(
+                        name=ch_name, category=category,
+                        reason=f"mkchannel bởi {interaction.user}"
+                    )
+                elif self.ch_type == "forum":
+                    ch = await interaction.guild.create_forum(
+                        name=ch_name, category=category,
+                        reason=f"mkchannel bởi {interaction.user}"
+                    )
+                else:  # category
+                    ch = await interaction.guild.create_category(
+                        name=ch_name,
+                        reason=f"mkchannel bởi {interaction.user}"
+                    )
+                created.append(ch)
+                if count > 1:
+                    await asyncio.sleep(0.55)
+            except discord.Forbidden:
+                failed += 1
+            except Exception:
+                failed += 1
+
+        # Kết quả
+        embed = discord.Embed(
+            title=f"{icon} Tạo Kênh Hoàn Tất",
+            color=0x57F287 if not failed else 0xFEE75C,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="Loại",       value=self.ch_type,                      inline=True)
+        embed.add_field(name="Font",       value=FONT_LABELS.get(font, font),        inline=True)
+        embed.add_field(name="Danh mục",   value=category.name if category else "—", inline=True)
+        embed.add_field(name="✅ Đã tạo",  value=f"**{len(created)}** kênh",         inline=True)
+        if failed:
+            embed.add_field(name="❌ Thất bại", value=f"**{failed}** kênh",          inline=True)
+        if created:
+            mentions = "  ".join(
+                ch.mention if hasattr(ch, "mention") and not isinstance(ch, discord.CategoryChannel)
+                else f"`{ch.name}`"
+                for ch in created[:10]
+            )
+            if len(created) > 10:
+                mentions += f"  … (+{len(created)-10})"
+            embed.add_field(name="Kênh đã tạo", value=mentions, inline=False)
+        embed.set_footer(text=f"Bởi {interaction.user}")
+        await interaction.followup.send(embed=embed, ephemeral=False)
+
+
+# ══════════════════════════════════════════
 # COG
 # ══════════════════════════════════════════
 class AdminCog(commands.Cog):
@@ -1120,29 +1301,24 @@ class AdminCog(commands.Cog):
         except Exception as e: await ctx.reply(f"❌ {e}")
 
     @commands.command(name="mkchannel", aliases=["mkch", "taokenh"])
-    async def mkchannel_cmd(self, ctx, *, args: str = None):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Chỉ admin.")
-        if not args: return await ctx.reply("❌ Dùng: `.mkchannel text <tên>` hoặc `.mkchannel voice <tên>` hoặc `.mkchannel category <tên>`")
-        parts = args.strip().split(None, 1)
-        if len(parts) < 2: return await ctx.reply("❌ Thiếu tên kênh.")
-        ch_type  = parts[0].lower()
-        raw_name = parts[1].strip().strip('"').strip("'")
-        if ch_type not in ("text","voice","category","t","v","c"): return await ctx.reply("❌ Loại kênh không hợp lệ.")
-        font       = get_cfg_font()
-        ch_parts   = _detect_channel_parts(raw_name)
-        styled     = _rebuild_name(ch_parts, ch_parts["base_text"], font)
-        category   = ctx.channel.category
-        try:
-            if ch_type in ("text","t"):     new_ch = await ctx.guild.create_text_channel(name=styled, category=category, reason=f"Tạo bởi {ctx.author}"); icon = "📝"
-            elif ch_type in ("voice","v"):  new_ch = await ctx.guild.create_voice_channel(name=styled, category=category, reason=f"Tạo bởi {ctx.author}"); icon = "🔊"
-            else:                           new_ch = await ctx.guild.create_category(name=styled, reason=f"Tạo bởi {ctx.author}"); icon = "📂"
-            embed = discord.Embed(title=f"{icon} Đã tạo kênh thành công!", color=0x57F287, timestamp=datetime.now(timezone.utc))
-            embed.add_field(name="Tên gốc",    value=f"`{raw_name}`",    inline=True)
-            embed.add_field(name="Tên đã tạo", value=new_ch.mention,     inline=True)
-            embed.add_field(name="Font",       value=FONT_LABELS.get(font, font), inline=True)
-            await ctx.reply(embed=embed)
-        except discord.Forbidden: await ctx.reply("❌ Bot thiếu quyền tạo kênh.")
-        except Exception as e: await ctx.reply(f"❌ Lỗi: {e}")
+    async def mkchannel_cmd(self, ctx):
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin.")
+        cats = sorted(ctx.guild.categories, key=lambda c: c.position)
+        cat_opts = [discord.SelectOption(label=c.name[:100], value=str(c.id)) for c in cats[:24]]
+        cat_opts.insert(0, discord.SelectOption(label="(Không có danh mục)", value="0", emoji="🚫"))
+        embed = discord.Embed(
+            title="➕  Tạo Kênh Mới",
+            description=(
+                "**Bước 1** — Chọn **loại kênh** và **danh mục** bên dưới\n"
+                "**Bước 2** — Nhập tên và số lượng trong form\n\n"
+                f"Font đang dùng: **{FONT_LABELS.get(get_cfg_font(), get_cfg_font())}**"
+            ),
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.set_footer(text=f"Yêu cầu bởi {ctx.author}  •  Timeout 2 phút")
+        await ctx.reply(embed=embed, view=MkChannelView(ctx, cat_opts))
 
     # ── .setup ──
     @commands.command(name="setup", aliases=["sv_setup", "serversetup"])

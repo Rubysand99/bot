@@ -15,8 +15,8 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "3.4.1"
-BOT_UPDATED = "2026-05-15"
+BOT_VERSION = "3.9.4"
+BOT_UPDATED = "2026-05-23"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 CODE_GEN_LOG_CHANNEL_ID = 1504434579967316021  # Kênh log khi user bypass link & tạo mã
 
@@ -94,26 +94,57 @@ async def on_ready():
     from core.data import get_or_fetch_channel
     ch = await get_or_fetch_channel(bot, CHANGELOG_CHANNEL_ID)
     if ch:
-        # Đọc entry mới nhất từ CHANGELOG.md
-        changelog_text = ""
-        try:
-            with open("CHANGELOG.md", "r", encoding="utf-8") as f:
-                content = f.read()
-            # Lấy block đầu tiên (từ ## đầu đến ## tiếp theo)
-            import re
-            blocks = re.split(r"\n(?=## \[)", content)
-            latest = next((b for b in blocks if b.strip().startswith("##")), "")
-            # Lấy tối đa 1500 ký tự
-            changelog_text = latest.strip()[:1500]
-        except Exception:
-            changelog_text = f"Bot đã khởi động lại — **v{BOT_VERSION}** ({BOT_UPDATED})"
-
         embed = discord.Embed(
             title=f"🔄 Bot Khởi Động — v{BOT_VERSION}",
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc),
-            description=f"```md\n{changelog_text}\n```" if changelog_text else f"v{BOT_VERSION} — {BOT_UPDATED}",
         )
+        try:
+            with open("CHANGELOG.md", "r", encoding="utf-8") as f:
+                content = f.read()
+            import re
+            # Lấy block entry mới nhất (từ ## đầu đến ## tiếp theo)
+            blocks = re.split(r"\n(?=## \[)", content)
+            latest = next((b for b in blocks if b.strip().startswith("##")), "")
+
+            if latest:
+                lines = latest.strip().splitlines()
+                # Dòng đầu: ## [v3.9.4] — 2026-05-23  → bỏ vào title embed
+                header = lines[0].lstrip("#").strip()
+                embed.title = f"🔄 Bot Khởi Động — {header}"
+
+                # Parse từng section ### thành field
+                current_section = None
+                current_lines   = []
+
+                def flush(sec, lns, emb):
+                    if sec and lns:
+                        val = "\n".join(lns)[:1020]
+                        emb.add_field(name=sec, value=val, inline=False)
+
+                for line in lines[1:]:
+                    if line.startswith("### "):
+                        flush(current_section, current_lines, embed)
+                        current_section = line.lstrip("#").strip()
+                        current_lines   = []
+                    elif line.startswith("- ") or line.startswith("  - "):
+                        # Giữ bullet, bỏ markdown backtick path nếu quá dài
+                        current_lines.append(line)
+                    elif line.strip() == "---":
+                        break
+                    elif line.strip():
+                        current_lines.append(line)
+
+                flush(current_section, current_lines, embed)
+
+                # Nếu không có section nào (entry không có ###)
+                if not any(True for f in embed.fields):
+                    body = "\n".join(lines[1:]).strip()[:1500]
+                    embed.description = body if body else None
+
+        except Exception as e:
+            embed.description = f"Bot đã khởi động lại — **v{BOT_VERSION}** ({BOT_UPDATED})\n`{e}`"
+
         embed.add_field(name="✅ Cogs đã load", value="\n".join(f"› `{c}`" for c in COGS), inline=False)
         embed.add_field(name="⚡ Latency",       value=f"{round(bot.latency*1000)}ms",        inline=True)
         embed.set_footer(text="TuyTam Store  •  Dùng .help để xem tất cả lệnh")
