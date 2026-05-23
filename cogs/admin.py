@@ -1088,9 +1088,7 @@ class MkChannelModal(discord.ui.Modal, title="➕ Tạo Kênh Mới"):
         created = []
         failed  = 0
         for i in range(count):
-            # Số hậu tố nếu tạo nhiều hơn 1
-            suffix    = f"-{i+1}" if count > 1 else ""
-            ch_name   = styled + suffix
+            ch_name   = styled
             try:
                 if self.ch_type == "text":
                     ch = await interaction.guild.create_text_channel(
