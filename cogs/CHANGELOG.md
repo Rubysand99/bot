@@ -51,6 +51,30 @@ rudeus-bot/
 
 ---
 
+## [v3.9.2] — 2026-05-23
+
+### 🗑️ Xoá
+- `cogs/admin.py`
+  - Nút **"🖼️ Cập nhật QR"** trong `.st` view
+  - Class `SetQRModal`
+  - Slash command `/qr`
+  - Dòng `.qr` và `.sellerchannel` trong `.help`
+  - Import `QR_FILE`, `get_qr_path`, `save_qr_path`
+  - Field "🖼️ QR Path" trong embed `.st`
+
+- `cogs/ticket.py`
+  - Nút **"📎 Add Staff"** và **"📝 Ghi chú"** trong `TicketButtons`
+  - Class `AddStaffModal`, `NoteModal`
+  - Lệnh `.addnote` (prefix) và `/addnote` (slash)
+  - Block ghi chú nội bộ trong `_close_ticket` (không còn gửi note vào transcript khi đóng ticket)
+  - Import `get_ticket_note`, `add_ticket_note`, `get_qr_path`, `save_qr_path`, `QR_FILE`, `get_seller_qr`, `save_seller_qr`, `get_all_seller_qr`
+  - Nút **"📱 Gửi QR"** trong `TicketButtons`
+  - Lệnh `.qr` và `.addqr`
+
+- `BOT_VERSION = "3.9.2"`
+
+---
+
 ## [v3.9.1] — 2026-05-23
 
 ### ✨ Thêm mới

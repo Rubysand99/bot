@@ -17,12 +17,11 @@ from core.data import (
     get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
     get_cfg_counter_channel, get_cfg_proof_channel, get_cfg_balance_channel,
     get_panel_channel_id, save_panel_channel_id,
-    get_qr_path, save_qr_path, get_buy_roles, get_user_total_spent,
-    add_user_spent, get_ticket_note, add_ticket_note,
+    get_buy_roles, get_user_total_spent,
+    add_user_spent,
     save_ticket_record, get_user_ticket_history, get_monthly_stats,
     load_data, save_data, parse_amount, fmt_amount, is_staff_member,
-    _uname, _uname_plain, can_use_dangerous_cmd, QR_FILE,
-    get_seller_qr, save_seller_qr, get_all_seller_qr,
+    _uname, _uname_plain, can_use_dangerous_cmd,
     get_seller_category, save_seller_category,
     remove_seller_category, get_all_seller_categories,
     get_or_fetch_channel,
@@ -255,13 +254,6 @@ async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
         file2 = discord.File(io.BytesIO(html.encode("utf-8")), filename=f"transcript-{channel.name}.html")
         await transcript_ch.send(embed=embed, file=file2)
 
-    notes = get_ticket_note(channel.id)
-    if notes and transcript_ch:
-        note_text = "\n".join([f"**{n['author']}:** {n['note']}" for n in notes])
-        note_embed = discord.Embed(title="📝 Ghi Chú Nội Bộ", description=note_text, color=0xFEE75C, timestamp=datetime.now(timezone.utc))
-        note_embed.set_footer(text=f"Ticket: {ticket_name}")
-        await transcript_ch.send(embed=note_embed)
-
     await channel.delete()
 
     # LOG
@@ -282,35 +274,6 @@ async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
 
 # ══════════════════════════════════════════
 # MODALS
-# ══════════════════════════════════════════
-class AddStaffModal(Modal):
-    def __init__(self):
-        super().__init__(title="📎 Thêm Staff vào Ticket")
-    user_id_input = TextInput(label="ID của Staff", placeholder="Nhập User ID", min_length=15, max_length=20)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            uid    = int(self.user_id_input.value.strip())
-            member = interaction.guild.get_member(uid)
-            if not member:
-                return await interaction.response.send_message("❌ Không tìm thấy member này.", ephemeral=True)
-            overwrite = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_messages=True)
-            await interaction.channel.set_permissions(member, overwrite=overwrite)
-            await interaction.response.send_message(f"✅ Đã thêm {member.mention} vào ticket!")
-        except ValueError:
-            await interaction.response.send_message("❌ ID không hợp lệ!", ephemeral=True)
-
-class NoteModal(Modal):
-    def __init__(self, channel_id: int):
-        super().__init__(title="📝 Thêm Ghi Chú Nội Bộ")
-        self.channel_id = channel_id
-    note_input = TextInput(label="Nội dung ghi chú", placeholder="Ghi chú chỉ staff thấy...", style=discord.TextStyle.paragraph, max_length=500)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        add_ticket_note(self.channel_id, str(interaction.user), self.note_input.value)
-        embed = discord.Embed(title="📝 Ghi Chú Nội Bộ", description=self.note_input.value, color=0xFEE75C, timestamp=datetime.now(timezone.utc))
-        embed.set_footer(text=f"Bởi {interaction.user} • Chỉ staff thấy")
-        await interaction.response.send_message(embed=embed)
 
 # ══════════════════════════════════════════
 # ITEM SELECT
@@ -468,18 +431,6 @@ class TicketButtons(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Add Staff", emoji="📎", style=discord.ButtonStyle.grey, custom_id="add_staff")
-    async def add_staff(self, interaction: discord.Interaction, button: Button):
-        if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
-        await interaction.response.send_modal(AddStaffModal())
-
-    @discord.ui.button(label="Ghi chú", emoji="📝", style=discord.ButtonStyle.grey, custom_id="add_note")
-    async def add_note(self, interaction: discord.Interaction, button: Button):
-        if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
-        await interaction.response.send_modal(NoteModal(interaction.channel.id))
-
     @discord.ui.button(label="Đóng ticket", emoji="🔒", style=discord.ButtonStyle.red, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: Button):
         if not is_staff_member(interaction.user):
@@ -496,19 +447,6 @@ class TicketButtons(View):
             f"⚠️ {interaction.user.mention} — hãy dùng lệnh `.done <số tiền>` để hoàn thành đơn.\nVí dụ: `.done 50k`, `.done 1tr5`, `.done 200000`",
             delete_after=20
         )
-
-    @discord.ui.button(label="Gửi QR", emoji="📱", style=discord.ButtonStyle.green, custom_id="send_qr")
-    async def send_qr(self, interaction: discord.Interaction, button: Button):
-        if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
-        qr_path = get_qr_path()
-        if not qr_path or not os.path.exists(qr_path):
-            return await interaction.response.send_message("❌ Chưa có QR! Admin cài QR qua `.settings` trước.", ephemeral=True)
-        file  = discord.File(qr_path, filename="qr.png")
-        embed = discord.Embed(title="📱  Mã QR Thanh Toán", description="> 🏦 **MB Bank** — `0702557706` — HOVANBUT\n> 📱 **Thẻ Viettel** bị trừ thêm **18% thuế**\n> ⚠️ Ghi rõ nội dung: `[tên MC] mua [item]`", color=0x57F287, timestamp=datetime.now(timezone.utc))
-        embed.set_image(url="attachment://qr.png")
-        embed.set_footer(text=f"Gửi bởi {_uname_plain(interaction.user)}")
-        await interaction.response.send_message(embed=embed, file=file)
 
 # ══════════════════════════════════════════
 # COG
@@ -616,18 +554,6 @@ class TicketCog(commands.Cog):
             user=ctx.author,
         )
 
-    @commands.command(name="addnote")
-    async def addnote_cmd(self, ctx, *, note: str = None):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền.")
-        if not (ctx.channel.topic and "|" in ctx.channel.topic): return await ctx.reply("❌ Đây không phải kênh ticket.")
-        if not note: return await ctx.reply("❌ Thiếu nội dung! Ví dụ: `.addnote khách đã chuyển tiền`")
-        add_ticket_note(ctx.channel.id, str(ctx.author), note)
-        embed = discord.Embed(title="📝 Ghi Chú Nội Bộ", description=note, color=0xFEE75C, timestamp=datetime.now(timezone.utc))
-        embed.set_footer(text=f"Bởi {ctx.author} • Chỉ staff thấy")
-        await ctx.reply(embed=embed)
-        try: await ctx.message.delete()
-        except: pass
-
     @commands.command(name="orderbase")
     async def orderbase_cmd(self, ctx):
         if ctx.author.id not in ADMIN_IDS: return
@@ -702,18 +628,6 @@ class TicketCog(commands.Cog):
             ],
             user=interaction.user,
         )
-
-    @discord.app_commands.command(name="addnote", description="Thêm ghi chú nội bộ vào ticket")
-    @discord.app_commands.describe(note="Nội dung ghi chú")
-    async def slash_addnote(self, interaction: discord.Interaction, note: str):
-        if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
-        if not (interaction.channel.topic and "|" in interaction.channel.topic):
-            return await interaction.response.send_message("❌ Đây không phải kênh ticket.", ephemeral=True)
-        add_ticket_note(interaction.channel.id, str(interaction.user), note)
-        embed = discord.Embed(title="📝 Ghi Chú Nội Bộ", description=note, color=0xFEE75C, timestamp=datetime.now(timezone.utc))
-        embed.set_footer(text=f"Bởi {interaction.user} • Chỉ staff thấy")
-        await interaction.response.send_message(embed=embed)
 
     # ══════════════════════════════════════════
     # TICKET INFO
@@ -912,119 +826,7 @@ class TicketCog(commands.Cog):
         embed.set_footer(text=f"Tra cứu bởi {_uname_plain(ctx.author)}")
         await ctx.reply(embed=embed)
 
-    # ══════════════════════════════════════════
-    # QR CÁ NHÂN (.qr / .addqr)
-    # ══════════════════════════════════════════
-    @commands.command(name="qr")
-    async def qr_cmd(self, ctx, member: discord.Member = None):
-        """
-        .qr          → gửi QR của người nhập lệnh
-        .qr @user    → gửi QR của user được mention (nếu có trong list)
-        """
-        target = member or ctx.author
 
-        # Tìm QR cá nhân
-        qr_path = get_seller_qr(target.id)
-
-        # Nếu là chính mình và không có QR riêng → fallback về QR chung
-        if not qr_path or not os.path.exists(qr_path):
-            if target.id == ctx.author.id:
-                qr_path = get_qr_path()
-                if not qr_path or not os.path.exists(qr_path):
-                    return await ctx.reply(
-                        "❌ Bạn chưa có mã QR!\n"
-                        "Dùng `.addqr` để thêm QR của bạn."
-                    )
-                owner_label = "QR Chung (Store)"
-            else:
-                return await ctx.reply(
-                    f"❌ {target.mention} chưa có mã QR trong danh sách."
-                )
-        else:
-            owner_label = target.display_name
-
-        file  = discord.File(qr_path, filename="qr.png")
-        embed = discord.Embed(
-            title=f"📱 Mã QR — {owner_label}",
-            description=(
-                "> 📌 Vui lòng ghi rõ nội dung chuyển khoản\n"
-                "> ⚠️ Thẻ Viettel bị trừ thêm **18% thuế**"
-            ),
-            color=0x57F287,
-            timestamp=datetime.now(timezone.utc),
-        )
-        embed.set_image(url="attachment://qr.png")
-        embed.set_thumbnail(url=target.display_avatar.url)
-        embed.set_footer(text=f"Yêu cầu bởi {_uname_plain(ctx.author)}")
-        await ctx.send(embed=embed, file=file)
-
-    @commands.command(name="addqr")
-    async def addqr_cmd(self, ctx):
-        """
-        Người nhập lệnh có 60s để gửi ảnh QR của mình.
-        Chỉ staff/seller/admin mới dùng được.
-        """
-        if not is_staff_member(ctx.author):
-            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
-
-        prompt = await ctx.reply(
-            "📸 Hãy gửi ảnh mã QR của bạn trong vòng **60 giây**.\n"
-            "*(Chỉ nhận ảnh PNG/JPG/WEBP, tối đa 8 MB)*"
-        )
-
-        def check(m: discord.Message):
-            return (
-                m.author.id == ctx.author.id
-                and m.channel.id == ctx.channel.id
-                and len(m.attachments) > 0
-                and m.attachments[0].content_type
-                and m.attachments[0].content_type.startswith("image/")
-            )
-
-        try:
-            msg: discord.Message = await self.bot.wait_for("message", check=check, timeout=60)
-        except asyncio.TimeoutError:
-            try: await prompt.delete()
-            except: pass
-            return await ctx.send(
-                f"⏰ {ctx.author.mention} Hết giờ! Dùng lại `.addqr` để thử lại.",
-                delete_after=10,
-            )
-
-        attachment = msg.attachments[0]
-        if attachment.size > 8 * 1024 * 1024:
-            return await ctx.reply("❌ Ảnh quá lớn! Tối đa 8 MB.")
-
-        # Xác định đường dẫn lưu
-        qr_dir = "/data" if os.path.isdir("/data") else "."
-        qr_path = os.path.join(qr_dir, f"qr_{ctx.author.id}.png")
-
-        try:
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.get(attachment.url) as resp:
-                    if resp.status != 200:
-                        return await ctx.reply("❌ Không tải được ảnh. Thử lại!")
-                    data_bytes = await resp.read()
-            with open(qr_path, "wb") as f:
-                f.write(data_bytes)
-        except Exception as e:
-            return await ctx.reply(f"❌ Lỗi khi lưu ảnh: `{e}`")
-
-        save_seller_qr(ctx.author.id, qr_path)
-
-        try: await prompt.delete()
-        except: pass
-
-        embed = discord.Embed(
-            title="✅ Đã lưu mã QR",
-            description=f"QR của {ctx.author.mention} đã được cập nhật!\nDùng `.qr` để kiểm tra.",
-            color=0x57F287,
-            timestamp=datetime.now(timezone.utc),
-        )
-        embed.set_image(url=attachment.url)
-        embed.set_footer(text=f"Lưu bởi {_uname_plain(ctx.author)}")
-        await ctx.reply(embed=embed)
 
 
 async def setup(bot):

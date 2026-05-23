@@ -18,10 +18,10 @@ from core.data import (
     save_cfg, load_data, save_data, get_buy_roles, save_buy_roles,
     get_user_total_spent, add_user_spent, get_price_sections, save_price_sections,
     can_use_dangerous_cmd, parse_amount, fmt_amount, _uname, _uname_plain,
-    QR_FILE, get_qr_path, save_qr_path, get_or_fetch_channel,
+    get_or_fetch_channel,
 )
 
-BOT_VERSION = "3.9.1"
+BOT_VERSION = "3.9.2"
 BOT_UPDATED = "2026-05-23"
 
 # ══════════════════════════════════════════
@@ -252,10 +252,6 @@ class SettingsView(View):
     async def proof(self,    i, b): await self._send_channel_select(i, "cfg_proof_channel",   "Proof Channel",    "Kênh nhận done tự động")
     @discord.ui.button(label="🤖 AI Channel",       style=discord.ButtonStyle.secondary, row=2)
     async def ai(self,       i, b): await self._send_channel_select(i, "cfg_ai_channel",      "AI Channel",       "Kênh AI tự động trả lời mọi tin nhắn")
-    @discord.ui.button(label="🖼️ Cập nhật QR",     style=discord.ButtonStyle.primary,   row=3)
-    async def qr(self,       i, b):
-        if i.user.id not in ADMIN_IDS: return await i.response.send_message("❌ Chỉ admin.", ephemeral=True)
-        await i.response.send_modal(SetQRModal())
 
 class ChannelConfigSelect(Select):
     def __init__(self, cfg_key, title, options):
@@ -279,38 +275,6 @@ class RoleConfigSelect(Select):
         save_cfg(self.cfg_key, role_id)
         await interaction.response.send_message(f"✅ Đã cài **{self.title}** → <@&{role_id}>", ephemeral=True)
 
-class SetQRModal(Modal):
-    def __init__(self): super().__init__(title="🖼️ Cập Nhật Ảnh QR")
-    url_input = TextInput(label="URL ảnh QR (để trống nếu đính kèm file)", placeholder="https://i.imgur.com/abc123.png", required=False, max_length=500)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        import urllib.request
-        url = self.url_input.value.strip()
-        if url:
-            try:
-                qr_path = QR_FILE
-                urllib.request.urlretrieve(url, qr_path)
-                save_qr_path(qr_path)
-                embed = discord.Embed(title="✅  Đã Cập Nhật QR", description="Mã QR mới đã được lưu từ URL.", color=0x57F287, timestamp=datetime.now(timezone.utc))
-                embed.set_image(url=url)
-                return await interaction.response.send_message(embed=embed, ephemeral=True)
-            except Exception as e:
-                return await interaction.response.send_message(f"❌ Không tải được ảnh từ URL: `{e}`", ephemeral=True)
-        await interaction.response.send_message("📎 Hãy **đính kèm ảnh QR** vào tin nhắn tiếp theo trong vòng **60 giây**.", ephemeral=True)
-        def check(m): return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id and len(m.attachments) > 0
-        import asyncio
-        try:
-            msg = await interaction.client.wait_for("message", check=check, timeout=60)
-            att = msg.attachments[0]
-            if not att.content_type or not att.content_type.startswith("image/"): return await interaction.followup.send("❌ File không phải ảnh!", ephemeral=True)
-            qr_path = QR_FILE
-            await att.save(qr_path); save_qr_path(qr_path)
-            try: await msg.delete()
-            except: pass
-            embed = discord.Embed(title="✅  Đã Cập Nhật QR", description="Mã QR mới đã được lưu!\nDùng `.qr` để kiểm tra.", color=0x57F287, timestamp=datetime.now(timezone.utc))
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        except asyncio.TimeoutError:
-            await interaction.followup.send("⏰ Hết thời gian!", ephemeral=True)
 
 # ══════════════════════════════════════════
 # SETUP — MAIN MENU
@@ -1029,8 +993,6 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📸 Proof Channel",    value=ch("cfg_proof_channel",   1469647159560241318), inline=True)
         embed.add_field(name="🤖 AI Channel",        value=ch("cfg_ai_channel",      0),                   inline=True)
         embed.add_field(name="🔤 Font server",       value=FONT_LABELS.get(data.get("cfg_font","normal"),"normal"), inline=True)
-        qr_val = data.get("qr_path") or "Chưa cài"
-        embed.add_field(name="🖼️ QR Path",           value=f"`{qr_val}`",                                              inline=False)
         embed.set_footer(text=f"Nhấn nút bên dưới để thay đổi  •  Yêu cầu bởi {ctx.author}")
         await ctx.reply(embed=embed, view=SettingsView(ctx.guild))
 
@@ -1203,7 +1165,7 @@ class AdminCog(commands.Cog):
         embed.set_footer(text=f"Yêu cầu bởi {ctx.author}  •  Timeout 3 phút")
         await ctx.reply(embed=embed, view=SetupMainView(ctx))
 
-    # ── .botinfo / .qr ──
+    # ── .botinfo ──
     @commands.command(name="botinfo")
     async def botinfo_cmd(self, ctx):
         import platform
@@ -1363,11 +1325,7 @@ class AdminCog(commands.Cog):
                      "`.delemoji <tên>` — Xóa emoji\n"
                      "`.rename #kênh <tên mới>` — Đổi tên kênh\n"
                      "`.setperm #kênh @role <quyền>` — Cài quyền kênh\n"
-                     "`.mkchannel <text|voice|category> <tên>` — Tạo kênh\n"
-                     "`.sellerchannel <text|voice|category> <tên>` — Tạo kênh (seller)", False),
-                    ("💳 QR",
-                     "`.qr [@user]` — Xem mã QR thanh toán\n"
-                     "`/qr` — Slash tương đương", False),
+                     "`.mkchannel <text|voice|category> <tên>` — Tạo kênh", False),
                     ("🔷 Slash commands",
                      "`/clear` `/addrole` `/removerole` `/ping`\n"
                      "`/userinfo` `/serverinfo` `/botinfo`", False),
@@ -1419,7 +1377,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`", inline=True)
         embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.mute` `.warn`\n`.slowmode` `.lock` `.automod`", inline=True)
-        embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel` `.qr`", inline=True)
+        embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel`", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
 
@@ -1613,17 +1571,6 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📋 Version",  value=f"`v{BOT_VERSION}`",                     inline=True)
         if self.bot.user.avatar: embed.set_thumbnail(url=self.bot.user.avatar.url)
         await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="qr", description="Gửi mã QR thanh toán")
-    async def slash_qr(self, interaction: discord.Interaction):
-        import os
-        qr_path = get_qr_path()
-        if not qr_path or not os.path.exists(qr_path): return await interaction.response.send_message("❌ Chưa có QR! Admin cài qua `.settings`.", ephemeral=True)
-        file  = discord.File(qr_path, filename="qr.png")
-        embed = discord.Embed(title="📱  Mã QR Thanh Toán", color=0x57F287, timestamp=datetime.now(timezone.utc))
-        embed.description = "> 🏦 **MB Bank** — `0702557706` — HOVANBUT\n> 📱 **Thẻ Viettel** bị trừ thêm **18% thuế**\n> ⚠️ Ghi rõ: `[tên MC] mua [item]`"
-        embed.set_image(url="attachment://qr.png")
-        await interaction.response.send_message(embed=embed, file=file)
 
     # ── Error handler ──
     @commands.Cog.listener()
