@@ -403,25 +403,25 @@ class TicketPanel(View):
     @discord.ui.button(label="Mua hàng", emoji="🛒", style=discord.ButtonStyle.green, custom_id="panel_buy")
     async def buy(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("🛒 **Bạn muốn mua loại nào?**", view=ItemSelectView(trade_type="sell"))
+            await interaction.response.send_message("🛒 **Bạn muốn mua loại nào?**", view=ItemSelectView(trade_type="sell"), ephemeral=True)
         except Exception as e:
-            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`")
+            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
             except: pass
 
     @discord.ui.button(label="Bán hàng", emoji="💸", style=discord.ButtonStyle.blurple, custom_id="panel_sell")
     async def sell(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("💸 **Bạn muốn bán loại nào?**", view=ItemSelectView(trade_type="buy"))
+            await interaction.response.send_message("💸 **Bạn muốn bán loại nào?**", view=ItemSelectView(trade_type="buy"), ephemeral=True)
         except Exception as e:
-            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`")
+            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
             except: pass
 
     @discord.ui.button(label="Dịch Vụ", emoji="🎮", style=discord.ButtonStyle.grey, custom_id="panel_service")
     async def service(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("🎮 **Bạn cần dịch vụ nào?**", view=ServiceSelectView())
+            await interaction.response.send_message("🎮 **Bạn cần dịch vụ nào?**", view=ServiceSelectView(), ephemeral=True)
         except Exception as e:
-            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`")
+            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
             except: pass
 
 # ══════════════════════════════════════════
@@ -434,14 +434,14 @@ class TicketButtons(View):
     @discord.ui.button(label="Đóng ticket", emoji="🔒", style=discord.ButtonStyle.red, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: Button):
         if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Không có quyền.")
+            return await interaction.response.send_message("❌ Không có quyền.", ephemeral=True)
         await interaction.response.defer()
         await _close_ticket(interaction.channel, interaction.client, closer=interaction.user)
 
     @discord.ui.button(label="Hoàn thành đơn", emoji="✅", style=discord.ButtonStyle.green, custom_id="complete_order")
     async def complete_order(self, interaction: discord.Interaction, button: Button):
         if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         await interaction.channel.send(
             f"⚠️ {interaction.user.mention} — hãy dùng lệnh `.done <số tiền>` để hoàn thành đơn.\nVí dụ: `.done 50k`, `.done 1tr5`, `.done 200000`",
