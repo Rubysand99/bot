@@ -1992,13 +1992,11 @@ class AdminCog(commands.Cog):
             await message.add_reaction("⚠️")
             return
 
-        # Đổi tên: ✔️•... → ❌•...
+        # Đổi tên: ✅•... hoặc ✔️•... → ❌•...
         old_name = channel.name
-        if old_name.startswith("✔️•") or old_name.startswith("✔️•"):
-            # Thay ✔️• thành ❌•
+        if "•" in old_name:
+            # Bỏ prefix trước dấu • đầu tiên, thêm ❌•
             new_name = "❌•" + old_name.split("•", 1)[-1]
-        elif old_name.startswith("✔"):
-            new_name = "❌" + old_name[1:]
         else:
             # Không có prefix ✔️ thì thêm ❌• vào đầu
             new_name = "❌•" + old_name
