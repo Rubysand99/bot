@@ -1982,9 +1982,12 @@ class AdminCog(commands.Cog):
         if not (content.startswith("sold") or content.startswith("## sold")):
             return
 
-        # Chỉ seller (có quyền manage_channels trong kênh) hoặc admin mới trigger
-        perms = channel.permissions_for(message.author)
-        if not (perms.manage_channels or message.author.id in ADMIN_IDS):
+        # Chỉ seller role hoặc admin mới trigger
+        seller_role_id = get_cfg_seller_role(message.guild.id)
+        seller_role = message.guild.get_role(seller_role_id) if seller_role_id else None
+        is_seller = seller_role is not None and seller_role in message.author.roles
+        is_admin = message.author.id in ADMIN_IDS or message.author.guild_permissions.administrator
+        if not (is_seller or is_admin):
             return
 
         sold_category = message.guild.get_channel(self.SOLD_CATEGORY_ID)
