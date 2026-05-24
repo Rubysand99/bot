@@ -76,6 +76,9 @@ async def handle_ai_message(message: discord.Message):
     ai_ch_id = get_cfg_ai_channel()
     if not ai_ch_id or message.channel.id != ai_ch_id:
         return
+    # Bỏ qua nếu là lệnh bot (bắt đầu bằng prefix . / / hoặc !)
+    if message.content and message.content[0] in ('.', '/', '!'):
+        return
     async with message.channel.typing():
         reply = await _call_groq(message.author.id, message.content)
     if len(reply) <= 2000:
@@ -196,17 +199,17 @@ class AICog(commands.Cog):
     @discord.app_commands.command(name="aireset", description="Xoá toàn bộ lịch sử AI (admin)")
     async def slash_aireset(self, interaction: discord.Interaction):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+            return await interaction.response.send_message("❌ Chỉ admin.")
         _ai_chat_history.clear()
-        await interaction.response.send_message("✅ Đã xoá toàn bộ lịch sử AI.", ephemeral=True)
+        await interaction.response.send_message("✅ Đã xoá toàn bộ lịch sử AI.")
 
     @discord.app_commands.command(name="mychat", description="Xoá lịch sử chat AI của bạn")
     async def slash_mychat(self, interaction: discord.Interaction):
         if interaction.user.id in _ai_chat_history:
             del _ai_chat_history[interaction.user.id]
-            await interaction.response.send_message("✅ Đã xoá lịch sử chat AI của bạn.", ephemeral=True)
+            await interaction.response.send_message("✅ Đã xoá lịch sử chat AI của bạn.")
         else:
-            await interaction.response.send_message("ℹ️ Bạn chưa có lịch sử chat AI.", ephemeral=True)
+            await interaction.response.send_message("ℹ️ Bạn chưa có lịch sử chat AI.")
 
 
 async def setup(bot):

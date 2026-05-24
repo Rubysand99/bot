@@ -198,13 +198,13 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên", reason="Lý do ban")
     async def slash_ban(self, interaction: discord.Interaction, member: discord.Member, reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
         if member.top_role >= interaction.guild.me.top_role:
-            return await interaction.response.send_message("❌ Role thành viên này cao hơn bot.", ephemeral=True)
+            return await interaction.response.send_message("❌ Role thành viên này cao hơn bot.")
         try:
             await member.ban(reason=f"{reason} — Bởi {interaction.user}", delete_message_days=0)
         except discord.Forbidden:
-            return await interaction.response.send_message("❌ Bot không có quyền ban.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bot không có quyền ban.")
         embed = discord.Embed(title="🔨 Đã Ban", color=0xED4245, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="👤 Thành viên", value=f"{member} (`{member.id}`)", inline=True)
         embed.add_field(name="📝 Lý do",      value=reason,                      inline=True)
@@ -242,9 +242,9 @@ class ModCog(commands.Cog):
     @app_commands.describe(user_id="ID của user cần unban", reason="Lý do")
     async def slash_unban(self, interaction: discord.Interaction, user_id: str, reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
         if not user_id.isdigit():
-            return await interaction.response.send_message("❌ ID không hợp lệ!", ephemeral=True)
+            return await interaction.response.send_message("❌ ID không hợp lệ!")
         try:
             user = await self.bot.fetch_user(int(user_id))
             await interaction.guild.unban(user, reason=f"{reason} — Bởi {interaction.user}")
@@ -253,7 +253,7 @@ class ModCog(commands.Cog):
             embed.add_field(name="📝 Lý do", value=reason,                  inline=True)
             await interaction.response.send_message(embed=embed)
         except discord.NotFound:
-            await interaction.response.send_message("❌ User không tìm thấy.", ephemeral=True)
+            await interaction.response.send_message("❌ User không tìm thấy.")
 
     # ══════════════════════════════════════
     # KICK
@@ -288,11 +288,11 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên", reason="Lý do kick")
     async def slash_kick(self, interaction: discord.Interaction, member: discord.Member, reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
         try:
             await member.kick(reason=f"{reason} — Bởi {interaction.user}")
         except discord.Forbidden:
-            return await interaction.response.send_message("❌ Bot không có quyền kick.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bot không có quyền kick.")
         embed = discord.Embed(title="👢 Đã Kick", color=0xFEE75C)
         embed.add_field(name="👤 Thành viên", value=f"{member} (`{member.id}`)", inline=True)
         embed.add_field(name="📝 Lý do",      value=reason,                      inline=True)
@@ -341,13 +341,13 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên", duration="Thời gian: 10m, 1h, 2d", reason="Lý do")
     async def slash_mute(self, interaction: discord.Interaction, member: discord.Member, duration: str = "10m", reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
         td = _parse_duration(duration)
         if not td:
-            return await interaction.response.send_message("❌ Thời gian không hợp lệ! Dùng: `10s`, `5m`, `1h`, `2d`", ephemeral=True)
+            return await interaction.response.send_message("❌ Thời gian không hợp lệ! Dùng: `10s`, `5m`, `1h`, `2d`")
         role = await self._get_or_create_muted_role(interaction.guild)
         if role in member.roles:
-            return await interaction.response.send_message(f"❌ {member.mention} đã bị mute rồi!", ephemeral=True)
+            return await interaction.response.send_message(f"❌ {member.mention} đã bị mute rồi!")
         await member.add_roles(role, reason=f"{reason} — Bởi {interaction.user}")
         embed = discord.Embed(title="🔇 Đã Mute", color=0x9B59B6)
         embed.add_field(name="👤 Thành viên", value=member.mention,     inline=True)
@@ -378,11 +378,11 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên cần unmute")
     async def slash_unmute(self, interaction: discord.Interaction, member: discord.Member):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
         mod  = _get_mod_data()
         role = interaction.guild.get_role(mod.get("muted_role_id", 0))
         if not role or role not in member.roles:
-            return await interaction.response.send_message(f"❌ {member.mention} không bị mute.", ephemeral=True)
+            return await interaction.response.send_message(f"❌ {member.mention} không bị mute.")
         await member.remove_roles(role, reason=f"Unmute bởi {interaction.user}")
         await interaction.response.send_message(f"✅ Đã unmute {member.mention}.")
 
@@ -402,7 +402,7 @@ class ModCog(commands.Cog):
     @app_commands.describe(seconds="Số giây (0 = tắt, tối đa 21600)")
     async def slash_slowmode(self, interaction: discord.Interaction, seconds: int = 0):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
         seconds = max(0, min(seconds, 21600))
         await interaction.channel.edit(slowmode_delay=seconds)
         msg = f"⏱️ Slowmode **{seconds}s**" if seconds else "✅ Đã tắt slowmode."
@@ -425,7 +425,7 @@ class ModCog(commands.Cog):
     @app_commands.command(name="lock", description="Khóa kênh không cho gửi tin nhắn")
     @app_commands.describe(channel="Kênh cần khóa (để trống = kênh hiện tại)")
     async def slash_lock(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
-        if not self._is_mod(interaction.user): return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        if not self._is_mod(interaction.user): return await interaction.response.send_message("❌ Bạn không có quyền.")
         ch = channel or interaction.channel
         await ch.set_permissions(interaction.guild.default_role, send_messages=False)
         await interaction.response.send_message(f"🔒 Đã khóa {ch.mention}.")
@@ -433,7 +433,7 @@ class ModCog(commands.Cog):
     @app_commands.command(name="unlock", description="Mở khóa kênh")
     @app_commands.describe(channel="Kênh cần mở khóa (để trống = kênh hiện tại)")
     async def slash_unlock(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
-        if not self._is_mod(interaction.user): return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        if not self._is_mod(interaction.user): return await interaction.response.send_message("❌ Bạn không có quyền.")
         ch = channel or interaction.channel
         await ch.set_permissions(interaction.guild.default_role, send_messages=None)
         await interaction.response.send_message(f"🔓 Đã mở khóa {ch.mention}.")
@@ -474,7 +474,7 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên", reason="Lý do")
     async def slash_warn(self, interaction: discord.Interaction, member: discord.Member, reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
         count = _add_warn(member.id, reason, str(interaction.user))
         embed = discord.Embed(title="⚠️ Đã Cảnh Cáo", color=0xFEE75C)
         embed.add_field(name="👤 Thành viên", value=member.mention, inline=True)
@@ -509,7 +509,7 @@ class ModCog(commands.Cog):
             embed.set_footer(text=f"Tổng: {len(warns)} warn")
         else:
             embed.description = "✅ Không có warn nào!"
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed)
 
     @commands.command(name="clearwarn", aliases=["warnreset"])
     async def clearwarn_cmd(self, ctx, member: discord.Member = None, index: str = None):
@@ -532,11 +532,11 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên", index="Số thứ tự warn cần xoá (để trống = xoá tất cả)")
     async def slash_clearwarn(self, interaction: discord.Interaction, member: discord.Member, index: int = None):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
         if index:
             ok = _remove_warn(member.id, index - 1)
             if not ok:
-                return await interaction.response.send_message(f"❌ Không tìm thấy warn #{index}.", ephemeral=True)
+                return await interaction.response.send_message(f"❌ Không tìm thấy warn #{index}.")
             await interaction.response.send_message(f"✅ Đã xoá warn #{index} của {member.mention}.")
         else:
             _clear_warns(member.id)

@@ -88,16 +88,16 @@ class BetModal(Modal, title="💰 Nhập số point cược"):
         try:
             amount = int(self.amount.value.strip())
         except ValueError:
-            return await interaction.response.send_message("❌ Số point không hợp lệ!", ephemeral=True)
+            return await interaction.response.send_message("❌ Số point không hợp lệ!")
 
         if amount < 1:
-            return await interaction.response.send_message("❌ Tối thiểu 1 point!", ephemeral=True)
+            return await interaction.response.send_message("❌ Tối thiểu 1 point!")
 
         # Kiểm tra point
         pts = get_user_points(uid)
         if pts < amount:
             return await interaction.response.send_message(
-                f"❌ Bạn chỉ có **{pts} point**, không đủ cược **{amount} point**!", ephemeral=True
+                f"❌ Bạn chỉ có **{pts} point**, không đủ cược **{amount} point**!"
             )
 
         # Nếu đã đặt rồi thì đổi
@@ -110,7 +110,7 @@ class BetModal(Modal, title="💰 Nhập số point cược"):
         else:
             msg = f"✅ Đã đặt cược: {icon} **{self.choice}** — **{amount} point**"
 
-        await interaction.response.send_message(msg, ephemeral=True)
+        await interaction.response.send_message(msg)
 
         # Cập nhật embed
         await _update_session_embed(self.session)
@@ -141,7 +141,7 @@ class BauCuaView(View):
         async def callback(interaction: discord.Interaction):
             session = self.session
             if session.get("status") != "open":
-                return await interaction.response.send_message("❌ Phiên đã kết thúc!", ephemeral=True)
+                return await interaction.response.send_message("❌ Phiên đã kết thúc!")
 
             # Hiện modal nhập point
             modal = BetModal(choice=choice, session=session)

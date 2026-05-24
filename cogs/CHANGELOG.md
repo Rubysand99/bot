@@ -30,11 +30,11 @@ rudeus-bot/
 │
 ├── cogs/
 │   ├── __init__.py
-│   ├── admin.py            # Settings (.st), mod commands, .help, .backfill, slash admin
-│   ├── ticket.py           # Ticket system: panel, views, modals, .done, .sellerchannel
-│   ├── giveaway.py         # Giveaway: /giveaway, /gend, /greroll, /gwlist
+│   ├── admin.py            # .setup (UI quản lý kênh/category/role/server/buy roles), .help, .backfill, auto sold detection
+│   ├── ticket.py           # Ticket system: panel, views, modals, .done, .sellerchannel, auto buy role khi done
+│   ├── giveaway.py         # Giveaway: /giveaway, /gend, /greroll, /gwlist; embed giữ nguyên khi kết thúc
 │   ├── balance.py          # Hệ thống balance kênh
-│   ├── ai_chat.py          # AI chat tích hợp kênh
+│   ├── ai_chat.py          # AI chat tích hợp kênh; bỏ qua tin nhắn lệnh (prefix . / !)
 │   ├── invite.py           # Theo dõi invite, leaderboard
 │   ├── logger.py           # Log sự kiện server
 │   ├── mod.py              # Ban/kick/mute/warn/automod
@@ -64,6 +64,34 @@ rudeus-bot/
 - `BOT_VERSION = "3.9.3"`
 
 ---
+
+## [v4.0.0] — 2026-05-24
+
+### ✨ Thêm mới
+- `cogs/admin.py` — `.setup → 🏷️ Role → 🛒 Buy Roles`: UI quản lý tier buy role trực tiếp trong Discord
+  - Nút **➕ Thêm tier** — Modal nhập Role ID, chi tiêu tối thiểu, tối đa (hỗ trợ `50k`, `1.5tr`, `2m`, `100000`)
+  - Nút **🗑️ Xoá tier** — Dropdown chọn tier cần xoá
+  - Nút **👁️ Xem lại** — Embed danh sách tier hiện tại
+  - Hàm `_parse_amount()`: parse số tiền linh hoạt (`50k`→50.000, `1.5tr`→1.500.000, `2m`→2.000.000)
+  - Tự động sort tier theo `min_amount` tăng dần sau mỗi lần thêm
+
+### 🔧 Thay đổi
+- **Toàn bộ bot** — Bỏ `ephemeral=True` khỏi tất cả response: tin nhắn bot hiện bình thường cho mọi người thấy
+  - `cogs/admin.py`: 136 chỗ
+  - `cogs/giveaway.py`: 21 chỗ
+  - `cogs/ticket.py`: 29 chỗ
+  - `cogs/mod.py`: 20 chỗ
+  - `cogs/balance.py`: 6 chỗ
+  - `cogs/ai_chat.py`: 4 chỗ
+  - `cogs/minigame.py`: 5 chỗ
+  - `cogs/invite.py`: 3 chỗ
+  - `cogs/point.py`: 2 chỗ
+- `cogs/giveaway.py` — Embed giveaway khi kết thúc **giữ nguyên toàn bộ thông tin gốc** (phần thưởng, số người, thời gian), chỉ thêm field `🏆 Winner` bên dưới thay vì thay embed mới
+- `cogs/ai_chat.py` — `handle_ai_message()` bỏ qua tin nhắn bắt đầu bằng `.` `/` `!` (prefix lệnh), chỉ xử lý tin nhắn trò chuyện thường
+- `BOT_VERSION = "4.0.0"`
+
+---
+
 
 ## [v3.9.2] — 2026-05-23
 

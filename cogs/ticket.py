@@ -291,7 +291,7 @@ class ItemSelect(Select):
             await interaction.response.defer(ephemeral=True)
             await create_order_ticket(interaction, trade_type=self.trade_type, item_key=item_key, item_label=item_label)
         except Exception as e:
-            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`")
             except: pass
 
 class ItemSelectView(View):
@@ -309,7 +309,7 @@ class ServiceSelect(Select):
             await interaction.response.defer(ephemeral=True)
             await create_service_ticket(interaction, self.values[0])
         except Exception as e:
-            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`")
             except: pass
 
 class ServiceSelectView(View):
@@ -324,7 +324,7 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
     guild = interaction.guild
     try:
         if await has_ticket(guild, interaction.user):
-            return await interaction.followup.send("❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.", ephemeral=True)
+            return await interaction.followup.send("❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.")
 
         bot = interaction.client
         number     = await get_next_ticket_number(bot)
@@ -347,7 +347,7 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
 
         ping_target = f"<@{seller_id}>" if seller_id else f"<@&{get_cfg_support_role()}>"
         await channel.send(f"{ping_target} | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
+        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}")
 
         await send_log(
             interaction.client, "TICKET_CREATE", f"Ticket Tạo — {channel_name}",
@@ -362,14 +362,14 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
         )
 
     except Exception as e:
-        try: await interaction.followup.send(f"❌ Có lỗi xảy ra khi tạo ticket: `{e}`", ephemeral=True)
+        try: await interaction.followup.send(f"❌ Có lỗi xảy ra khi tạo ticket: `{e}`")
         except: pass
 
 async def create_service_ticket(interaction: discord.Interaction, service_key: str):
     guild = interaction.guild
     try:
         if await has_ticket(guild, interaction.user):
-            return await interaction.followup.send("❌ Bạn đang có ticket mở!", ephemeral=True)
+            return await interaction.followup.send("❌ Bạn đang có ticket mở!")
 
         info   = SERVICE_TABLE[service_key]
         bot    = interaction.client
@@ -388,9 +388,9 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
         await channel.send(f"<@&{get_cfg_support_role()}> | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
+        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}")
     except Exception as e:
-        try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`", ephemeral=True)
+        try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`")
         except: pass
 
 # ══════════════════════════════════════════
@@ -403,25 +403,25 @@ class TicketPanel(View):
     @discord.ui.button(label="Mua hàng", emoji="🛒", style=discord.ButtonStyle.green, custom_id="panel_buy")
     async def buy(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("🛒 **Bạn muốn mua loại nào?**", view=ItemSelectView(trade_type="sell"), ephemeral=True)
+            await interaction.response.send_message("🛒 **Bạn muốn mua loại nào?**", view=ItemSelectView(trade_type="sell"))
         except Exception as e:
-            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`")
             except: pass
 
     @discord.ui.button(label="Bán hàng", emoji="💸", style=discord.ButtonStyle.blurple, custom_id="panel_sell")
     async def sell(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("💸 **Bạn muốn bán loại nào?**", view=ItemSelectView(trade_type="buy"), ephemeral=True)
+            await interaction.response.send_message("💸 **Bạn muốn bán loại nào?**", view=ItemSelectView(trade_type="buy"))
         except Exception as e:
-            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`")
             except: pass
 
     @discord.ui.button(label="Dịch Vụ", emoji="🎮", style=discord.ButtonStyle.grey, custom_id="panel_service")
     async def service(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("🎮 **Bạn cần dịch vụ nào?**", view=ServiceSelectView(), ephemeral=True)
+            await interaction.response.send_message("🎮 **Bạn cần dịch vụ nào?**", view=ServiceSelectView())
         except Exception as e:
-            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`")
             except: pass
 
 # ══════════════════════════════════════════
@@ -434,14 +434,14 @@ class TicketButtons(View):
     @discord.ui.button(label="Đóng ticket", emoji="🔒", style=discord.ButtonStyle.red, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: Button):
         if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Không có quyền.")
         await interaction.response.defer()
         await _close_ticket(interaction.channel, interaction.client, closer=interaction.user)
 
     @discord.ui.button(label="Hoàn thành đơn", emoji="✅", style=discord.ButtonStyle.green, custom_id="complete_order")
     async def complete_order(self, interaction: discord.Interaction, button: Button):
         if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
         await interaction.response.defer(ephemeral=True)
         await interaction.channel.send(
             f"⚠️ {interaction.user.mention} — hãy dùng lệnh `.done <số tiền>` để hoàn thành đơn.\nVí dụ: `.done 50k`, `.done 1tr5`, `.done 200000`",
@@ -571,38 +571,38 @@ class TicketCog(commands.Cog):
     @discord.app_commands.command(name="close", description="Đóng ticket hiện tại")
     async def slash_close(self, interaction: discord.Interaction):
         if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
         if not (interaction.channel.topic and "|" in interaction.channel.topic):
-            return await interaction.response.send_message("❌ Đây không phải kênh ticket.", ephemeral=True)
-        await interaction.response.send_message("🔒 Đang đóng ticket...", ephemeral=True)
+            return await interaction.response.send_message("❌ Đây không phải kênh ticket.")
+        await interaction.response.send_message("🔒 Đang đóng ticket...")
         await _close_ticket(interaction.channel, self.bot, closer=interaction.user)
 
     @discord.app_commands.command(name="done", description="Hoàn thành đơn hàng trong ticket")
     @discord.app_commands.describe(amount="Số tiền giao dịch, vd: 50k, 1tr5, 200000")
     async def slash_done(self, interaction: discord.Interaction, amount: str):
         if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
         if not (interaction.channel.topic and "|" in interaction.channel.topic):
-            return await interaction.response.send_message("❌ Đây không phải kênh ticket.", ephemeral=True)
+            return await interaction.response.send_message("❌ Đây không phải kênh ticket.")
         parsed = parse_amount(amount)
         if not parsed or parsed <= 0:
-            return await interaction.response.send_message(f"❌ Số tiền `{amount}` không hợp lệ!", ephemeral=True)
+            return await interaction.response.send_message(f"❌ Số tiền `{amount}` không hợp lệ!")
         parts = interaction.channel.topic.split("|")
         try: user_id = int(parts[0]) if parts[0].isdigit() else None
         except: user_id = None
         if not user_id:
-            return await interaction.response.send_message("❌ Không đọc được thông tin buyer.", ephemeral=True)
+            return await interaction.response.send_message("❌ Không đọc được thông tin buyer.")
         trade_type = parts[2] if len(parts) > 2 else None
         if trade_type not in ("sell", "buy"):
-            return await interaction.response.send_message("ℹ️ Ticket dịch vụ không tính đơn hàng.", ephemeral=True)
+            return await interaction.response.send_message("ℹ️ Ticket dịch vụ không tính đơn hàng.")
         buyer = interaction.guild.get_member(user_id)
         if not buyer:
-            return await interaction.response.send_message(f"❌ Không tìm thấy buyer (ID: `{user_id}`).", ephemeral=True)
+            return await interaction.response.send_message(f"❌ Không tìm thấy buyer (ID: `{user_id}`).")
         data = load_data()
         completed_key = f"completed_{interaction.channel.id}"
         if data.get(completed_key):
             total = get_user_total_spent(user_id)
-            return await interaction.response.send_message(f"⚠️ Đơn này đã hoàn thành rồi!\nTổng: **{fmt_amount(total)}**", ephemeral=True)
+            return await interaction.response.send_message(f"⚠️ Đơn này đã hoàn thành rồi!\nTổng: **{fmt_amount(total)}**")
         data[completed_key] = True
         save_data(data)
         new_total = add_user_spent(user_id, parsed)

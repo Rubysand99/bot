@@ -611,14 +611,14 @@ class PointCog(commands.Cog):
             @discord.ui.button(label="✅ Xác nhận", style=discord.ButtonStyle.green)
             async def confirm(self, inter: discord.Interaction, btn: Button):
                 if inter.user.id != ctx.author.id:
-                    return await inter.response.send_message("❌ Không phải lệnh của bạn.", ephemeral=True)
+                    return await inter.response.send_message("❌ Không phải lệnh của bạn.")
                 self.choice = True; self.stop()
                 await inter.response.defer()
 
             @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.red)
             async def cancel(self, inter: discord.Interaction, btn: Button):
                 if inter.user.id != ctx.author.id:
-                    return await inter.response.send_message("❌ Không phải lệnh của bạn.", ephemeral=True)
+                    return await inter.response.send_message("❌ Không phải lệnh của bạn.")
                 self.choice = False; self.stop()
                 await inter.response.defer()
 

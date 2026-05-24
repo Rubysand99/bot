@@ -184,7 +184,7 @@ class InviteCog(commands.Cog):
     @discord.app_commands.describe(top="Số người top (mặc định 10)")
     async def slash_invitetop(self, interaction: discord.Interaction, top: int = 10):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+            return await interaction.response.send_message("❌ Chỉ admin.")
         top    = max(1, min(top, 25))
         counts = _get_invite_counts()
         board  = []
@@ -194,7 +194,7 @@ class InviteCog(commands.Cog):
         board.sort(key=lambda x: x[1], reverse=True)
         board = board[:top]
         if not board:
-            return await interaction.response.send_message("❌ Chưa có dữ liệu invite.", ephemeral=True)
+            return await interaction.response.send_message("❌ Chưa có dữ liệu invite.")
         medals = ["🥇","🥈","🥉"]
         lines  = [f"{medals[i] if i<3 else f'`{i+1}.`'} **{_uname(interaction.guild.get_member(uid)) if interaction.guild.get_member(uid) else f'<@{uid}>'}** — **{net}** net" for i,(uid,net,*_) in enumerate(board)]
         embed  = discord.Embed(title=f"🏆 Top {top} Invite", description="\n".join(lines), color=0xF1C40F)
@@ -204,7 +204,7 @@ class InviteCog(commands.Cog):
     @discord.app_commands.describe(member="Thành viên cần reset (để trống = reset tất cả)")
     async def slash_resetinvite(self, interaction: discord.Interaction, member: discord.Member = None):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+            return await interaction.response.send_message("❌ Chỉ admin.")
         if member:
             counts = _get_invite_counts()
             counts.pop(str(member.id), None)
