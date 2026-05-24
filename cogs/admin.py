@@ -963,6 +963,49 @@ class BuyRolesView(View):
     async def refresh(self, interaction: discord.Interaction, _):
         await interaction.response.send_message(embed=_buy_roles_embed())
 
+    @discord.ui.button(label="🔍 Auto Detect", style=discord.ButtonStyle.primary, row=1)
+    async def auto_detect(self, interaction: discord.Interaction, _):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.")
+        import re
+        # Format: "Buyer Xk-Yk", "Buyer Xtr-Ytr", "Buyer Xm-Ym", max có thể bỏ trống (∞)
+        pattern = re.compile(
+            r"buyer\s+([0-9]+(?:[.,][0-9]+)?[ktm]r?)\s*[-–]\s*([0-9]+(?:[.,][0-9]+)?[ktm]r?|\u221e)?",
+            re.IGNORECASE
+        )
+        buy_roles = get_buy_roles() or []
+        existing_ids = {r["role_id"] for r in buy_roles}
+        added = []
+        skipped = []
+
+        for role in interaction.guild.roles:
+            m = pattern.search(role.name)
+            if not m:
+                continue
+            if role.id in existing_ids:
+                skipped.append(role.name)
+                continue
+            min_amount = _parse_amount(m.group(1))
+            max_raw    = m.group(2) or ""
+            max_amount = None if (not max_raw or max_raw == "∞") else _parse_amount(max_raw)
+            if min_amount is None:
+                continue
+            buy_roles.append({"role_id": role.id, "min_amount": min_amount, "max_amount": max_amount})
+            added.append(f"{role.mention} ({fmt_amount(min_amount)} → {fmt_amount(max_amount) if max_amount else '∞'})")
+
+        if not added and not skipped:
+            return await interaction.response.send_message("❌ Không tìm thấy role nào có tên dạng `Buyer Xk-Yk`.")
+
+        buy_roles.sort(key=lambda r: r.get("min_amount", 0))
+        save_buy_roles(buy_roles)
+
+        lines = []
+        if added:
+            lines.append(f"✅ Đã thêm **{len(added)}** tier:\n" + "\n".join(added))
+        if skipped:
+            lines.append(f"⏭️ Bỏ qua **{len(skipped)}** role đã có:\n" + "\n".join(skipped))
+        await interaction.response.send_message("\n\n".join(lines))
+
 
 class AddBuyRoleModal(discord.ui.Modal, title="➕ Thêm Buy Role Tier"):
     role_input = TextInput(label="Role ID", max_length=25)
