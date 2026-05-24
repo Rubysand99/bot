@@ -347,7 +347,7 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
 
         ping_target = f"<@{seller_id}>" if seller_id else f"<@&{get_cfg_support_role()}>"
         await channel.send(f"{ping_target} | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}")
+        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
 
         await send_log(
             interaction.client, "TICKET_CREATE", f"Ticket Tạo — {channel_name}",
@@ -388,7 +388,7 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
         await channel.send(f"<@&{get_cfg_support_role()}> | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}")
+        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
     except Exception as e:
         try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`")
         except: pass
