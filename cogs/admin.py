@@ -225,9 +225,8 @@ class SettingsView(View):
         self.guild = guild
 
     async def _send_channel_select(self, interaction, cfg_key, title, description):
-        options = [discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id)) for ch in sorted(self.guild.text_channels, key=lambda c: c.position)[:25]]
-        select  = ChannelConfigSelect(cfg_key=cfg_key, title=title, options=options)
-        view    = View(timeout=60); view.add_item(select)
+        select = ChannelConfigSelect(cfg_key=cfg_key, title=title)
+        view   = View(timeout=60); view.add_item(select)
         await interaction.response.send_message(f"📌 **{description}**\nChọn kênh:", view=view)
 
     async def _send_role_select(self, interaction, cfg_key, title):
@@ -253,14 +252,17 @@ class SettingsView(View):
     @discord.ui.button(label="🤖 AI Channel",       style=discord.ButtonStyle.secondary, row=2)
     async def ai(self,       i, b): await self._send_channel_select(i, "cfg_ai_channel",      "AI Channel",       "Kênh AI tự động trả lời mọi tin nhắn")
 
-class ChannelConfigSelect(Select):
-    def __init__(self, cfg_key, title, options):
-        super().__init__(placeholder=f"Chọn kênh cho {title}...", options=options)
+class ChannelConfigSelect(discord.ui.ChannelSelect):
+    def __init__(self, cfg_key, title):
+        super().__init__(
+            placeholder=f"Chọn kênh cho {title}...",
+            channel_types=[discord.ChannelType.text],
+        )
         self.cfg_key = cfg_key; self.title = title
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.")
-        ch_id = int(self.values[0])
+        ch_id = self.values[0].id
         save_cfg(self.cfg_key, ch_id)
         await interaction.response.send_message(f"✅ Đã cài **{self.title}** → <#{ch_id}>")
 
