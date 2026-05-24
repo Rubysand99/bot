@@ -451,7 +451,7 @@ class GiveawayCog(commands.Cog):
 
         await ctx.reply(f"✅ Đã chọn {winner_mentions} làm winner giveaway {gw_id_label}!")
         if channel:
-            await channel.send(f"🎊 Chúc mừng {winner_mentions}! Bạn đã được admin chọn làm winner giveaway {gw_id_label} — **{found_gw.get('prize', '')}**!")
+            await channel.send(f"🎊 Chúc mừng {winner_mentions}! Bạn đã trúng **{found_gw.get('prize', '')}**!")
 
 
 async def setup(bot):
