@@ -436,10 +436,10 @@ class GiveawayCog(commands.Cog):
             orig    = msg.embeds[0] if msg.embeds else None
             if orig:
                 embed = orig.copy()
-                embed.add_field(name="🏆 Winner (Admin Pick)", value=winner_mentions, inline=False)
+                embed.add_field(name="🏆 Winner", value=winner_mentions, inline=False)
             else:
                 embed = discord.Embed(title="🎉  GIVEAWAY", color=0xF1C40F)
-                embed.add_field(name="🏆 Winner (Admin Pick)", value=winner_mentions, inline=False)
+                embed.add_field(name="🏆 Winner", value=winner_mentions, inline=False)
             await msg.edit(embed=embed, view=None)
         except Exception as e:
             await ctx.reply(f"⚠️ Không cập nhật được embed: {e}")
