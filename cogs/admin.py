@@ -791,7 +791,7 @@ class SetupRoleView(View):
     async def take(self, interaction, _): await interaction.response.send_modal(AssignRoleModal(action="take"))
 
     @discord.ui.button(label="🛒 Buy Roles", style=discord.ButtonStyle.primary, row=1)
-    async def buy_roles(self, interaction: discord.Interaction, _):
+    async def buy_roles_btn(self, interaction: discord.Interaction, _):
         if interaction.user.id not in ADMIN_IDS:
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_message(
@@ -895,13 +895,30 @@ class AssignRoleModal(discord.ui.Modal):
 
 
 # ══════════════════════════════════════════
-# SETUP — BUY ROLES (tier theo chi tiêu)
-# ══════════════════════════════════════════
+# ══════════════════════════
+# SETUP — BUY ROLES
+# ══════════════════════════
+def _parse_amount(text: str):
+    import re as _re
+    s = text.strip().lower().replace(" ", "")
+    m = _re.fullmatch(r"([0-9]+(?:[.,][0-9]+)?)([ktm]r?)?", s)
+    if not m:
+        return None
+    num_str = m.group(1).replace(",", ".")
+    suffix = (m.group(2) or "").rstrip("r")
+    try:
+        num = float(num_str)
+    except ValueError:
+        return None
+    multiplier = {"k": 1_000, "t": 1_000_000, "m": 1_000_000}.get(suffix, 1)
+    return int(num * multiplier)
+
+
 def _buy_roles_embed() -> discord.Embed:
     buy_roles = get_buy_roles()
     embed = discord.Embed(title="🛒 Quản Lý Buy Roles", color=0x5865F2)
     if not buy_roles:
-        embed.description = "Chưa có tier nào. Nhấn **➕ Thêm tier** để bắt đầu."
+        embed.description = "Chưa có tier nào. Nhấn **➕ Thêm tier** đả bắt đầu."
     else:
         lines = []
         for i, r in enumerate(buy_roles):
@@ -923,7 +940,7 @@ class BuyRolesView(View):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_modal(AddBuyRoleModal())
 
-    @discord.ui.button(label="🗑️ Xoá tier", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(label="🗑️ Xóa tier", style=discord.ButtonStyle.danger, row=0)
     async def delete(self, interaction: discord.Interaction, _):
         if interaction.user.id not in ADMIN_IDS:
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
@@ -938,8 +955,9 @@ class BuyRolesView(View):
             )
             for i, r in enumerate(buy_roles)
         ]
-        v = View(timeout=60); v.add_item(_DeleteBuyRoleSelect(opts))
-        await interaction.response.send_message("🗑️ Chọn tier cần xoá:", view=v, ephemeral=True)
+        v = View(timeout=60)
+        v.add_item(_DeleteBuyRoleSelect(opts))
+        await interaction.response.send_message("🗑️ Chọn tier cần xóa:", view=v, ephemeral=True)
 
     @discord.ui.button(label="👁️ Xem lại", style=discord.ButtonStyle.secondary, row=0)
     async def refresh(self, interaction: discord.Interaction, _):
@@ -948,11 +966,10 @@ class BuyRolesView(View):
 
 class AddBuyRoleModal(discord.ui.Modal, title="➕ Thêm Buy Role Tier"):
     role_input = TextInput(label="Role ID", max_length=25)
-    min_input  = TextInput(label="Chi tiêu tối thiểu (VNĐ)", placeholder="vd: 100000", max_length=15)
-    max_input  = TextInput(label="Chi tiêu tối đa (VNĐ, để trống = ∞)", required=False, max_length=15)
+    min_input  = TextInput(label="Chi tiêu tối thiểu (VNĐ)", placeholder="vd: 50k / 1.5tr / 100000", max_length=15)
+    max_input  = TextInput(label="Chi tiêu tối đa (VNĐ, để trống = ∞)", placeholder="vd: 500k / 2tr", required=False, max_length=15)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Validate role
         try:
             role_id = int(self.role_input.value.strip())
             role = interaction.guild.get_role(role_id)
@@ -961,23 +978,20 @@ class AddBuyRoleModal(discord.ui.Modal, title="➕ Thêm Buy Role Tier"):
         except ValueError:
             return await interaction.response.send_message("❌ Role ID không hợp lệ.", ephemeral=True)
 
-        # Validate min
-        try:
-            min_amount = int(self.min_input.value.strip().replace(".", "").replace(",", ""))
-        except ValueError:
-            return await interaction.response.send_message("❌ Số tiền tối thiểu không hợp lệ.", ephemeral=True)
+        min_amount = _parse_amount(self.min_input.value)
+        if min_amount is None:
+            return await interaction.response.send_message(
+                "❌ Số tiền tối thiểu không hợp lệ.\n💡 Ví dụ: `50k`, `1.5tr`, `100000`", ephemeral=True)
 
-        # Validate max
         max_amount = None
         if self.max_input.value.strip():
-            try:
-                max_amount = int(self.max_input.value.strip().replace(".", "").replace(",", ""))
-                if max_amount <= min_amount:
-                    return await interaction.response.send_message("❌ Tối đa phải lớn hơn tối thiểu.", ephemeral=True)
-            except ValueError:
-                return await interaction.response.send_message("❌ Số tiền tối đa không hợp lệ.", ephemeral=True)
+            max_amount = _parse_amount(self.max_input.value)
+            if max_amount is None:
+                return await interaction.response.send_message(
+                    "❌ Số tiền tối đa không hợp lệ.\n💡 Ví dụ: `500k`, `2tr`, `500000`", ephemeral=True)
+            if max_amount <= min_amount:
+                return await interaction.response.send_message("❌ Tối đa phải lớn hơn tối thiểu.", ephemeral=True)
 
-        # Tránh trùng role_id
         buy_roles = get_buy_roles() or []
         if any(r["role_id"] == role_id for r in buy_roles):
             return await interaction.response.send_message(f"❌ Role {role.mention} đã tồn tại trong danh sách.", ephemeral=True)
@@ -994,7 +1008,8 @@ class AddBuyRoleModal(discord.ui.Modal, title="➕ Thêm Buy Role Tier"):
 
 
 class _DeleteBuyRoleSelect(Select):
-    def __init__(self, opts): super().__init__(placeholder="Chọn tier cần xoá…", options=opts)
+    def __init__(self, opts):
+        super().__init__(placeholder="Chọn tier cần xóa…", options=opts)
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id not in ADMIN_IDS:
@@ -1007,13 +1022,12 @@ class _DeleteBuyRoleSelect(Select):
         save_buy_roles(buy_roles)
         max_str = fmt_amount(removed["max_amount"]) if removed.get("max_amount") else "∞"
         await interaction.response.send_message(
-            f"🗑️ Đã xoá tier <@&{removed['role_id']}> "
+            f"🗑️ Đã xóa tier <@&{removed['role_id']}> "
             f"({fmt_amount(removed.get('min_amount', 0))} → {max_str}).",
             ephemeral=True,
         )
 
 
-# ══════════════════════════════════════════
 # SETUP — SERVER
 # ══════════════════════════════════════════
 class SetupServerView(View):
