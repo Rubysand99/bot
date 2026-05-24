@@ -4,6 +4,7 @@ v1.0 — 2026-05-15
 """
 
 import discord
+from cogs.logger import send_log
 from discord.ext import commands
 from discord.ui import View, Button
 from datetime import datetime, timezone, timedelta
@@ -117,6 +118,8 @@ class PointCog(commands.Cog):
             embed.add_field(name="👤 Dành cho", value="Bất kỳ ai", inline=True)
         embed.set_footer(text="Dùng .redeem <mã> để nhận point")
         await ctx.reply(embed=embed)
+        await send_log(ctx.bot, "POINT", f"Gencode {pts:,}pt — {member.display_name if member else 'Bất kỳ'}",
+            fields=[("Admin", ctx.author.mention, True), ("Code", f"`{code}`", True), ("Dành cho", member.mention if member else "Bất kỳ", True)])
 
         # ── Gửi log vào kênh CODE_GEN_LOG_CHANNEL_ID ──
         log_ch = ctx.bot.get_channel(CODE_GEN_LOG_CHANNEL_ID)
@@ -278,6 +281,8 @@ class PointCog(commands.Cog):
         else:
             embed.add_field(name="✅ Redeem", value="Sẵn sàng — dùng `.redeem <mã>`", inline=False)
         await ctx.reply(embed=embed)
+        await send_log(ctx.bot, "POINT", f"Redeem +{pts:,}pt",
+            fields=[("User", ctx.author.mention, True), ("Code", f"`{code}`", True), ("Tổng", f"{new_pts:,}pt", True)])
 
     # ══════════════════════════════════════
     # .addpoint — Admin cộng/trừ point thủ công
@@ -611,14 +616,14 @@ class PointCog(commands.Cog):
             @discord.ui.button(label="✅ Xác nhận", style=discord.ButtonStyle.green)
             async def confirm(self, inter: discord.Interaction, btn: Button):
                 if inter.user.id != ctx.author.id:
-                    return await inter.response.send_message("❌ Không phải lệnh của bạn.")
+                    return await inter.response.send_message("❌ Không phải lệnh của bạn.", ephemeral=True)
                 self.choice = True; self.stop()
                 await inter.response.defer()
 
             @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.red)
             async def cancel(self, inter: discord.Interaction, btn: Button):
                 if inter.user.id != ctx.author.id:
-                    return await inter.response.send_message("❌ Không phải lệnh của bạn.")
+                    return await inter.response.send_message("❌ Không phải lệnh của bạn.", ephemeral=True)
                 self.choice = False; self.stop()
                 await inter.response.defer()
 

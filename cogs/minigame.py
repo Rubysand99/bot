@@ -4,6 +4,7 @@
 # Bỏ: Nối Từ, Vua Tiếng Việt
 
 import discord
+from cogs.logger import send_log
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Button, Modal, TextInput
@@ -88,16 +89,16 @@ class BetModal(Modal, title="💰 Nhập số point cược"):
         try:
             amount = int(self.amount.value.strip())
         except ValueError:
-            return await interaction.response.send_message("❌ Số point không hợp lệ!")
+            return await interaction.response.send_message("❌ Số point không hợp lệ!", ephemeral=True)
 
         if amount < 1:
-            return await interaction.response.send_message("❌ Tối thiểu 1 point!")
+            return await interaction.response.send_message("❌ Tối thiểu 1 point!", ephemeral=True)
 
         # Kiểm tra point
         pts = get_user_points(uid)
         if pts < amount:
             return await interaction.response.send_message(
-                f"❌ Bạn chỉ có **{pts} point**, không đủ cược **{amount} point**!"
+                f"❌ Bạn chỉ có **{pts} point**, không đủ cược **{amount} point**!", ephemeral=True
             )
 
         # Nếu đã đặt rồi thì đổi
@@ -110,7 +111,7 @@ class BetModal(Modal, title="💰 Nhập số point cược"):
         else:
             msg = f"✅ Đã đặt cược: {icon} **{self.choice}** — **{amount} point**"
 
-        await interaction.response.send_message(msg)
+        await interaction.response.send_message(msg, ephemeral=True)
 
         # Cập nhật embed
         await _update_session_embed(self.session)
@@ -141,7 +142,7 @@ class BauCuaView(View):
         async def callback(interaction: discord.Interaction):
             session = self.session
             if session.get("status") != "open":
-                return await interaction.response.send_message("❌ Phiên đã kết thúc!")
+                return await interaction.response.send_message("❌ Phiên đã kết thúc!", ephemeral=True)
 
             # Hiện modal nhập point
             modal = BetModal(choice=choice, session=session)
@@ -278,6 +279,9 @@ async def _shake_and_result(session: dict):
     channel = session.get("channel_obj")
     if channel:
         await channel.send(embed=e)
+        await send_log(channel.guild._state._get_client(), "MINIGAME", "Kết thúc Bầu Cua",
+            fields=[("Xúc xắc", " ".join(str(d) for d in session.get("dice", [])), True),
+                    ("Thắng", str(len(winners)), True), ("Thua", str(len(losers)), True)])
 
 
 async def _session_timeout(session: dict):
@@ -433,6 +437,8 @@ class Minigame(commands.Cog):
         if bet > 0:
             e.set_footer(text=f"Cược: {bet}pt | Thắng +{int(bet*WIN_RATE)}pt | Thua -{bet}pt | Hòa hoàn tiền")
         await ctx.reply(embed=e)
+        await send_log(ctx.bot, "MINIGAME", f"BKB — {ctx.author.display_name}",
+            fields=[("Chọn", choice, True), ("Bot", bot_c, True), ("Kết quả", result, True)])
 
     @app_commands.command(name="bkb", description="✂️ Búa Kéo Bao với bot")
     @app_commands.describe(chon="búa, kéo hoặc bao", cuoc="Số point muốn cược")

@@ -8,6 +8,7 @@ import time as _time
 from datetime import datetime, timezone
 
 import discord
+from cogs.logger import send_log
 from discord.ext import commands
 
 from core.data import ADMIN_IDS, load_data, save_data, _uname, _uname_plain
@@ -111,6 +112,8 @@ class InviteCog(commands.Cog):
                 del counts[uid]
                 _save_invite_counts(counts)
             await ctx.reply(f"✅ Đã reset invite của **{_uname(member)}**.")
+            await send_log(self.bot, "INVITE", f"Reset invite — {member}",
+                fields=[("Admin", ctx.author.mention, True), ("Target", member.mention, True)])
         else:
             await ctx.reply("❌ Dùng:\n`.resetinvite @user` — reset 1 người\n`.resetinvite all` — reset toàn bộ")
 
@@ -184,7 +187,7 @@ class InviteCog(commands.Cog):
     @discord.app_commands.describe(top="Số người top (mặc định 10)")
     async def slash_invitetop(self, interaction: discord.Interaction, top: int = 10):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.")
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         top    = max(1, min(top, 25))
         counts = _get_invite_counts()
         board  = []
@@ -194,7 +197,7 @@ class InviteCog(commands.Cog):
         board.sort(key=lambda x: x[1], reverse=True)
         board = board[:top]
         if not board:
-            return await interaction.response.send_message("❌ Chưa có dữ liệu invite.")
+            return await interaction.response.send_message("❌ Chưa có dữ liệu invite.", ephemeral=True)
         medals = ["🥇","🥈","🥉"]
         lines  = [f"{medals[i] if i<3 else f'`{i+1}.`'} **{_uname(interaction.guild.get_member(uid)) if interaction.guild.get_member(uid) else f'<@{uid}>'}** — **{net}** net" for i,(uid,net,*_) in enumerate(board)]
         embed  = discord.Embed(title=f"🏆 Top {top} Invite", description="\n".join(lines), color=0xF1C40F)
@@ -204,7 +207,7 @@ class InviteCog(commands.Cog):
     @discord.app_commands.describe(member="Thành viên cần reset (để trống = reset tất cả)")
     async def slash_resetinvite(self, interaction: discord.Interaction, member: discord.Member = None):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.")
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         if member:
             counts = _get_invite_counts()
             counts.pop(str(member.id), None)

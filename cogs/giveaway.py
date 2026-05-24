@@ -8,6 +8,7 @@ import asyncio
 from datetime import datetime, timezone
 
 import discord
+from cogs.logger import send_log
 from discord import app_commands
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput
@@ -74,6 +75,14 @@ async def end_giveaway(message_id, channel, winners_count, prize, host_id):
         count      = min(winners_count, len(entries))
         winner_ids = random.sample(entries, count)
     winner_mentions = ", ".join(f"<@{uid}>" for uid in winner_ids)
+    try:
+        from cogs.logger import send_log as _sl
+        bot_ref = channel.guild._state._get_client()
+        import asyncio as _asyncio
+        _asyncio.get_event_loop().create_task(_sl(bot_ref, "GIVEAWAY", f"Kết thúc GW — {prize}",
+            fields=[("Winner", winner_mentions, True), ("Host", f"<@{host_id}>", True), ("Kênh", channel.mention, True)]))
+    except Exception:
+        pass
 
     # Giữ nguyên embed gốc, chỉ thêm field winner
     orig = msg.embeds[0] if msg.embeds else None
@@ -167,6 +176,8 @@ class GiveawayView(View):
             print(f"[GIVEAWAY] ⚠️ Không cập nhật được embed: {e}")
 
         await interaction.response.send_message(msg_reply)
+        await send_log(interaction.client, "GIVEAWAY", f"Tham gia GW #{gw.get('gw_id','?')} — {gw['prize']}",
+            fields=[("User", interaction.user.mention, True), ("Tổng tham gia", str(len(entries)), True)])
 
 
 class GiveawayConfirmView(View):
@@ -243,6 +254,8 @@ class GiveawayConfirmView(View):
         save_giveaways_data(active_giveaways)
 
         _gw_tasks[mid] = asyncio.create_task(_giveaway_timer_task(interaction.client, self.channel.id, mid, self.w_count, self.seconds))
+        await send_log(interaction.client, "GIVEAWAY", f"Tạo GW #{gw_id} — {self.prize}",
+            fields=[("Host", self.host.mention, True), ("Thời gian", f"{self.seconds}s", True), ("Số winner", str(self.w_count), True), ("Kênh", self.channel.mention, True)])
 
     @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.danger, custom_id="gw_cancel")
     async def cancel(self, interaction: discord.Interaction, button: Button):
@@ -341,6 +354,8 @@ class GiveawayCog(commands.Cog):
         gw = active_giveaways.get(mid)
         if not gw: return await interaction.response.send_message("❌ Không tìm thấy giveaway đang chạy.")
         await interaction.response.send_message("✅ Đang kết thúc giveaway...")
+        await send_log(interaction.client, "GIVEAWAY", f"Kết thúc sớm GW #{gw.get('gw_id','?')} — {gw.get('prize','')}",
+            fields=[("Admin", interaction.user.mention, True)])
         channel = await get_or_fetch_channel(self.bot, gw["channel_id"])
         if channel:
             await end_giveaway(mid, channel, gw["winners"], gw.get("prize", "phần thưởng"), gw.get("host", 0))
@@ -360,6 +375,8 @@ class GiveawayCog(commands.Cog):
         winner_ids  = random.sample(entries, count)
         mentions    = ", ".join(f"<@{uid}>" for uid in winner_ids)
         await interaction.response.send_message(f"🔄 Reroll! Winner mới: {mentions} 🎉")
+        await send_log(interaction.client, "GIVEAWAY", f"Reroll GW",
+            fields=[("Admin", interaction.user.mention, True), ("Winner mới", mentions, True)])
 
     @app_commands.command(name="gwlist", description="Xem danh sách người tham gia giveaway")
     @app_commands.describe(message_id="ID tin nhắn giveaway")
@@ -446,6 +463,7 @@ class GiveawayCog(commands.Cog):
         save_giveaways_data(active_giveaways)
 
         await ctx.reply(f"✅ Đã chọn {winner_mentions} làm winner giveaway {gw_id_label}! Bot sẽ công bố khi hết giờ.")
+        await send_log(ctx.bot, "GIVEAWAY", f"Admin pick {gw_id_label} — {found_gw.get('prize','')}", fields=[("Admin", ctx.author.mention, True), ("Winner", winner_mentions, True)])
 
 
 async def setup(bot):
