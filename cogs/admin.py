@@ -2008,6 +2008,8 @@ class AdminCog(commands.Cog):
                 reason=f"Sold bởi {message.author} — auto-move",
             )
             await message.add_reaction("✅")
+            await send_log(self.bot, "SOLD", f"Kênh sold: `{old_name}` → `{new_name}`",
+                fields=[("Seller", message.author.mention, True), ("Kênh mới", f"<#{channel.id}>", True), ("Category", sold_category.name, True)])
         except discord.Forbidden:
             await message.add_reaction("⚠️")
         except Exception as e:
