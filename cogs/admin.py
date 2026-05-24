@@ -225,7 +225,13 @@ class SettingsView(View):
         self.guild = guild
 
     async def _send_channel_select(self, interaction, cfg_key, title, description):
-        select = ChannelConfigSelect(cfg_key=cfg_key, title=title)
+        channels = sorted(interaction.guild.text_channels, key=lambda c: c.position)
+        options = [discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id)) for ch in channels]
+        # Discord giới hạn 25 options — nếu nhiều hơn thì dùng modal nhập ID
+        if len(options) > 25:
+            await interaction.response.send_modal(ChannelConfigModal(cfg_key=cfg_key, title=title, description=description))
+            return
+        select = ChannelConfigSelect(cfg_key=cfg_key, title=title, options=options)
         view   = View(timeout=60); view.add_item(select)
         await interaction.response.send_message(f"📌 **{description}**\nChọn kênh:", view=view)
 
@@ -252,17 +258,37 @@ class SettingsView(View):
     @discord.ui.button(label="🤖 AI Channel",       style=discord.ButtonStyle.secondary, row=2)
     async def ai(self,       i, b): await self._send_channel_select(i, "cfg_ai_channel",      "AI Channel",       "Kênh AI tự động trả lời mọi tin nhắn")
 
-class ChannelConfigSelect(discord.ui.ChannelSelect):
-    def __init__(self, cfg_key, title):
-        super().__init__(
-            placeholder=f"Chọn kênh cho {title}...",
-            channel_types=[discord.ChannelType.text],
-        )
+class ChannelConfigModal(discord.ui.Modal):
+    channel_input = TextInput(label="Channel ID hoặc #tên", placeholder="vd: 123456789 hoặc tên kênh", max_length=50)
+
+    def __init__(self, cfg_key, title, description):
+        super().__init__(title=f"📌 {title}")
+        self.cfg_key = cfg_key; self._title = title; self._desc = description
+
+    async def on_submit(self, interaction: discord.Interaction):
+        val = self.channel_input.value.strip().lstrip("#<").rstrip(">")
+        # Thử theo ID
+        ch = None
+        if val.isdigit():
+            ch = interaction.guild.get_channel(int(val))
+        # Thử theo tên
+        if not ch:
+            val_lower = val.lower()
+            ch = discord.utils.find(lambda c: c.name.lower() == val_lower, interaction.guild.text_channels)
+        if not ch:
+            return await interaction.response.send_message(f"❌ Không tìm thấy kênh .")
+        save_cfg(self.cfg_key, ch.id)
+        await interaction.response.send_message(f"✅ Đã cài **{self._title}** → {ch.mention}")
+
+
+class ChannelConfigSelect(Select):
+    def __init__(self, cfg_key, title, options):
+        super().__init__(placeholder=f"Chọn kênh cho {title}...", options=options)
         self.cfg_key = cfg_key; self.title = title
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.")
-        ch_id = self.values[0].id
+        ch_id = int(self.values[0])
         save_cfg(self.cfg_key, ch_id)
         await interaction.response.send_message(f"✅ Đã cài **{self.title}** → <#{ch_id}>")
 
