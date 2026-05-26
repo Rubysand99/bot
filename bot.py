@@ -163,6 +163,10 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
+    # Auto sold — stock → sold category
+    from cogs.admin import handle_sold
+    await handle_sold(bot, message)
+
     # AI channel
     from cogs.ai_chat import handle_ai_message
     await handle_ai_message(message)
