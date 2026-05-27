@@ -324,7 +324,7 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
     guild = interaction.guild
     try:
         if await has_ticket(guild, interaction.user):
-            return await interaction.followup.send("❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.")
+            return await interaction.followup.send("❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.", ephemeral=True)
 
         bot = interaction.client
         number     = await get_next_ticket_number(bot)
@@ -369,7 +369,7 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
     guild = interaction.guild
     try:
         if await has_ticket(guild, interaction.user):
-            return await interaction.followup.send("❌ Bạn đang có ticket mở!")
+            return await interaction.followup.send("❌ Bạn đang có ticket mở!", ephemeral=True)
 
         info   = SERVICE_TABLE[service_key]
         bot    = interaction.client
