@@ -1,228 +1,92 @@
-# 📋 CHANGELOG — TuyTam Bot (Rudeus Bot)
-
-> Format: `## [vX.X.X] — YYYY-MM-DD`
-> Patch (x.x.X) sửa lỗi | Minor (x.X.0) thêm tính năng | Major (X.0.0) thay đổi lớn
-> Cập nhật `BOT_VERSION` trong `bot.py` và `cogs/admin.py`
+# TuyTam Bot (Rudeus Bot) — Python/discord.py/MongoDB
+**Deploy:** Railway ← GitHub `main` | **DB:** MongoDB Atlas `tuytam_bot.bot_data` (_id:"main") + `tuytam_bot.giveaways`
+**Backend:** Render (FastAPI, LootLabs postback → Discord webhook)
 
 ---
 
-## 🗂️ Kết Cấu Repo
+## Cấu trúc
 
 ```
-rudeus-bot/
-│
-├── bot.py                  # Entry point: khởi tạo bot, load cogs, on_ready, on_message
-│                           # Xử lý legit (+1legit) và vouch (done) qua on_message
-│                           # Auto-backfill legit lúc khởi động
-│
-├── CHANGELOG.md            # Lịch sử thay đổi
-├── README.md               # Tài liệu dự án
-├── requirements.txt        # Dependencies (discord.py, motor, fastapi…)
-├── runtime.txt             # Chỉ định Python version cho Railway
-├── .env                    # Biến môi trường (TOKEN, MONGO_URI, ADMIN_IDS) — không commit
-├── nohup.out               # Log runtime — không commit
-│
-├── core/
-│   ├── __init__.py
-│   └── data.py             # MongoDB storage, in-memory cache, toàn bộ helper đọc/ghi
-│                           # get_or_fetch_channel(), parse_amount(), fmt_amount()
-│                           # Config getters/setters (cfg_legit, cfg_ticket_category…)
-│
-├── cogs/
-│   ├── __init__.py
-│   ├── admin.py            # Settings (.st), mod commands, .help, .backfill, slash admin
-│   ├── ticket.py           # Ticket system: panel, views, modals, .done, .sellerchannel
-│   ├── giveaway.py         # Giveaway: /giveaway, /gend, /greroll, /gwlist
-│   ├── balance.py          # Hệ thống balance kênh
-│   ├── ai_chat.py          # AI chat tích hợp kênh
-│   ├── invite.py           # Theo dõi invite, leaderboard
-│   ├── logger.py           # Log sự kiện server
-│   ├── mod.py              # Ban/kick/mute/warn/automod
-│   ├── point.py            # Hệ thống point: redeem, shop, gencode, pointlog
-│   └── minigame.py         # Bầu Cua nhiều người, Búa Kéo Bao, leaderboard
-│
-└── data/
-    └── words_vi.txt        # Từ điển tiếng Việt dùng cho minigame Nối Từ
+bot.py          # Entry: load cogs, on_ready→init_data_cache(), on_message (legit/vouch), auto-backfill
+core/data.py    # MongoDB + _data_cache, get_or_fetch_channel(), parse_amount(), fmt_amount(), cfg getters/setters
+cogs/
+  admin.py      # .st (settings UI), .help, .backfill, .mkchannel, mod cmds, slash admin
+  ticket.py     # Panel → ticket kênh, .done/.sellerchannel/.sch, QR seller
+  giveaway.py   # /giveaway /gend /greroll /gwlist, _gw_tasks dict
+  balance.py    # Cộng/trừ/set/reset balance (VNĐ)
+  point.py      # .gencode .redeem .addpoint .setpoint .pointall .shop .exchange
+  minigame.py   # Bầu Cua nhiều người (.bc open/cancel), Búa Kéo Bao (.bkb)
+  ai_chat.py    # Groq AI, bỏ qua msg bắt đầu . hoặc !
+  invite.py     # Tracking invite, leaderboard, .resetinvite
+  mod.py        # Ban/Kick/Mute/Unmute/Warn/Automod
+  logger.py     # send_log(bot, "CAT", "title", fields=[("k","v",inline)])
+data/words_vi.txt
 ```
 
-> **Database:** MongoDB Atlas — collection `tuytam_bot.bot_data` (document `_id: "main"`) + `tuytam_bot.giveaways`
-> **Deploy:** Railway (auto-deploy từ GitHub `main` branch, runtime chỉ định qua `runtime.txt`)
-> **Backend:** Repo riêng trên Render (FastAPI, LootLabs postback → Discord webhook)
+## Conventions
+- **Admin gate:** `if ctx.author.id not in ADMIN_IDS: return` (import từ `core.data`)
+- **Staff check:** `is_staff_member()` — ADMIN_IDS + `BUILDER_BASE_ROLE_ID=1484158340849205308`
+- **Log:** `await send_log(bot, "TICKET", "title", fields=[...])`→ kênh `cfg_log_rudy`
+- **Channel fetch:** dùng `get_or_fetch_channel(bot, id)` — KHÔNG dùng `bot.get_channel()`
+- **Response:** PUBLIC (bỏ ephemeral), trừ ticket panel button
+- **Const:** `CODE_GEN_LOG_CHANNEL_ID = 1504434579967316021`
+- discord.py 2.x (app_commands cho slash)
+
+## Cách dùng file này
+Mỗi chat mới: upload file này + mô tả vấn đề + upload file .py liên quan.
 
 ---
 
-## [v3.8.0] — 2026-05-22
+## Changelog
 
-### 🐛 Sửa lỗi
-- `cogs/ticket.py` — Xóa lệnh `.mkchannel` trùng lặp (conflict với `.mkchannel` trong `cogs/admin.py`), fix `CommandRegistrationError` khiến `cogs.admin` không load được
-- `BOT_VERSION = "3.8.0"`
+### [v3.8.0] 2026-05-22
+- `ticket.py` — Xóa `.mkchannel` trùng → fix `CommandRegistrationError` (admin.py không load được)
 
----
+### [v3.7.9] 2026-05-22
+- `core/data.py` — Thêm `get_or_fetch_channel()` (cache → fetch_channel)
+- `admin/ticket/giveaway/bot` — Thay toàn bộ `bot.get_channel()` → `get_or_fetch_channel()`
+- `.backfill` + auto-backfill: xử lý đúng thứ tự cũ→mới, thả ✅ + đổi tên kênh +1
 
-## [v3.7.9] — 2026-05-22
+### [v3.7.8] 2026-05-22
+- `admin.py` — `.backfill [số]`: quét kênh legit, thả ✅ cho tin +1legit bị bỏ sót (mặc định 25, max 100)
 
-### 🐛 Sửa lỗi
-- `core/data.py` — Thêm helper `get_or_fetch_channel(bot, id)`: thử cache trước, nếu không có thì `fetch_channel()` từ API Discord — hỗ trợ kênh private và kênh mới tạo
-- `cogs/admin.py`, `cogs/ticket.py`, `cogs/giveaway.py`, `bot.py` — Thay toàn bộ `bot.get_channel()` bằng `get_or_fetch_channel()` để bot không bị miss kênh ngoài cache
-- `cogs/admin.py` + `bot.py` — `.backfill` và auto-backfill lúc khởi động nay xử lý **đúng thứ tự cũ→mới**, vừa thả `✅` vừa **đổi tên kênh +1** cho mỗi tin bị bỏ sót (vd: `legit-11` → `legit-12`)
-- `BOT_VERSION = "3.7.9"`
+### [v3.7.7] 2026-05-22
+- `admin.py` — `.help` overview + `.help <mục>` chi tiết (mod/ticket/point/minigame/ai/invite/dichvu/giveaway/admin), alias tiếng Việt
 
----
+### [v3.7.6] 2026-05-22
+- `giveaway.py` — Embed giveaway giữ nguyên sau khi kết thúc, disable nút + gửi tin winner riêng (có link)
 
-## [v3.7.8] — 2026-05-22
+### [v3.7.5] 2026-05-22
+- `admin.py` — Xóa `.qr` prefix trùng với `ticket.py`
+- `ticket.py` — `.mkchannel` → `.sellerchannel`/`.sch`; `.done` chỉ ADMIN_IDS
+- `core/data.py` — Thêm `get_seller_qr`, `save_seller_qr`, `get_all_seller_qr`
 
-### ✨ Thêm mới
-- `cogs/admin.py` — Lệnh `.backfill [số]` cho admin: quét lại kênh legit, thả `✅` cho các tin nhắn `+1legit` bị bỏ sót lúc bot offline (mặc định 25, tối đa 100 tin)
-- `BOT_VERSION = "3.7.8"`
+### [v3.7.4] 2026-05-20
+- `core/data.py` — `BUILDER_BASE_ROLE_ID`, cập nhật `is_staff_member()`
+- `ticket.py` — Builder Base tự động vào overwrites khi tạo ticket
 
----
+### [v3.7.3] 2026-05-18
+- `backend/main.py` — LootLabs postback → Discord webhook embed (mã/point/hạn/unique_id)
 
-## [v3.7.7] — 2026-05-22
+### [v3.7.2] 2026-05-18
+- `point.py` — Redeem thành công + `.gencode` → log embed vào `CODE_GEN_LOG_CHANNEL_ID`
 
-### ✨ Thêm mới
-- `cogs/admin.py` — Lệnh `.help` hỗ trợ sub-topic: `.help mod`, `.help ticket`, `.help point`, `.help minigame`, `.help ai`, `.help invite`, `.help dichvu`, `.help giveaway`, `.help admin`
-- `.help` không có tham số → embed tổng quan gọn (3 cột inline), có hướng dẫn dùng `.help <mục>`
-- `.help <mục>` → embed chi tiết từng phần với đầy đủ cú pháp, alias, mô tả
-- Hỗ trợ alias tiếng Việt: `.help dịch vụ`, `.help điểm`, `.help game`…
-- `BOT_VERSION = "3.7.7"`
+### [v3.7.1] 2026-05-17
+- `.setpoint <ID> <số>`, `.pointall`/`.allpoints`/`.pointlist` (top 20, tổng point)
 
----
+### [v3.7.0] 2026-05-17
+- Bầu Cua nhiều người: `.bc open/cancel`, `.setbaucua`, 4-6 người, 30s, tỉ lệ x1→+0.9pt
+- Xóa: Nối Từ, Vua Tiếng Việt
 
-## [v3.7.6] — 2026-05-22
+### [v3.6.x] 2026-05-16
+- Cá cược point minigame (WIN_RATE 0.9x), `.rank`, `.mgstats`
+- Kênh nối từ chỉ định, fix race condition, cooldown per-user
 
-### 🐛 Sửa lỗi
-- `cogs/giveaway.py` — Embed giveaway sau khi kết thúc giữ nguyên, không bị thay thế; chỉ disable nút tham gia và gửi 1 tin nhắn thông báo winner riêng (có link dẫn đến embed gốc)
+### [v3.5.x] 2026-05-16
+- Point system đầy đủ, FastAPI/Render, Linkvertise, `.shop .exchange .addreward .delreward .clearshop`
 
----
+### [v3.4.x] 2026-05-14–15
+- `mod.py` Ban/Kick/Mute/Warn/Automod; `logger.py`; slash commands; `.ping .userinfo .serverinfo`
 
-## [v3.7.5] — 2026-05-22
-
-### 🐛 Sửa lỗi
-- `cogs/admin.py` — Xóa lệnh `.qr` (prefix) bị trùng với phiên bản đầy đủ hơn trong `cogs/ticket.py`
-- `cogs/ticket.py` — Đổi tên lệnh `.mkchannel` (seller) thành `.sellerchannel` / `.sch` để fix `CommandRegistrationError` conflict với `.mkchannel` của admin
-- `cogs/ticket.py` — Lệnh `.done` và `/done` và nút "Hoàn thành đơn" chỉ cho phép `ADMIN_IDS`, seller không dùng được
-- `core/data.py` — Thêm `get_seller_qr`, `save_seller_qr`, `get_all_seller_qr` (fix `ImportError` khiến `cogs.ticket` không load được)
-- Đồng bộ `BOT_VERSION = "3.5.0"` thống nhất giữa `ticket.py` và `admin.py`
-
----
-
-## [v3.7.4] — 2026-05-20
-
-### ✨ Thêm mới
-- `core/data.py` — Thêm `BUILDER_BASE_ROLE_ID = 1484158340849205308`, cập nhật `is_staff_member()` để role **Builder Base** có quyền dùng lệnh staff trong ticket
-- `cogs/ticket.py` — Role **Builder Base** được tự động thêm vào overwrites khi tạo ticket mới (quyền giống role Seller)
-- `BOT_VERSION = "3.7.4"`
-
----
-
-## [v3.7.3] — 2026-05-18
-
-### ✨ Thêm mới
-- `backend/main.py` — Sau khi LootLabs postback tạo mã, backend tự động gửi embed vào kênh Discord `1504434579967316021` qua **Discord Webhook** (gồm: mã, point, thời gian hết hạn, unique_id)
-- Thêm biến môi trường `DISCORD_WEBHOOK_URL` vào Render để kích hoạt tính năng này
-- `BOT_VERSION = "3.7.3"`
-
----
-
-## [v3.7.2] — 2026-05-18
-
-### 🔧 Thay đổi
-- `cogs/point.py` — Khi user **redeem mã thành công**, bot tự động gửi log embed vào kênh `#1504434579967316021` (gồm: user, mã, point nhận, tổng point)
-- `cogs/point.py` — Khi **admin dùng `.gencode`** tạo mã, bot gửi log embed vào kênh tương tự (gồm: mã, point, hết hạn, dành cho ai, admin tạo)
-- `bot.py` — Thêm constant `CODE_GEN_LOG_CHANNEL_ID = 1504434579967316021`
-- `BOT_VERSION = "3.7.2"`
-
----
-
-## [v3.7.1] — 2026-05-17
-
-### ✨ Thêm mới
-- `.setpoint <ID> <số>` — Admin set point chính xác cho user theo ID (kể cả user không trong server)
-- `.pointall` / `.allpoints` / `.pointlist` — Admin xem thống kê point toàn server, top 20, tổng point
-
-### 🔧 Thay đổi
-- `.help` — Cập nhật section Point và Minigame
-- `README.md` — Viết lại đầy đủ
-- `BOT_VERSION = "3.7.1"`
-
----
-
-## [v3.7.0] — 2026-05-17
-
-### ✨ Thêm mới
-- **🎲 Bầu Cua nhiều người**:
-  - `.bc open` — Mở phiên cược 4-6 người, 30 giây
-  - Embed 6 nút emoji, nhấn → Modal nhập point (tối thiểu 1pt)
-  - Tự động lắc khi đủ người hoặc hết 30s
-  - `.bc cancel` — Hủy phiên
-  - `.setbaucua #kênh` — Cài kênh chơi
-  - Tỉ lệ: x1→+0.9pt | x2→+1.8pt | x3→+2.7pt | Thua→-1pt
-
-### 🗑️ Xóa
-- Nối Từ (từ điển hạn chế)
-- Vua Tiếng Việt (ít câu hỏi)
-
-### 🔧 Thay đổi
-- `core/data.py` — Thêm `baucua_channel_id`
-- `BOT_VERSION = "3.7.0"`
-
----
-
-## [v3.6.3] — 2026-05-16
-
-### ✨ Thêm mới
-- Cá cược point cho tất cả minigame (WIN_RATE 0.9x)
-- `.rank [baucua|bkb|noitu|vtv]` — Bảng xếp hạng
-- `.mgstats [@user]` — Thống kê cá nhân
-
----
-
-## [v3.6.2] — 2026-05-16
-
-### ✨ Thêm mới
-- Kênh nối từ chỉ định — nhắn thẳng không cần prefix
-- `.setnoitu #kênh`, `.start`, `.stop`
-
----
-
-## [v3.6.1] — 2026-05-16
-
-### 🐛 Sửa lỗi
-- Race condition nối từ (`asyncio.Lock`)
-- Cooldown per-user, chặn nối 2 lần liên tiếp
-- Session VTV dùng `expire_time` timestamp
-- Alias không dấu bầu cua / bkb
-
----
-
-## [v3.6.0] — 2026-05-16
-
-### ✨ Thêm mới
-- 4 minigame: Bầu Cua, Búa Kéo Bao, Nối Từ, Vua Tiếng Việt
-- `data/words_vi.txt` — Từ điển nối từ
-
----
-
-## [v3.5.2] — 2026-05-16
-- `.clearshop` — Admin xoá toàn bộ shop
-
-## [v3.5.1] — 2026-05-16
-- `.shop`, `.exchange`, `.addreward`, `.delreward`
-- Point redesign: chỉ dùng đổi quà
-
-## [v3.5.0] — 2026-05-16
-- Hệ thống point đầy đủ
-- FastAPI backend trên Render
-- Tích hợp Linkvertise
-
-## [v3.4.1] — 2026-05-15
-- `cogs/mod.py` — Ban/Kick/Mute/Warn/Automod đầy đủ
-
-## [v3.4.0] — 2026-05-14
-- `cogs/logger.py`, slash commands cho tất cả lệnh
-- `.ping`, `.userinfo`, `.serverinfo`
-
-## [v3.3.5] — 2026-05-12
-- Tách `bot.py` 6000 dòng thành cấu trúc Cog
-- MongoDB + cache in-memory
-- `cogs/`: ticket, balance, ai_chat, invite, giveaway, admin, logger
+### [v3.3.5] 2026-05-12
+- Tách bot.py 6000 dòng → cấu trúc Cog, MongoDB + cache
