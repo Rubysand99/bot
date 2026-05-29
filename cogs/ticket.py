@@ -387,8 +387,11 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        extra_ping = f" <@&{BUILDER_BASE_ROLE_ID}>" if service_key == "orderbase" else ""
-        await channel.send(f"<@&{get_cfg_support_role()}>{extra_ping} | {interaction.user.mention}", embed=embed, view=TicketButtons())
+        if service_key == "orderbase":
+            ping_str = f"<@&{BUILDER_BASE_ROLE_ID}>"
+        else:
+            ping_str = f"<@&{get_cfg_support_role()}>"
+        await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
     except Exception as e:
         try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`")
