@@ -18,7 +18,7 @@ Nhóm kênh:
 from datetime import datetime, timezone
 import discord
 from discord.ext import commands
-from core.data import ADMIN_IDS, get_cfg_log_rudy
+from core.data import ADMIN_IDS, get_cfg_log_rudy, get_log_channels, get_log_channel_by_group, set_log_channel_db
 
 LOG_ICONS = {
     "TICKET_CREATE":   ("🎫", 0x57F287),
@@ -94,22 +94,20 @@ LOG_GROUP_LABELS: dict[str, str] = {
     "general":  "📋 General",
 }
 
-# Lưu channel ID theo nhóm: {"ticket": 123, "balance": 456, ...}
-_log_channels: dict[str, int] = {}
-
+# Lưu channel ID theo nhóm: đọc/ghi thẳng vào MongoDB qua core.data
 
 def set_log_channel(group: str, channel_id: int):
-    """Cài kênh log cho một nhóm."""
-    _log_channels[group] = channel_id
+    """Cài kênh log cho một nhóm — lưu vào MongoDB."""
+    set_log_channel_db(group, channel_id)
 
 
 def get_log_channel(group: str) -> int | None:
-    """Lấy channel ID của nhóm log."""
-    return _log_channels.get(group)
+    """Lấy channel ID của nhóm log từ MongoDB cache."""
+    return get_log_channel_by_group(group)
 
 
 def get_all_log_channels() -> dict[str, int]:
-    return dict(_log_channels)
+    return get_log_channels()
 
 # ══════════════════════════════════════════
 # SEND LOG
@@ -158,6 +156,7 @@ async def send_log(
     group   = LOG_ROUTES.get(event_type, "general")
     ch_id   = get_log_channel(group) or get_cfg_log_rudy()
     if not ch_id:
+        print(f"[LOG] ⚠️ Không có kênh log cho nhóm '{group}' ({event_type}), bỏ qua.")
         return
     channel = bot.get_channel(ch_id)
     if channel:
@@ -280,6 +279,7 @@ class LoggerCog(commands.Cog):
         await msg.edit(content=None, embed=embed)
 
 
+    @commands.command(name="loginfo")
     async def log_info(self, ctx):
         """Xem toàn bộ kênh log đang được cài."""
         if ctx.author.id not in ADMIN_IDS:
@@ -333,6 +333,8 @@ class LoggerCog(commands.Cog):
     @commands.Cog.listener()
     async def on_command(self, ctx: commands.Context):
         if ctx.author.bot:
+            return
+        if ctx.command is None:
             return
         await send_log(
             self.bot, "CMD_USED", f"Lệnh: .{ctx.command}",

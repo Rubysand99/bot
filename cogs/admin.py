@@ -84,8 +84,6 @@ def _rebuild_name(parts: dict, new_base: str, font: str = "normal") -> str:
     if parts["icon"] and parts["sep"]: result += parts["sep"]
     return (result + styled + parts["trailing_num"]).strip()
 
-_setup_sessions: dict = {}
-
 # ══════════════════════════════════════════
 # AUTO GIVE BUY ROLES
 # ══════════════════════════════════════════
@@ -283,29 +281,6 @@ class SettingsView(View):
     async def proof(self,    i, b): await self._send_channel_select(i, "cfg_proof_channel",   "Proof Channel",    "Kênh nhận done tự động")
     @discord.ui.button(label="🤖 AI Channel",       style=discord.ButtonStyle.secondary, row=2)
     async def ai(self,       i, b): await self._send_channel_select(i, "cfg_ai_channel",      "AI Channel",       "Kênh AI tự động trả lời mọi tin nhắn")
-
-class ChannelConfigModal(discord.ui.Modal):
-    channel_input = TextInput(label="Channel ID hoặc #tên", placeholder="vd: 123456789 hoặc tên kênh", max_length=50)
-
-    def __init__(self, cfg_key, title, description):
-        super().__init__(title=f"📌 {title}")
-        self.cfg_key = cfg_key; self._title = title; self._desc = description
-
-    async def on_submit(self, interaction: discord.Interaction):
-        val = self.channel_input.value.strip().lstrip("#<").rstrip(">")
-        # Thử theo ID
-        ch = None
-        if val.isdigit():
-            ch = interaction.guild.get_channel(int(val))
-        # Thử theo tên
-        if not ch:
-            val_lower = val.lower()
-            ch = discord.utils.find(lambda c: c.name.lower() == val_lower, interaction.guild.text_channels)
-        if not ch:
-            return await interaction.response.send_message(f"❌ Không tìm thấy kênh .")
-        save_cfg(self.cfg_key, ch.id)
-        await interaction.response.send_message(f"✅ Đã cài **{self._title}** → {ch.mention}")
-
 
 class ChannelConfigSelect(Select):
     def __init__(self, cfg_key, title, options):
@@ -631,8 +606,6 @@ def _group_channels_by_category(guild: discord.Guild, exclude_categories=False):
     groups: dict[str, list] = {}
     for ch in sorted(guild.channels, key=lambda c: c.position):
         if isinstance(ch, discord.CategoryChannel):
-            continue
-        if exclude_categories and isinstance(ch, discord.CategoryChannel):
             continue
         cat_name = ch.category.name if ch.category else "(Không có category)"
         groups.setdefault(cat_name, []).append(ch)
@@ -1023,24 +996,7 @@ class AssignRoleModal(discord.ui.Modal):
 # ══════════════════════════════════════════
 # ══════════════════════════
 # SETUP — BUY ROLES
-# ══════════════════════════
-def _parse_amount(text: str):
-    import re as _re
-    s = text.strip().lower().replace(" ", "")
-    m = _re.fullmatch(r"([0-9]+(?:[.,][0-9]+)?)([ktm]r?)?", s)
-    if not m:
-        return None
-    num_str = m.group(1).replace(",", ".")
-    suffix = (m.group(2) or "").rstrip("r")
-    try:
-        num = float(num_str)
-    except ValueError:
-        return None
-    multiplier = {"k": 1_000, "t": 1_000_000, "m": 1_000_000}.get(suffix, 1)
-    return int(num * multiplier)
-
-
-def _buy_roles_embed() -> discord.Embed:
+# ══════════════════════════def _buy_roles_embed() -> discord.Embed:
     buy_roles = get_buy_roles()
     embed = discord.Embed(title="🛒 Quản Lý Buy Roles", color=0x5865F2)
     if not buy_roles:
@@ -1111,9 +1067,9 @@ class BuyRolesView(View):
             if role.id in existing_ids:
                 skipped.append(role.name)
                 continue
-            min_amount = _parse_amount(m.group(1))
+            min_amount = parse_amount(m.group(1))
             max_raw    = m.group(2) or ""
-            max_amount = None if (not max_raw or max_raw == "∞") else _parse_amount(max_raw)
+            max_amount = None if (not max_raw or max_raw == "∞") else parse_amount(max_raw)
             if min_amount is None:
                 continue
             buy_roles.append({"role_id": role.id, "min_amount": min_amount, "max_amount": max_amount})
@@ -1147,14 +1103,14 @@ class AddBuyRoleModal(discord.ui.Modal, title="➕ Thêm Buy Role Tier"):
         except ValueError:
             return await interaction.response.send_message("❌ Role ID không hợp lệ.")
 
-        min_amount = _parse_amount(self.min_input.value)
+        min_amount = parse_amount(self.min_input.value)
         if min_amount is None:
             return await interaction.response.send_message(
                 "❌ Số tiền tối thiểu không hợp lệ.\n💡 Ví dụ: `50k`, `1.5tr`, `100000`")
 
         max_amount = None
         if self.max_input.value.strip():
-            max_amount = _parse_amount(self.max_input.value)
+            max_amount = parse_amount(self.max_input.value)
             if max_amount is None:
                 return await interaction.response.send_message(
                     "❌ Số tiền tối đa không hợp lệ.\n💡 Ví dụ: `500k`, `2tr`, `500000`")
@@ -1584,7 +1540,7 @@ class AdminCog(commands.Cog):
         if not can_use_dangerous_cmd(ctx.author.id, "rename"): return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
         if not channel or not new_name: return await ctx.reply("❌ Dùng: `.rename #kênh tên-mới`")
         parts = _detect_channel_parts(channel.name)
-        font  = _setup_sessions.get(ctx.guild.id, {}).get("font", "normal")
+        font  = get_cfg_font()
         final = _rebuild_name(parts, new_name, font)
         try: await channel.edit(name=final, reason=f"Rename bởi {ctx.author}"); await ctx.reply(f"✅ `{channel.name}` → `{final}`")
         except discord.Forbidden: await ctx.reply("❌ Bot thiếu quyền.")
@@ -2059,14 +2015,9 @@ class AdminCog(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     # ── Stock → Sold auto-move ──
-    STOCK_CATEGORY_ID = 1506520186063163423
-    SOLD_CATEGORY_ID  = 1506652491779932240
-
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         await handle_sold(self.bot, message)
-
-    # ── Error handler ──
 
     # ── Error handler ──
     @commands.Cog.listener()

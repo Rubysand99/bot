@@ -227,7 +227,7 @@ async def _call_groq_fill(missing_fields: list, answer: str) -> dict:
     return {}
 
 
-
+async def _run_action(ctx, action: dict) -> str:
     """Thực thi action từ AI, trả về message kết quả."""
     act    = action.get("action", "unknown")
     params = action.get("params", {})
@@ -527,9 +527,6 @@ class AICog(commands.Cog):
 
         parts = prompt.strip().split()
         sub   = parts[0].lower()
-
-        if ctx.author.id not in ADMIN_IDS:
-            return
 
         if sub == "reset":
             if ctx.author.id in _ai_chat_history:

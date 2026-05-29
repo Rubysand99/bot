@@ -273,9 +273,6 @@ async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
 
 
 # ══════════════════════════════════════════
-# MODALS
-
-# ══════════════════════════════════════════
 # ITEM SELECT
 # ══════════════════════════════════════════
 class ItemSelect(Select):
@@ -513,7 +510,6 @@ class TicketCog(commands.Cog):
         new_total = add_user_spent(user_id, amount)
 
         # Lưu lịch sử đơn
-        parts2 = ctx.channel.topic.split("|")
         opened_at = None
         try:
             # topic format: user_id||trade_type|item_key|open
@@ -737,10 +733,6 @@ class TicketCog(commands.Cog):
         embed.set_footer(text=f"Tra cứu bởi {_uname_plain(ctx.author)}  •  Dùng .thongke MM/YYYY để xem tháng khác")
         await ctx.reply(embed=embed)
 
-
-    # ══════════════════════════════════════════
-        embed.set_footer(text=f"Tạo bởi {_uname_plain(ctx.author)}")
-        await ctx.reply(embed=embed)
 
     # ══════════════════════════════════════════
     # ADMIN: GÁN CATEGORY CHO SELLER (.setsl)

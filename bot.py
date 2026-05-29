@@ -5,6 +5,7 @@ Mọi logic đều nằm trong cogs/ và core/.
 """
 
 import os
+import re as _re
 import asyncio
 from datetime import datetime, timezone
 
@@ -186,7 +187,6 @@ async def on_message(message: discord.Message):
 # ══════════════════════════════════════════
 # LEGIT / VOUCH HANDLERS
 # ══════════════════════════════════════════
-import re as _re
 
 async def _handle_legit(message: discord.Message):
     from core.data import get_cfg_legit_channel
@@ -212,7 +212,8 @@ async def _handle_vouch(message: discord.Message):
     from core.data import get_cfg_proof_channel
     IGNORED = {628400349979344919}
     if message.author.id in IGNORED: return
-    if message.channel.id != get_cfg_proof_channel(): return
+    proof_ch = get_cfg_proof_channel()
+    if not proof_ch or message.channel.id != proof_ch: return
     if not _re.match(r"^done\b", message.content.strip(), _re.IGNORECASE): return
     ch      = message.channel
     name    = ch.name
@@ -233,8 +234,8 @@ BACKFILL_LIMIT = 25  # Số tin nhắn gần nhất cần quét
 
 async def _backfill_legit():
     """Sau khi bot online, quét 25 tin nhắn gần nhất trong kênh legit.
-    Tin nào khớp +1legit mà chưa có reaction ✅ từ bot → thả reaction lại.
-    Không đổi tên kênh (tránh đổi trùng), chỉ đảm bảo reaction không bị thiếu."""
+    Tin nào khớp +1legit mà chưa có reaction ✅ từ bot → thả reaction và đổi tên kênh +1.
+    Fetch lại tên kênh sau mỗi lần edit để tránh số đếm bị sai."""
     await asyncio.sleep(3)  # Chờ cache sẵn sàng
     from core.data import get_cfg_legit_channel, get_or_fetch_channel
     IGNORED = {628400349979344919}
@@ -267,8 +268,9 @@ async def _backfill_legit():
                     await msg.add_reaction("✅")
                 except Exception as e:
                     print(f"[BACKFILL] ❌ Không thả được reaction msg {msg.id}: {e}")
-                # Đổi tên kênh +1
+                # Đổi tên kênh +1, fetch lại channel để lấy tên mới nhất
                 try:
+                    channel = await channel.guild.fetch_channel(channel.id)  # refresh
                     name = channel.name
                     match = _re.search(r"-(\d+)$", name)
                     new_num = (int(match.group(1)) + 1) if match else 1

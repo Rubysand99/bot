@@ -155,8 +155,13 @@ class ModCog(commands.Cog):
             td   = _parse_duration(duration_str) or timedelta(minutes=10)
             role = await self._get_or_create_muted_role(guild)
             await member.add_roles(role, reason=f"Auto-mute: {count} warns")
-            await asyncio.sleep(td.total_seconds())
-            await member.remove_roles(role, reason="Hết thời gian mute")
+            async def _unmute_after(m=member, r=role, delay=td.total_seconds()):
+                await asyncio.sleep(delay)
+                try:
+                    await m.remove_roles(r, reason="Hết thời gian mute")
+                except Exception:
+                    pass
+            asyncio.create_task(_unmute_after())
         elif action == "kick":
             try: await member.kick(reason=f"Auto-kick: {count} warns")
             except: pass
@@ -333,9 +338,14 @@ class ModCog(commands.Cog):
                 description=f"**Server:** {ctx.guild.name}\n**Thời gian:** {_fmt_duration(td)}\n**Lý do:** {reason}",
                 color=0x9B59B6))
         except: pass
-        await asyncio.sleep(td.total_seconds())
-        if role in member.roles:
-            await member.remove_roles(role, reason="Hết thời gian mute")
+        async def _unmute_later(m=member, r=role, delay=td.total_seconds()):
+            await asyncio.sleep(delay)
+            try:
+                if r in m.roles:
+                    await m.remove_roles(r, reason="Hết thời gian mute")
+            except Exception:
+                pass
+        asyncio.create_task(_unmute_later())
 
     @app_commands.command(name="mute", description="Mute thành viên")
     @app_commands.describe(member="Thành viên", duration="Thời gian: 10m, 1h, 2d", reason="Lý do")
@@ -354,9 +364,14 @@ class ModCog(commands.Cog):
         embed.add_field(name="⏱️ Thời gian",  value=_fmt_duration(td),  inline=True)
         embed.add_field(name="📝 Lý do",      value=reason,             inline=True)
         await interaction.response.send_message(embed=embed)
-        await asyncio.sleep(td.total_seconds())
-        if role in member.roles:
-            await member.remove_roles(role, reason="Hết thời gian mute")
+        async def _unmute_later_slash(m=member, r=role, delay=td.total_seconds()):
+            await asyncio.sleep(delay)
+            try:
+                if r in m.roles:
+                    await m.remove_roles(r, reason="Hết thời gian mute")
+            except Exception:
+                pass
+        asyncio.create_task(_unmute_later_slash())
 
     @commands.command(name="unmute")
     async def unmute_cmd(self, ctx, member: discord.Member = None):
@@ -804,7 +819,7 @@ class ModCog(commands.Cog):
             try: await message.delete()
             except: pass
             try:
-                notif = await message.channel.send(
+                await message.channel.send(
                     f"🚫 {message.author.mention} bạn đang gửi tin nhắn quá nhanh!", delete_after=5)
             except: pass
             if am.get("log_violations"):
