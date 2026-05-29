@@ -116,6 +116,7 @@ def _default_data() -> dict:
         "minigame_stats":   {},        # {user_id: {baucua,bkb,noitu,vtv,total}}
         "seller_qr":        {},        # {user_id: qr_path} — QR riêng của từng seller
         "seller_categories": {},       # {user_id: category_id} — category riêng của từng seller
+        "log_channels":     {},        # {group: channel_id} — kênh log theo nhóm
     }
 
 # ══════════════════════════════════════════
@@ -667,6 +668,21 @@ async def get_or_fetch_channel(bot, channel_id: int):
         except Exception:
             channel = None
     return channel
+
+# ══════════════════════════════════════════
+# LOG CHANNELS (dùng bởi logger.py)
+# ══════════════════════════════════════════
+def get_log_channels() -> dict:
+    return load_data().get("log_channels", {})
+
+def get_log_channel_by_group(group: str) -> int | None:
+    return load_data().get("log_channels", {}).get(group)
+
+def set_log_channel_db(group: str, channel_id: int):
+    data = load_data()
+    data.setdefault("log_channels", {})
+    data["log_channels"][group] = channel_id
+    save_data(data)
 
 def is_staff_member(member) -> bool:
     import discord

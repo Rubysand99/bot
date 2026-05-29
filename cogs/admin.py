@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput, Select
 
+from cogs.logger import send_log
 from core.data import (
     ADMIN_IDS, get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
     get_cfg_counter_channel, get_cfg_balance_channel, get_cfg_legit_channel,
@@ -996,7 +997,8 @@ class AssignRoleModal(discord.ui.Modal):
 # ══════════════════════════════════════════
 # ══════════════════════════
 # SETUP — BUY ROLES
-# ══════════════════════════def _buy_roles_embed() -> discord.Embed:
+# ══════════════════════════
+def _buy_roles_embed() -> discord.Embed:
     buy_roles = get_buy_roles()
     embed = discord.Embed(title="🛒 Quản Lý Buy Roles", color=0x5865F2)
     if not buy_roles:
@@ -2062,7 +2064,7 @@ async def handle_sold(bot, message: discord.Message):
             reason=f"Sold bởi {message.author} — auto-move",
         )
         await message.add_reaction("✅")
-        await send_log(bot, "SOLD", f"Kênh sold: `{old_name}` → `{new_name}`",
+        await send_log(bot, "INFO", f"Kênh sold: `{old_name}` → `{new_name}`",
             fields=[("Seller", message.author.mention, True), ("Kênh mới", f"<#{channel.id}>", True), ("Category", sold_category.name, True)])
     except discord.Forbidden:
         await message.add_reaction("⚠️")
