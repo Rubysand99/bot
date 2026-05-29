@@ -18,7 +18,7 @@ Nhóm kênh:
 from datetime import datetime, timezone
 import discord
 from discord.ext import commands
-from core.data import ADMIN_IDS, get_cfg_log_rudy, get_log_channels, get_log_channel_by_group, set_log_channel_db
+from core.data import ADMIN_IDS, get_cfg_log_rudy, get_log_channels, get_log_channel_by_group, set_log_channel_db, get_or_fetch_channel
 
 LOG_ICONS = {
     "TICKET_CREATE":   ("🎫", 0x57F287),
@@ -158,12 +158,14 @@ async def send_log(
     if not ch_id:
         print(f"[LOG] ⚠️ Không có kênh log cho nhóm '{group}' ({event_type}), bỏ qua.")
         return
-    channel = bot.get_channel(ch_id)
-    if channel:
-        try:
-            await channel.send(embed=embed)
-        except Exception as e:
-            print(f"[LOG] ❌ Không gửi được log {event_type} → #{channel.name}: {e}")
+    channel = await get_or_fetch_channel(bot, ch_id)
+    if not channel:
+        print(f"[LOG] ⚠️ Không tìm được kênh {ch_id} cho '{group}' ({event_type}), bỏ qua.")
+        return
+    try:
+        await channel.send(embed=embed)
+    except Exception as e:
+        print(f"[LOG] ❌ Không gửi được log {event_type} → #{channel.name}: {e}")
 
 
 # ══════════════════════════════════════════
@@ -217,12 +219,13 @@ class LoggerCog(commands.Cog):
         )
 
     @commands.command(name="setuplog")
-    async def setup_log(self, ctx):
-        """Tự động tạo toàn bộ kênh log và bỏ vào danh mục cố định."""
+    async def setup_log(self, ctx, category_id: int = None):
+        """Tự động tạo toàn bộ kênh log và bỏ vào danh mục cố định.\nDùng: .setuplog [category_id]"""
         if ctx.author.id not in ADMIN_IDS:
             return
 
-        CATEGORY_ID = 1486967303802191912
+        DEFAULT_CATEGORY_ID = 1486967303802191912
+        CATEGORY_ID = category_id or DEFAULT_CATEGORY_ID
         category = ctx.guild.get_channel(CATEGORY_ID)
         if not category or not isinstance(category, discord.CategoryChannel):
             return await ctx.reply("❌ Không tìm thấy danh mục. Kiểm tra lại ID.")
@@ -362,7 +365,7 @@ class LoggerCog(commands.Cog):
             fields=[
                 ("👤 Người dùng", f"{interaction.user.mention} (`{interaction.user.id}`)", True),
                 ("🔧 Options",    f"`{opts}`" if opts else "*(không có)*",                True),
-                ("📌 Kênh",       interaction.channel.mention if interaction.channel else "N/A", True),
+                ("📌 Kênh",       getattr(interaction.channel, "mention", "N/A"), True),
             ],
             user=interaction.user,
         )
