@@ -39,6 +39,9 @@ Mỗi chat mới: upload file này + mô tả vấn đề + upload file .py liê
 
 ## Changelog
 
+### [v3.8.1] 2026-05-29
+- `ticket.py` — Ticket **Order Base** ping thêm role `BUILDER_BASE_ROLE_ID` (1484158340849205308) khi tạo kênh
+
 ### [v3.8.0] 2026-05-22
 - `ticket.py` — Xóa `.mkchannel` trùng → fix `CommandRegistrationError` (admin.py không load được)
 
