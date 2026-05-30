@@ -123,8 +123,6 @@ NHÓM GIVEAWAY:
 - "reroll giveaway [id]" → {"action": "giveaway_reroll", "params": {"message_id": "id"}}
 
 NHÓM MINIGAME:
-- "mở búa kéo bao/bkb" → {"action": "minigame_bkb", "params": {}}
-- "mở bầu cua/bc [cược]" → {"action": "minigame_bc", "params": {"bet": "cược"}}
 
 KHÔNG HIỂU: {"action": "unknown", "params": {"reason": "mô tả ngắn lý do"}}
 
@@ -406,16 +404,6 @@ async def _run_action(ctx, action: dict) -> str:
         if not ok: return err
         labels = {"giveaway_end": "Kết thúc", "giveaway_reroll": "Reroll"}
         return f"✅ {labels[act]} giveaway."
-
-    # ── MINIGAME ──
-    if act == "minigame_bkb":
-        ok, err = await invoke_cmd("bkb")
-        return "✅ Đã mở Búa Kéo Bao." if ok else err
-
-    if act == "minigame_bc":
-        bet = params.get("bet", "")
-        ok, err = await invoke_cmd("bc", "open", bet) if bet else await invoke_cmd("bc", "open")
-        return "✅ Đã mở Bầu Cua." if ok else err
 
     # ── UNKNOWN ──
     reason = params.get("reason", "Không hiểu yêu cầu")
