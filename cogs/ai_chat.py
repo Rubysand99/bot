@@ -263,11 +263,26 @@ async def _run_action(ctx, action: dict) -> str:
         name     = params.get("name", "kênh-mới").lower().replace(" ", "-")
         ch_type  = params.get("type", "text")
         privacy  = params.get("privacy", "public")
-        overwrites = {}
+
+        # Bot luôn có toàn quyền trong kênh do nó tạo
+        bot_perms = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            manage_channels=True,
+            manage_messages=True,
+            read_message_history=True,
+            embed_links=True,
+            attach_files=True,
+        )
+
         if privacy == "private":
             overwrites = {
                 ctx.guild.default_role: discord.PermissionOverwrite(view_channel=False),
-                ctx.guild.me: discord.PermissionOverwrite(view_channel=True),
+                ctx.guild.me: bot_perms,
+            }
+        else:
+            overwrites = {
+                ctx.guild.me: bot_perms,
             }
         try:
             if ch_type == "voice":
