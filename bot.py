@@ -59,7 +59,7 @@ async def load_cogs():
 async def on_ready():
     from core.data import init_data_cache
     from cogs.ticket import TicketPanel, TicketButtons, sync_ticket_counter
-    from cogs.giveaway import GiveawayView, GiveawayCog
+    from cogs.giveaway import GiveawayView
 
     await init_data_cache()
 

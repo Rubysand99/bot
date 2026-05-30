@@ -2,7 +2,6 @@
 cogs/ticket.py — Ticket system: panel, views, modals, close/done logic.
 """
 
-import os
 import io
 import asyncio
 _ticket_create_lock = asyncio.Lock()
@@ -10,19 +9,19 @@ from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
-from discord.ui import View, Button, Modal, TextInput, Select
+from discord.ui import View, Button, Select
 
 from core.data import (
     ADMIN_IDS, TRANSCRIPT_CHANNEL_ID,
     get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
-    get_cfg_counter_channel, get_cfg_proof_channel, get_cfg_balance_channel,
-    get_panel_channel_id, save_panel_channel_id,
+    get_cfg_counter_channel,
+    save_panel_channel_id,
     get_buy_roles, get_user_total_spent,
     add_user_spent,
     save_ticket_record, get_user_ticket_history, get_monthly_stats,
     load_data, save_data, parse_amount, fmt_amount, is_staff_member,
-    _uname, _uname_plain, can_use_dangerous_cmd,
-    get_seller_category, save_seller_category,
+    _uname_plain,
+    save_seller_category,
     remove_seller_category, get_all_seller_categories,
     get_or_fetch_channel,
 )
@@ -704,7 +703,6 @@ class TicketCog(commands.Cog):
             embed.add_field(name="📈 Trung bình/đơn", value=f"**{fmt_amount(avg)}**", inline=True)
 
             # Top 3 buyer
-            from collections import Counter
             buyer_totals: dict[int, int] = {}
             for t in records:
                 uid = t.get("user_id")

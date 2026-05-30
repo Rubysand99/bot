@@ -11,7 +11,7 @@ import discord
 from cogs.logger import send_log
 from discord.ext import commands
 
-from core.data import ADMIN_IDS, load_data, save_data, _uname, _uname_plain
+from core.data import ADMIN_IDS, load_data, save_data, _uname
 
 
 _invite_cache: dict[int, dict[str, int]] = {}

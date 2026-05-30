@@ -292,12 +292,10 @@ class LoggerCog(commands.Cog):
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc),
         )
-        any_set = False
         for grp, label in LOG_GROUP_LABELS.items():
             ch_id = get_log_channel(grp)
             if ch_id:
                 embed.add_field(name=label, value=f"<#{ch_id}>", inline=True)
-                any_set = True
             else:
                 embed.add_field(name=label, value="*(chưa cài)*", inline=True)
 

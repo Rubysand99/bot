@@ -11,7 +11,7 @@ import discord
 from cogs.logger import send_log
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import View, Button, Modal, TextInput
+from discord.ui import View, Button
 
 from core.data import (
     ADMIN_IDS, load_giveaways_data, save_giveaways_data,
@@ -375,7 +375,7 @@ class GiveawayCog(commands.Cog):
         winner_ids  = random.sample(entries, count)
         mentions    = ", ".join(f"<@{uid}>" for uid in winner_ids)
         await interaction.response.send_message(f"🔄 Reroll! Winner mới: {mentions} 🎉")
-        await send_log(interaction.client, "GIVEAWAY", f"Reroll GW",
+        await send_log(interaction.client, "GIVEAWAY", "Reroll GW",
             fields=[("Admin", interaction.user.mention, True), ("Winner mới", mentions, True)])
 
     @app_commands.command(name="gwlist", description="Xem danh sách người tham gia giveaway")

@@ -13,12 +13,11 @@ from discord.ui import View, Button, Modal, TextInput, Select
 
 from cogs.logger import send_log
 from core.data import (
-    ADMIN_IDS, get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
-    get_cfg_counter_channel, get_cfg_balance_channel, get_cfg_legit_channel,
-    get_cfg_proof_channel, get_cfg_ai_channel, get_cfg_font, set_cfg_font,
-    save_cfg, load_data, save_data, get_buy_roles, save_buy_roles,
-    get_user_total_spent, add_user_spent, get_price_sections, save_price_sections,
-    can_use_dangerous_cmd, parse_amount, fmt_amount, _uname, _uname_plain,
+    ADMIN_IDS, get_cfg_legit_channel,
+    get_cfg_font, set_cfg_font,
+    save_cfg, load_data, get_buy_roles, save_buy_roles,
+    get_price_sections, save_price_sections,
+    can_use_dangerous_cmd, parse_amount, fmt_amount,
     get_or_fetch_channel,
 )
 
@@ -1861,7 +1860,6 @@ class AdminCog(commands.Cog):
     async def backfill_cmd(self, ctx, limit: int = 25):
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin mới có quyền dùng lệnh này.")
-        from core.data import get_cfg_legit_channel
         import re as _re
         IGNORED = {628400349979344919}
 
@@ -2039,7 +2037,6 @@ class AdminCog(commands.Cog):
 
     @app_commands.command(name="botinfo", description="Xem thông tin bot")
     async def slash_botinfo(self, interaction: discord.Interaction):
-        import platform
         embed = discord.Embed(title=f"🤖  {self.bot.user.name}", color=0x5865F2, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="🏓 Latency",  value=f"**{round(self.bot.latency*1000)}ms**", inline=True)
         embed.add_field(name="🌐 Servers",  value=f"**{len(self.bot.guilds)}**",            inline=True)

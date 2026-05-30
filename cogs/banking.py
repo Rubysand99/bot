@@ -9,8 +9,6 @@ cogs/banking.py — Tích hợp ngân hàng qua Casso webhook
 
 import os
 import asyncio
-import hmac
-import hashlib
 import logging
 from datetime import datetime, timezone, timedelta
 from aiohttp import web
@@ -19,7 +17,7 @@ import discord
 from discord.ext import commands
 
 from core.data import (
-    ADMIN_IDS, load_data, save_data, can_use_dangerous_cmd,
+    ADMIN_IDS, load_data, save_data,
     get_or_fetch_channel, _uname_plain,
 )
 from cogs.logger import send_log
