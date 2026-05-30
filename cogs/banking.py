@@ -31,7 +31,7 @@ log = logging.getLogger("banking")
 # ══════════════════════════════════════════
 # CONSTANTS
 # ══════════════════════════════════════════
-WEBHOOK_PORT   = int(os.getenv("BANKING_WEBHOOK_PORT", "8080"))
+WEBHOOK_PORT   = int(os.getenv("PORT", os.getenv("BANKING_WEBHOOK_PORT", "8080")))
 WEBHOOK_PATH   = "/casso"
 CASSO_SECRET   = os.getenv("CASSO_SECRET", "")
 BANK_LOG_ENV   = os.getenv("BANK_LOG_CHANNEL_ID", "0")
