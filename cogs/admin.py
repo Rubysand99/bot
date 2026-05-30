@@ -1713,25 +1713,53 @@ class AdminCog(commands.Cog):
                      "`.ban @user [lý do]` — Ban vĩnh viễn\n"
                      "`.unban <user_id>` — Unban\n"
                      "`.kick @user [lý do]` — Kick khỏi server\n"
-                     "`.mute @user <thời gian> [lý do]` — Timeout (vd: 10m, 1h, 1d)\n"
-                     "`.unmute @user` — Gỡ timeout", False),
+                     "`.timeout @user <thời gian> [lý do]` — Timeout Discord native (alias: `.mute`)\n"
+                     "`.untimeout @user` — Gỡ timeout (alias: `.unmute`)\n"
+                     "`.tempban @user <thời gian> [lý do]` — Ban tạm thời, tự unban (vd: 2d, 1h)", False),
                     ("⚠️ Cảnh cáo",
-                     "`.warn @user [lý do]` — Cảnh cáo user\n"
+                     "`.warn @user [lý do]` — Cảnh cáo user (có cooldown 60s)\n"
                      "`.warns [@user]` — Xem danh sách cảnh cáo\n"
-                     "`.clearwarn @user` — Xóa toàn bộ cảnh cáo", False),
-                    ("🔧 Kênh",
+                     "`.clearwarn @user [số]` — Xóa 1 warn hoặc toàn bộ\n"
+                     "`.modlog @user` — Xem lịch sử ban/kick/timeout/warn", False),
+                    ("🗑️ Tin nhắn",
+                     "`.xoa <số> [@user]` — Xóa hàng loạt tin nhắn (tối đa 100)\n"
                      "`.slowmode <giây>` — Cài chế độ chậm (0 = tắt)\n"
                      "`.lock [#kênh]` — Khóa kênh\n"
                      "`.unlock [#kênh]` — Mở khóa kênh", False),
                     ("🛡️ AutoMod",
                      "`.automod on/off` — Bật/tắt automod\n"
-                     "`.automod links/invites/spam` — Bật/tắt lọc link, invite, spam\n"
+                     "`.automod links/invites/spam on/off` — Lọc link, invite, spam\n"
+                     "`.automod imagespam on/off` — Chống spam ảnh/sticker (4+ ảnh/10s → timeout 5p)\n"
+                     "`.automod caps on/off [%] [min_len]` — Xóa tin nhắn ALL CAPS\n"
                      "`.automod addword/delword/words` — Quản lý từ cấm\n"
                      "`.automod addrole/delrole` — Role bypass automod\n"
                      "`.automod adduser/deluser` — User bypass automod\n"
                      "`.automod whitelist` — Xem danh sách bypass", False),
                     ("🔷 Slash commands",
-                     "`/ban` `/unban` `/kick` `/mute` `/unmute` `/warn`", False),
+                     "`/ban` `/unban` `/kick` `/timeout` `/untimeout`\n"
+                     "`/tempban` `/warn` `/warns` `/clearwarn` `/modlog`\n"
+                     "`/xoa` `/slowmode` `/lock` `/unlock`", False),
+                ]
+            },
+            "banking": {
+                "emoji": "🏦", "title": "Banking",
+                "fields": [
+                    ("📋 Lệnh",
+                     "`.stats` — Dashboard tổng thu/chi ngân hàng\n"
+                     "`.txlog [số]` — Xem lịch sử giao dịch (mặc định 10 GD gần nhất)\n"
+                     "`.bankset #kênh` — Cài kênh log nhận thông báo giao dịch", False),
+                ]
+            },
+            "log": {
+                "emoji": "📋", "title": "Log",
+                "fields": [
+                    ("📋 Lệnh",
+                     "`.setlog <nhóm> #kênh` — Cài kênh log cho từng nhóm\n"
+                     "`.setuplog [category_id]` — Tự động tạo toàn bộ kênh log\n"
+                     "`.loginfo` — Xem kênh log đang được cài", False),
+                    ("🗂️ Nhóm log",
+                     "`ticket` `balance` `mod` `giveaway`\n"
+                     "`member` `role` `ai` `admin` `general`", False),
                 ]
             },
             "admin": {
@@ -1770,13 +1798,15 @@ class AdminCog(commands.Cog):
             "dichvu": "dichvu", "dịch vụ": "dichvu", "dv": "dichvu", "sv": "dichvu",
             "giveaway": "giveaway", "gw": "giveaway",
             "mod": "mod",
+            "banking": "banking", "bank": "banking", "nganhang": "banking",
+            "log": "log", "logger": "log",
             "admin": "admin", "adm": "admin",
         }
 
         if topic:
             key = ALIASES.get(topic.lower().strip())
             if not key:
-                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "point", "ai", "invite", "dichvu", "giveaway", "mod", "admin"])
+                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "point", "ai", "invite", "dichvu", "giveaway", "mod", "banking", "log", "admin"])
                 return await ctx.reply(f"❌ Không tìm thấy mục `{topic}`.\nCác mục hợp lệ: {topics_list}")
             t = TOPICS[key]
             embed = discord.Embed(
@@ -1802,7 +1832,9 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`", inline=True)
-        embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.mute` `.warn`\n`.slowmode` `.lock` `.automod`", inline=True)
+        embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.timeout` `.tempban`\n`.warn` `.modlog` `.xoa` `.automod`", inline=True)
+        embed.add_field(name="🏦 Banking",   value="`.stats` `.txlog` `.bankset`", inline=True)
+        embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo`", inline=True)
         embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel`", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
