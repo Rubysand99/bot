@@ -588,7 +588,7 @@ class BankingCog(commands.Cog):
         ctx_like = type("FakeCtx", (), {
             "author": interaction.user,
             "guild":  interaction.guild,
-            "reply":  lambda self2, *a, **kw: interaction.followup.send(*a, **kw),
+            "reply":  lambda *a, **kw: interaction.followup.send(*a, **kw),
         })()
         await self.stats_cmd(ctx_like)
 
@@ -601,7 +601,7 @@ class BankingCog(commands.Cog):
         ctx_like = type("FakeCtx", (), {
             "author": interaction.user,
             "guild":  interaction.guild,
-            "reply":  lambda self2, *a, **kw: interaction.followup.send(*a, **kw),
+            "reply":  lambda *a, **kw: interaction.followup.send(*a, **kw),
         })()
         await self.txlog_cmd(ctx_like, limit)
 
@@ -613,31 +613,10 @@ class BankingCog(commands.Cog):
         ctx_like = type("FakeCtx", (), {
             "author": interaction.user,
             "guild":  interaction.guild,
-            "reply":  lambda self2, *a, **kw: interaction.followup.send(*a, **kw),
+            "reply":  lambda *a, **kw: interaction.followup.send(*a, **kw),
         })()
         await self.wallet_cmd(ctx_like)
 
-
-    @commands.command(name="tru")
-    async def tru_cmd(self, ctx, amount: int = None):
-        if ctx.author.id not in ADMIN_IDS:
-            return await ctx.reply("❌ Chỉ admin.")
-        if amount is None or amount <= 0:
-            return await ctx.reply("❌ Dùng: `.tru <số tiền>`")
-        old_bal = get_wallet_balance()
-        if amount > old_bal:
-            return await ctx.reply(f"❌ Ví chỉ có **{fmt_vnd(old_bal)}**, không đủ.")
-        data = load_data()
-        data["fee_wallet"] = old_bal - amount
-        save_data(data)
-        new_bal = get_wallet_balance()
-        embed = discord.Embed(title="➖  Trừ Ví Ảo", color=0xE74C3C, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="💰 Trước", value=fmt_vnd(old_bal), inline=True)
-        embed.add_field(name="➖ Trừ",   value=fmt_vnd(amount),  inline=True)
-        embed.add_field(name="💰 Sau",   value=fmt_vnd(new_bal), inline=True)
-        embed.add_field(name="👤 Bởi",   value=ctx.author.mention, inline=True)
-        await ctx.reply(embed=embed)
-        await send_log(self.bot, "BANKING", "Trừ Ví Ảo", fields=[("➖ Trừ", fmt_vnd(amount), True), ("💰 Sau", fmt_vnd(new_bal), True), ("👤 Bởi", ctx.author.mention, True)], user=ctx.author)
 
     @commands.command(name="tru")
     async def tru_cmd(self, ctx, amount: int = None):

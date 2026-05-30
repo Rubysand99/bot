@@ -28,7 +28,7 @@ from core.data import (
 )
 from cogs.logger import send_log
 
-BOT_VERSION = "3.3.5"
+BOT_VERSION = "3.9.4"
 
 BUILDER_BASE_ROLE_ID = 1484158340849205308
 

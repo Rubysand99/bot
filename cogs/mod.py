@@ -13,7 +13,6 @@ Thay đổi:
 
 import re
 import asyncio
-import hashlib
 from datetime import datetime, timezone, timedelta
 
 import discord
