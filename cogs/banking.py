@@ -2,13 +2,17 @@
 cogs/banking.py — Tích hợp ngân hàng qua Casso webhook
 - Nhận webhook POST từ Casso (Vietinbank + MB Bank)
 - Phân loại giao dịch vào/ra, lưu MongoDB
-- Lệnh .stats  — Dashboard tổng thu/chi/số dư ước tính
-- Lệnh .txlog  — Lịch sử giao dịch ngân hàng gần đây
-- Lệnh .bankset — Cài kênh log ngân hàng
+- Ví ảo tích phí 500đ/giao dịch (cả vào lẫn ra)
+- Lệnh .stats    — Dashboard tổng thu/chi/số dư ước tính
+- Lệnh .txlog    — Lịch sử giao dịch ngân hàng gần đây
+- Lệnh .wallet   — Xem số dư ví ảo phí
+- Lệnh .bankset  — Cài kênh log ngân hàng
 """
 
 import os
 import asyncio
+import hmac
+import hashlib
 import logging
 from datetime import datetime, timezone, timedelta
 from aiohttp import web
@@ -17,7 +21,7 @@ import discord
 from discord.ext import commands
 
 from core.data import (
-    ADMIN_IDS, load_data, save_data,
+    ADMIN_IDS, load_data, save_data, can_use_dangerous_cmd,
     get_or_fetch_channel, _uname_plain,
 )
 from cogs.logger import send_log
@@ -27,11 +31,13 @@ log = logging.getLogger("banking")
 # ══════════════════════════════════════════
 # CONSTANTS
 # ══════════════════════════════════════════
-WEBHOOK_PORT      = int(os.getenv("BANKING_WEBHOOK_PORT", "8080"))
-WEBHOOK_PATH      = "/casso"
-CASSO_SECRET      = os.getenv("CASSO_SECRET", "")   # Casso → Security token
-BANK_LOG_ENV      = os.getenv("BANK_LOG_CHANNEL_ID", "0")
-MAX_TX_HISTORY    = 500
+WEBHOOK_PORT   = int(os.getenv("BANKING_WEBHOOK_PORT", "8080"))
+WEBHOOK_PATH   = "/casso"
+CASSO_SECRET   = os.getenv("CASSO_SECRET", "")
+BANK_LOG_ENV   = os.getenv("BANK_LOG_CHANNEL_ID", "0")
+MAX_TX_HISTORY = 500
+
+FEE_PER_TX = 500  # đ phí mỗi giao dịch (cả vào lẫn ra)
 
 BANK_NAMES = {
     "970415": "Vietinbank",
@@ -46,7 +52,7 @@ BANK_NAMES = {
 
 def get_banking_cfg() -> dict:
     return load_data().get("banking_cfg", {
-        "log_channel": int(BANK_LOG_ENV) if BANK_LOG_ENV != "0" else 0,
+        "log_channel":    int(BANK_LOG_ENV) if BANK_LOG_ENV != "0" else 0,
         "notify_channel": 0,
     })
 
@@ -62,15 +68,34 @@ def append_bank_tx(tx: dict):
     data = load_data()
     data.setdefault("banking_txs", [])
     data["banking_txs"].append(tx)
-    data["banking_txs"] = data["banking_txs"][-MAX_TX_HISTORY:]  # giữ 500 giao dịch gần nhất
+    data["banking_txs"] = data["banking_txs"][-MAX_TX_HISTORY:]
     save_data(data)
+
+# ── Ví ảo phí ──────────────────────────────
+
+def get_wallet_balance() -> int:
+    """Trả về số dư ví ảo phí (đơn vị: đồng)."""
+    return load_data().get("fee_wallet", 0)
+
+def add_wallet_fee(amount: int = FEE_PER_TX):
+    """Cộng phí vào ví ảo."""
+    data = load_data()
+    data["fee_wallet"] = data.get("fee_wallet", 0) + amount
+    save_data(data)
+
+def reset_wallet_balance():
+    """Reset ví ảo về 0 (dùng khi admin xác nhận đã thu phí)."""
+    data = load_data()
+    data["fee_wallet"] = 0
+    save_data(data)
+
+# ── Misc helpers ───────────────────────────
 
 def fmt_vnd(amount: int) -> str:
     sign = "-" if amount < 0 else ""
     return f"{sign}{abs(amount):,}đ".replace(",", ".")
 
 def _bank_label(bank_str: str) -> str:
-    """Trả về tên ngân hàng dễ đọc từ bin hoặc bankCode."""
     s = str(bank_str).upper()
     for k, v in BANK_NAMES.items():
         if k in s:
@@ -78,7 +103,6 @@ def _bank_label(bank_str: str) -> str:
     return bank_str or "N/A"
 
 def _stats_period(txs: list, since: datetime) -> dict:
-    """Tính tổng thu/chi trong khoảng thời gian."""
     total_in = total_out = 0
     for tx in txs:
         try:
@@ -118,11 +142,13 @@ class CassoWebhookServer:
             await self._runner.cleanup()
 
     async def handle(self, request: web.Request) -> web.Response:
-        # ── Xác thực secret token từ Casso ──
+        # SePay gửi header: Authorization: Apikey <key>
         if CASSO_SECRET:
-            token = request.headers.get("Secure-Token", "")
+            auth = request.headers.get("Authorization", "")
+            # Chấp nhận cả "Apikey xxx" lẫn raw token (tuỳ cấu hình SePay)
+            token = auth.replace("Apikey ", "").strip()
             if token != CASSO_SECRET:
-                log.warning("[BANKING] ⚠️ Webhook nhận request sai secret token")
+                log.warning("[BANKING] ⚠️ Webhook nhận request sai API key")
                 return web.Response(status=401, text="Unauthorized")
 
         try:
@@ -130,13 +156,35 @@ class CassoWebhookServer:
         except Exception:
             return web.Response(status=400, text="Bad JSON")
 
-        # ── Casso gửi list giao dịch trong "data" ──
-        transactions = payload.get("data", [])
-        if not isinstance(transactions, list):
-            transactions = [transactions]
+        # ── SePay payload format ──────────────────────────────────────
+        # {
+        #   "id": 1,
+        #   "gateway": "MB Bank",
+        #   "transactionDate": "2026-05-30 22:00:00",
+        #   "accountNumber": "0123456789",
+        #   "subAccount": null,
+        #   "code": null,
+        #   "content": "CHUYEN KHOAN MA DON 12345",
+        #   "transferType": "in",          ← "in" hoặc "out"
+        #   "transferAmount": 500000,      ← luôn dương
+        #   "accumulated": 2500000,
+        #   "referenceCode": "FT26001234",
+        #   "description": "..."
+        # }
+        # SePay có thể gửi 1 object hoặc wrap trong "data": [...]
+        # ─────────────────────────────────────────────────────────────
+        if "data" in payload:
+            transactions = payload["data"]
+            if not isinstance(transactions, list):
+                transactions = [transactions]
+        elif "id" in payload:
+            # SePay gửi thẳng 1 object
+            transactions = [payload]
+        else:
+            transactions = []
 
         for tx_raw in transactions:
-            await self.cog.process_casso_tx(tx_raw)
+            await self.cog.process_sepay_tx(tx_raw)
 
         return web.Response(status=200, text="OK")
 
@@ -161,51 +209,44 @@ class BankingCog(commands.Cog):
             self._task.cancel()
 
     # ──────────────────────────────────────
-    # XỬ LÝ GIAO DỊCH TỪ CASSO
+    # XỬ LÝ GIAO DỊCH TỪ SEPAY
     # ──────────────────────────────────────
 
-    async def process_casso_tx(self, raw: dict):
+    async def process_sepay_tx(self, raw: dict):
         """
-        Casso payload mẫu:
-        {
-          "id": 123456,
-          "tid": "FT24001234567",
-          "description": "CHUYEN KHOAN TU NGUYEN VAN A MA DON 12345",
-          "amount": 500000,
-          "cusum_balance": 2500000,
-          "when": "2026-05-30 08:00:00",
-          "bank_sub_acc_id": "0123456789",
-          "subAccId": "VTB_0123456789",
-          "bankName": "VietinBank",
-          "bankAbbreviation": "VTB",
-          "virtualAccount": "",
-          "virtualAccountName": ""
-        }
-        amount > 0 → tiền vào, amount < 0 → tiền ra
+        SePay payload:
+          transferType:    "in" | "out"
+          transferAmount:  số dương
+          transactionDate: "YYYY-MM-DD HH:MM:SS"
+          gateway:         tên ngân hàng
+          referenceCode:   mã GD
+          content:         nội dung CK
+          accumulated:     số dư sau GD
         """
         try:
-            amount_raw = int(raw.get("amount", 0))
-            direction  = "in" if amount_raw >= 0 else "out"
-            amount     = abs(amount_raw)
-            desc       = raw.get("description", "")
-            bank_name  = raw.get("bankName") or raw.get("bankAbbreviation") or _bank_label(raw.get("subAccId", ""))
-            tid        = str(raw.get("tid") or raw.get("id", ""))
-            when_str   = raw.get("when", "")
-            balance    = raw.get("cusum_balance")
+            direction  = raw.get("transferType", "in").lower()
+            amount     = abs(int(raw.get("transferAmount", 0)))
+            desc       = raw.get("content") or raw.get("description", "")
+            bank_name  = raw.get("gateway", "MB Bank")
+            tid        = str(raw.get("referenceCode") or raw.get("id", ""))
+            when_str   = raw.get("transactionDate", "")
+            balance    = raw.get("accumulated")
 
-            # Parse thời gian
             try:
                 tx_time = datetime.strptime(when_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
             except Exception:
                 tx_time = datetime.now(timezone.utc)
 
-            # Kiểm tra trùng TID
+            # Bỏ qua TID trùng
             existing = get_bank_txs()
             if tid and any(t.get("tid") == tid for t in existing):
                 log.info(f"[BANKING] ℹ️ Bỏ qua TID trùng: {tid}")
                 return
 
-            # Lưu giao dịch
+            # Cộng phí 500đ vào ví ảo
+            add_wallet_fee(FEE_PER_TX)
+            wallet_bal = get_wallet_balance()
+
             tx = {
                 "tid":       tid,
                 "direction": direction,
@@ -214,17 +255,21 @@ class BankingCog(commands.Cog):
                 "desc":      desc,
                 "balance":   balance,
                 "time":      tx_time.isoformat(),
+                "fee":       FEE_PER_TX,
             }
             append_bank_tx(tx)
 
-            # Gửi Discord embed
-            await self._notify_discord(tx)
+            await self._notify_discord(tx, wallet_bal)
 
         except Exception as e:
-            log.error(f"[BANKING] ❌ Lỗi xử lý giao dịch: {e}")
+            log.error(f"[BANKING] ❌ Lỗi xử lý giao dịch SePay: {e}")
 
-    async def _notify_discord(self, tx: dict):
-        cfg = get_banking_cfg()
+    # ──────────────────────────────────────
+    # THÔNG BÁO DISCORD
+    # ──────────────────────────────────────
+
+    async def _notify_discord(self, tx: dict, wallet_bal: int):
+        cfg   = get_banking_cfg()
         ch_id = cfg.get("log_channel", 0)
         if not ch_id:
             return
@@ -232,23 +277,56 @@ class BankingCog(commands.Cog):
         if not ch:
             return
 
-        is_in  = tx["direction"] == "in"
-        color  = 0x57F287 if is_in else 0xED4245
-        icon   = "📥" if is_in else "📤"
-        title  = f"{icon}  Tiền {'Vào' if is_in else 'Ra'} — {tx['bank']}"
+        is_in = tx["direction"] == "in"
+        color = 0x57F287 if is_in else 0xED4245
+        icon  = "📥" if is_in else "📤"
+        label = "Tiền Vào" if is_in else "Tiền Ra"
 
-        embed = discord.Embed(title=title, color=color,
-                              timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="💵 Số tiền",
-                        value=f"**{fmt_vnd(tx['amount'])}**", inline=True)
+        embed = discord.Embed(
+            title=f"{icon}  {label} — {tx['bank']}",
+            color=color,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+        # Số tiền GD
+        embed.add_field(
+            name="💵 Số tiền",
+            value=f"**{fmt_vnd(tx['amount'])}**",
+            inline=True,
+        )
+
+        # Số dư tài khoản thật (nếu Casso trả về)
         if tx.get("balance") is not None:
-            embed.add_field(name="🏦 Số dư TK",
-                            value=fmt_vnd(int(tx["balance"])), inline=True)
-        embed.add_field(name="🏛️ Ngân hàng",
-                        value=tx["bank"], inline=True)
+            embed.add_field(
+                name="🏦 Số dư TK",
+                value=fmt_vnd(int(tx["balance"])),
+                inline=True,
+            )
+
+        embed.add_field(
+            name="🏛️ Ngân hàng",
+            value=tx["bank"],
+            inline=True,
+        )
+
+        # Nội dung chuyển khoản
         if tx.get("desc"):
-            embed.add_field(name="📝 Nội dung",
-                            value=tx["desc"][:200], inline=False)
+            embed.add_field(
+                name="📝 Nội dung",
+                value=tx["desc"][:200],
+                inline=False,
+            )
+
+        # Ví ảo phí — luôn hiển thị
+        embed.add_field(
+            name="💼 Ví ảo phí",
+            value=(
+                f"Phí GD này: **-{fmt_vnd(FEE_PER_TX)}**\n"
+                f"Số dư ví: **{fmt_vnd(wallet_bal)}**"
+            ),
+            inline=False,
+        )
+
         if tx.get("tid"):
             embed.set_footer(text=f"TID: {tx['tid']}  •  {tx['time'][:19]}")
 
@@ -258,35 +336,107 @@ class BankingCog(commands.Cog):
             log.error(f"[BANKING] ❌ Không gửi được Discord: {e}")
 
     # ──────────────────────────────────────
+    # LỆNH .wallet
+    # ──────────────────────────────────────
+
+    @commands.command(name="wallet")
+    async def wallet_cmd(self, ctx):
+        """Xem số dư ví ảo phí giao dịch. Dùng: .wallet"""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới dùng được lệnh này.")
+
+        txs       = get_bank_txs()
+        wallet    = get_wallet_balance()
+        total_txs = len(txs)
+
+        # Đếm số GD có phí (tất cả GD đã lưu)
+        fee_txs = sum(1 for t in txs if t.get("fee", 0) > 0)
+
+        embed = discord.Embed(
+            title="💼  Ví Ảo Phí Giao Dịch",
+            color=0xF1C40F,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(
+            name="💰 Số dư hiện tại",
+            value=f"**{fmt_vnd(wallet)}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="📋 Số GD tính phí",
+            value=f"**{fee_txs}** GD",
+            inline=True,
+        )
+        embed.add_field(
+            name="💸 Phí mỗi GD",
+            value=f"**{fmt_vnd(FEE_PER_TX)}** / GD",
+            inline=True,
+        )
+        embed.add_field(
+            name="ℹ️ Ghi chú",
+            value=(
+                f"Phí **{fmt_vnd(FEE_PER_TX)}** được thu tự động mỗi khi có giao dịch "
+                f"vào hoặc ra.\nDùng `.walletreset` để reset về 0 sau khi đã thu phí."
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="TuyTam Store  •  Ví ảo chỉ theo dõi, không phải số dư thật")
+        await ctx.reply(embed=embed)
+
+    @commands.command(name="walletreset")
+    async def walletreset_cmd(self, ctx):
+        """Reset ví ảo phí về 0. Dùng: .walletreset"""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới dùng được lệnh này.")
+
+        old_bal = get_wallet_balance()
+        reset_wallet_balance()
+
+        embed = discord.Embed(
+            title="🔄  Reset Ví Ảo Phí",
+            color=0x95A5A6,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="💰 Số dư trước", value=fmt_vnd(old_bal), inline=True)
+        embed.add_field(name="💰 Số dư sau",   value=fmt_vnd(0),       inline=True)
+        embed.add_field(name="👤 Bởi",         value=ctx.author.mention, inline=True)
+        await ctx.reply(embed=embed)
+
+        await send_log(self.bot, "BANKING", "Reset Ví Ảo Phí",
+            fields=[
+                ("💰 Số dư cũ",  fmt_vnd(old_bal),     True),
+                ("👤 Bởi",       ctx.author.mention,   True),
+            ],
+            user=ctx.author,
+        )
+
+    # ──────────────────────────────────────
     # LỆNH .stats
     # ──────────────────────────────────────
 
     @commands.command(name="stats")
     async def stats_cmd(self, ctx):
-        """Dashboard tổng thu/chi ngân hàng (Vietinbank + MB Bank)."""
+        """Dashboard tổng thu/chi ngân hàng."""
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin mới dùng được lệnh này.")
 
         txs = get_bank_txs()
         now = datetime.now(timezone.utc)
 
-        today_s  = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        week_s   = today_s - timedelta(days=now.weekday())
-        month_s  = today_s.replace(day=1)
+        today_s = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_s  = today_s - timedelta(days=now.weekday())
+        month_s = today_s.replace(day=1)
 
         day_s   = _stats_period(txs, today_s)
         week_s2 = _stats_period(txs, week_s)
         mon_s   = _stats_period(txs, month_s)
         all_s   = _stats_period(txs, datetime.min.replace(tzinfo=timezone.utc))
 
-        # Top buyer (dựa theo người chuyển khoản — từ description)
-        # (mô tả đơn giản: dùng dữ liệu user_total_spent từ ticket system)
         from core.data import load_data as _ld
         data = _ld()
-        spent_map = data.get("user_total_spent", {})
+        spent_map  = data.get("user_total_spent", {})
         top_buyers = sorted(spent_map.items(), key=lambda x: x[1], reverse=True)[:5]
 
-        # Tách giao dịch theo ngân hàng
         vtb_in = vtb_out = mb_in = mb_out = 0
         for tx in txs:
             bank = tx.get("bank", "")
@@ -298,13 +448,13 @@ class BankingCog(commands.Cog):
                 if tx["direction"] == "in":  mb_in  += amt
                 else:                        mb_out += amt
 
+        wallet = get_wallet_balance()
+
         embed = discord.Embed(
             title="📊  Dashboard Ngân Hàng",
             color=0x5865F2,
             timestamp=now,
         )
-
-        # Thu/chi theo kỳ
         embed.add_field(
             name="📅 Hôm nay",
             value=f"📥 {fmt_vnd(day_s['in'])}\n📤 {fmt_vnd(day_s['out'])}\n💰 {fmt_vnd(day_s['net'])}",
@@ -320,8 +470,6 @@ class BankingCog(commands.Cog):
             value=f"📥 {fmt_vnd(mon_s['in'])}\n📤 {fmt_vnd(mon_s['out'])}\n💰 {fmt_vnd(mon_s['net'])}",
             inline=True,
         )
-
-        # Tổng toàn thời gian
         embed.add_field(
             name="🏦 Tổng tất cả",
             value=(
@@ -332,8 +480,6 @@ class BankingCog(commands.Cog):
             ),
             inline=False,
         )
-
-        # Tách theo ngân hàng
         embed.add_field(
             name="🏛️ Vietinbank",
             value=f"📥 {fmt_vnd(vtb_in)}\n📤 {fmt_vnd(vtb_out)}",
@@ -344,10 +490,14 @@ class BankingCog(commands.Cog):
             value=f"📥 {fmt_vnd(mb_in)}\n📤 {fmt_vnd(mb_out)}",
             inline=True,
         )
-
-        # Top buyer
+        # Ví ảo tóm tắt trong .stats
+        embed.add_field(
+            name="💼 Ví ảo phí",
+            value=f"**{fmt_vnd(wallet)}** ({len(txs)} GD × {fmt_vnd(FEE_PER_TX)})\nDùng `.wallet` để xem chi tiết",
+            inline=False,
+        )
         if top_buyers:
-            lines = []
+            lines  = []
             medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
             for i, (uid_str, spent) in enumerate(top_buyers):
                 member = ctx.guild.get_member(int(uid_str))
@@ -358,8 +508,6 @@ class BankingCog(commands.Cog):
                 value="\n".join(lines),
                 inline=False,
             )
-
-        # 3 GD gần nhất
         recent = txs[-3:][::-1]
         if recent:
             lines = []
@@ -388,7 +536,7 @@ class BankingCog(commands.Cog):
 
         recent = txs[-limit:][::-1]
         embed  = discord.Embed(
-            title=f"📜  Lịch Sử Giao Dịch Ngân Hàng — {limit} GD gần nhất",
+            title=f"📜  Lịch Sử Giao Dịch — {limit} GD gần nhất",
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc),
         )
@@ -414,7 +562,7 @@ class BankingCog(commands.Cog):
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin mới dùng được lệnh này.")
         if channel is None:
-            cfg = get_banking_cfg()
+            cfg   = get_banking_cfg()
             ch_id = cfg.get("log_channel", 0)
             mention = f"<#{ch_id}>" if ch_id else "Chưa cài"
             return await ctx.reply(f"📌 Kênh log ngân hàng hiện tại: {mention}\n💡 Dùng `.bankset #kênh` để đổi.")
@@ -435,7 +583,6 @@ class BankingCog(commands.Cog):
     async def slash_stats(self, interaction: discord.Interaction):
         if interaction.user.id not in ADMIN_IDS:
             return await interaction.response.send_message("❌ Chỉ admin mới dùng được.", ephemeral=True)
-        # Giả lập ctx để tái dùng logic
         await interaction.response.defer()
         ctx_like = type("FakeCtx", (), {
             "author": interaction.user,
@@ -456,6 +603,18 @@ class BankingCog(commands.Cog):
             "reply":  lambda self2, *a, **kw: interaction.followup.send(*a, **kw),
         })()
         await self.txlog_cmd(ctx_like, limit)
+
+    @discord.app_commands.command(name="wallet", description="Xem số dư ví ảo phí GD")
+    async def slash_wallet(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin mới dùng được.", ephemeral=True)
+        await interaction.response.defer()
+        ctx_like = type("FakeCtx", (), {
+            "author": interaction.user,
+            "guild":  interaction.guild,
+            "reply":  lambda self2, *a, **kw: interaction.followup.send(*a, **kw),
+        })()
+        await self.wallet_cmd(ctx_like)
 
 
 async def setup(bot: commands.Bot):

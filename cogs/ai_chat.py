@@ -438,6 +438,7 @@ async def _call_groq(user_id: int, user_message: str) -> str:
                         last_err = f"Model `{model}` hết quota"
                         continue
                     if resp.status != 200:
+                        err = await resp.text()
                         last_err = f"Lỗi {resp.status}"
                         continue
                     data  = await resp.json()

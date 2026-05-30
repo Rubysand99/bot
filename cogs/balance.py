@@ -8,8 +8,8 @@ from discord.ext import commands
 from discord.ui import View, Button
 
 from core.data import (
-    get_cfg_balance_channel, get_balance_data, save_balance_data,
-    load_data, save_data, can_use_dangerous_cmd, _uname, _uname_plain,
+    ADMIN_IDS, get_cfg_balance_channel, get_balance_data, save_balance_data,
+    load_data, save_data, can_use_dangerous_cmd, _uname, _uname_plain, fmt_amount,
 )
 from cogs.logger import send_log
 

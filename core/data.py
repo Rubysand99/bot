@@ -319,6 +319,7 @@ async def get_ticket_number() -> str:
             await col.update_one({"_id": "main"}, {"$set": {"ticket": num}}, upsert=True)
         except Exception as e:
             log.error(f"[DATA] ❌ Lỗi cập nhật ticket counter: {e}")
+        global _data_cache
         if _data_cache is not None:
             _data_cache["ticket"] = num
         return f"{num:03d}"
@@ -590,6 +591,7 @@ def set_log_channel_db(group: str, channel_id: int):
     save_data(data)
 
 def is_staff_member(member) -> bool:
+    import discord
     if member.id in ADMIN_IDS: return True
     guild = member.guild
     sr = guild.get_role(get_cfg_support_role())

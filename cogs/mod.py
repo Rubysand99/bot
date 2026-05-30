@@ -13,6 +13,7 @@ Thay đổi:
 
 import re
 import asyncio
+import hashlib
 from datetime import datetime, timezone, timedelta
 
 import discord
@@ -598,7 +599,7 @@ class ModCog(commands.Cog):
 
         count = len(deleted)
         suffix = f" của {member.mention}" if member else ""
-        await ctx.channel.send(
+        notif  = await ctx.channel.send(
             f"🗑️ Đã xoá **{count}** tin nhắn{suffix}.", delete_after=4
         )
         await send_log(self.bot, "INFO", "Xoá Tin Nhắn Hàng Loạt",
