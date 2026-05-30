@@ -183,6 +183,7 @@ class CassoWebhookServer:
         else:
             transactions = []
 
+        log.info(f"[BANKING] 📥 Raw payload: {transactions}")
         for tx_raw in transactions:
             await self.cog.process_sepay_tx(tx_raw)
 
