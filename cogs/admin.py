@@ -1662,22 +1662,6 @@ class AdminCog(commands.Cog):
                      "`.addreward` `.delreward` `.clearshop` — Quản lý quà", False),
                 ]
             },
-            "minigame": {
-                "emoji": "🎲", "title": "Minigame",
-                "fields": [
-                    ("🦀 Bầu Cua (nhiều người)",
-                     "`.bc open` — Mở phiên cược (4-6 người, 30s)\n"
-                     "`.bc cancel` — Hủy phiên đang mở\n"
-                     "`.setbaucua #kênh` — Cài kênh chơi Bầu Cua\n"
-                     "Tỉ lệ: x1→+0.9pt | x2→+1.8pt | x3→+2.7pt | Thua→-1pt", False),
-                    ("✂️ Búa Kéo Bao",
-                     "`.bkb <búa|kéo|bao> [point]` — Chơi vs Bot\n"
-                     "Thắng nhận x0.9 point cược", False),
-                    ("📊 Xếp hạng & Thống kê",
-                     "`.rank [baucua|bkb]` — Bảng xếp hạng\n"
-                     "`.mgstats [@user]` — Thống kê cá nhân", False),
-                ]
-            },
             "ai": {
                 "emoji": "🤖", "title": "AI Chat",
                 "fields": [
@@ -1781,7 +1765,6 @@ class AdminCog(commands.Cog):
         ALIASES = {
             "ticket": "ticket", "vé": "ticket",
             "point": "point", "điểm": "point", "pts": "point",
-            "minigame": "minigame", "game": "minigame", "mini": "minigame", "mg": "minigame",
             "ai": "ai",
             "invite": "invite", "inv": "invite",
             "dichvu": "dichvu", "dịch vụ": "dichvu", "dv": "dichvu", "sv": "dichvu",
@@ -1793,7 +1776,7 @@ class AdminCog(commands.Cog):
         if topic:
             key = ALIASES.get(topic.lower().strip())
             if not key:
-                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "point", "minigame", "ai", "invite", "dichvu", "giveaway", "mod", "admin"])
+                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "point", "ai", "invite", "dichvu", "giveaway", "mod", "admin"])
                 return await ctx.reply(f"❌ Không tìm thấy mục `{topic}`.\nCác mục hợp lệ: {topics_list}")
             t = TOPICS[key]
             embed = discord.Embed(
@@ -1815,7 +1798,6 @@ class AdminCog(commands.Cog):
         )
         embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke`", inline=True)
         embed.add_field(name="💎 Point",     value="`.redeem` `.point` `.shop` `.exchange`\n`.addpoint` `.setpoint` `.pointall`", inline=True)
-        embed.add_field(name="🎲 Minigame",  value="`.bc open` `.bc cancel` `.setbaucua`\n`.bkb` `.rank` `.mgstats`", inline=True)
         embed.add_field(name="🤖 AI",        value="`.ai` `.aireset` `.mychat`\n`/ai` `/aireset`", inline=True)
         embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)

@@ -3,10 +3,8 @@ core/data.py — MongoDB storage, in-memory cache, và tất cả helper đọc/
 v3.6.3 fixes:
 - save_data() dùng asyncio.create_task thay ensure_future (an toàn hơn)
 - get_ticket_number() có asyncio.Lock tránh trùng số
-- minigame_stats có Lock tránh race condition
 - ADMIN_IDS đọc từ env ADMIN_IDS thay vì hardcode
 - Logging lỗi rõ ràng thay vì except: pass
-- Thêm noitu_channel_id, minigame_stats vào _default_data
 """
 
 import os
@@ -111,9 +109,6 @@ def _default_data() -> dict:
         },
         "reward_shop":      [],
         "exchange_log":     [],
-        "noitu_channel_id": 0,        # Kênh nối từ chỉ định (không dùng nữa)
-        "baucua_channel_id": 0,       # Kênh bầu cua nhiều người
-        "minigame_stats":   {},        # {user_id: {baucua,bkb,noitu,vtv,total}}
         "seller_qr":        {},        # {user_id: qr_path} — QR riêng của từng seller
         "seller_categories": {},       # {user_id: category_id} — category riêng của từng seller
         "log_channels":     {},        # {group: channel_id} — kênh log theo nhóm
@@ -124,7 +119,6 @@ def _default_data() -> dict:
 # ══════════════════════════════════════════
 _save_lock    = None   # Lock ghi MongoDB
 _ticket_lock  = None   # FIX: Lock tránh trùng số ticket
-_mgstats_lock = None   # FIX: Lock tránh race condition minigame_stats
 
 def _get_save_lock():
     global _save_lock
@@ -138,11 +132,6 @@ def _get_ticket_lock():
         _ticket_lock = asyncio.Lock()
     return _ticket_lock
 
-def _get_mgstats_lock():
-    global _mgstats_lock
-    if _mgstats_lock is None:
-        _mgstats_lock = asyncio.Lock()
-    return _mgstats_lock
 
 # ══════════════════════════════════════════
 # LOW-LEVEL MongoDB
@@ -513,38 +502,6 @@ def add_exchange_record(user_id: int, item_id: str, item_name: str, points_used:
     })
     save_data(data)
 
-# ══════════════════════════════════════════
-# MINIGAME STATS — FIX: async + Lock
-# ══════════════════════════════════════════
-def get_mg_stats() -> dict:
-    return load_data().get("minigame_stats", {})
-
-async def record_win_async(user_id: int, game: str):
-    """FIX: async + Lock tránh race condition khi nhiều người thắng cùng lúc."""
-    async with _get_mgstats_lock():
-        data = load_data()
-        data.setdefault("minigame_stats", {})
-        key = str(user_id)
-        data["minigame_stats"].setdefault(key, {"baucua": 0, "bkb": 0, "noitu": 0, "vtv": 0, "total": 0})
-        if game in data["minigame_stats"][key]:
-            data["minigame_stats"][key][game] += 1
-        data["minigame_stats"][key]["total"] += 1
-        save_data(data)
-
-def get_leaderboard(game: str = "total", top: int = 10) -> list:
-    stats = get_mg_stats()
-    rows  = [(int(uid), s.get(game, 0)) for uid, s in stats.items() if s.get(game, 0) > 0]
-    rows.sort(key=lambda x: x[1], reverse=True)
-    return rows[:top]
-
-# ══════════════════════════════════════════
-# NOITU CHANNEL
-# ══════════════════════════════════════════
-def get_noitu_channel() -> int:
-    return load_data().get("noitu_channel_id", 0)
-
-def set_noitu_channel(cid: int):
-    data = load_data(); data["noitu_channel_id"] = cid; save_data(data)
 
 # ══════════════════════════════════════════
 # INVITE COUNTS
