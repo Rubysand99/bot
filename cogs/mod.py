@@ -564,7 +564,7 @@ class ModCog(commands.Cog):
     # ══════════════════════════════════════
     # .XOA — xoá hàng loạt tin nhắn
     # ══════════════════════════════════════
-    @commands.command(name="xoa", aliases=["purge", "clear"])
+    @commands.command(name="xoa", aliases=["purge"])
     async def xoa_cmd(self, ctx, amount: int = None, member: discord.Member = None):
         """
         .xoa [số] [@user]
