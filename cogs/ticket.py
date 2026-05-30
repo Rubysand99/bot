@@ -670,7 +670,7 @@ class TicketCog(commands.Cog):
     # ══════════════════════════════════════════
     # THỐNG KÊ THEO THÁNG
     # ══════════════════════════════════════════
-    @commands.command(name="thongke", aliases=["tk", "stats"])
+    @commands.command(name="thongke", aliases=["tk"])
     async def thongke_cmd(self, ctx, month_str: str = None):
         if not is_staff_member(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
         now = datetime.now(timezone.utc)

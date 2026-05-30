@@ -1460,7 +1460,7 @@ class AdminCog(commands.Cog):
         await ctx.reply(embed=embed, view=PriceManagerView())
 
     # ── .clear ──
-    @commands.command(name="clear", aliases=["purge", "xoa"])
+    @commands.command(name="clear")
     async def clear_cmd(self, ctx, amount: int = None):
         if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền.")
         if amount is None: return await ctx.reply("❌ Dùng: `.clear <số lượng>` (tối đa 500)")
