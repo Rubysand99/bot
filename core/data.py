@@ -112,6 +112,11 @@ def _default_data() -> dict:
         "seller_qr":        {},        # {user_id: qr_path} — QR riêng của từng seller
         "seller_categories": {},       # {user_id: category_id} — category riêng của từng seller
         "log_channels":     {},        # {group: channel_id} — kênh log theo nhóm
+        "banking_cfg": {
+            "log_channel":    0,       # Channel ID nhận embed mỗi GD ngân hàng
+            "notify_channel": 0,       # (tuỳ chọn) kênh ping riêng
+        },
+        "banking_txs":      [],        # List giao dịch từ Casso webhook (max 500)
     }
 
 # ══════════════════════════════════════════

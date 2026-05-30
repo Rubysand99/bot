@@ -41,6 +41,7 @@ COGS = [
     "cogs.admin",
     "cogs.mod",
     "cogs.point",
+    "cogs.banking",
 ]
 
 async def load_cogs():
