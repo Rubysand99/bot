@@ -28,6 +28,8 @@ from core.data import (
 )
 from cogs.logger import send_log
 
+BOT_VERSION = "3.3.5"
+
 BUILDER_BASE_ROLE_ID = 1484158340849205308
 
 # ── Bảng SERVICE (không có giá) ──
@@ -552,6 +554,19 @@ class TicketCog(commands.Cog):
             user=ctx.author,
         )
 
+    @commands.command(name="orderbase")
+    async def orderbase_cmd(self, ctx):
+        if ctx.author.id not in ADMIN_IDS: return
+        try: await ctx.message.delete()
+        except: pass
+        embed = discord.Embed(
+            title="# Nhận Làm Base Village Trong <:emoji_17:1483684359415267449>",
+            description="**Giá Chỉ Từ 20-35m Tùy Theo Base Mà Ae Chọn**\n\n**Cam Kết:**\n<:emoji_17:1483684359415267449> •Tự Tìm Chỗ Xây Base Lun Nhé Ae\n<:emoji_17:1483684359415267449> •Base Có Chỗ Nhân Giống Village\n<:emoji_17:1483684359415267449> •Bảo Hành 8h Kể Từ Khi Mua\n<:emoji_17:1483684359415267449> •Nếu Bị Raid Trong Giờ Bảo Hành Sẽ Đc Hoàn Tiền\n\n**Nên Ae Yên Tâm Mà Thuê** ✅\n\n**Ai Muốn Có 1 Base Village Tuyệt Vời Mà Còn Rẻ Thì Hãy Tạo <#1464415587378659564> Để Có 1 Base Xịn Nhé**",
+            color=0xE67E22, timestamp=datetime.now(timezone.utc)
+        )
+        embed.set_footer(text="💰 DoанBaoNgoc-Stock  •  TuyTam Store")
+        await ctx.send("<@&1464411190808805540> sorry ping", embed=embed)
+
     # ── SLASH COMMANDS ──
     @discord.app_commands.command(name="close", description="Đóng ticket hiện tại")
     async def slash_close(self, interaction: discord.Interaction):
@@ -722,6 +737,93 @@ class TicketCog(commands.Cog):
     # ══════════════════════════════════════════
     # ADMIN: GÁN CATEGORY CHO SELLER (.setsl)
     # ══════════════════════════════════════════
+    @commands.command(name="setsl")
+    async def setsl_cmd(self, ctx, seller: discord.Member = None, category: discord.CategoryChannel = None):
+        """
+        .setsl <@seller | seller_id> #category
+        Admin gán category riêng cho từng seller.
+        """
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền.")
+
+        if not seller:
+            return await ctx.reply(
+                "❌ Thiếu thông tin!\n"
+                "Cú pháp: `.setsl @seller #danh-mục`\n"
+                "Ví dụ: `.setsl @TuyTam #Shop-TuyTam`"
+            )
+
+        if not category:
+            return await ctx.reply(
+                "❌ Thiếu danh mục!\n"
+                "Cú pháp: `.setsl @seller #danh-mục`"
+            )
+
+        save_seller_category(seller.id, category.id)
+
+        # Xem category hiện tại của tất cả seller để hiển thị
+        all_cats = get_all_seller_categories()
+        lines = []
+        for uid_str, cid in all_cats.items():
+            cat = discord.utils.get(ctx.guild.categories, id=cid)
+            cat_name = cat.name if cat else f"`ID:{cid}`"
+            lines.append(f"<@{uid_str}> → **{cat_name}**")
+
+        embed = discord.Embed(
+            title="⚙️ Đã gán Category cho Seller",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="👤 Seller",    value=seller.mention,    inline=True)
+        embed.add_field(name="📁 Category",  value=category.name,     inline=True)
+        embed.add_field(name="🆔 Category ID", value=f"`{category.id}`", inline=True)
+        if lines:
+            embed.add_field(
+                name="📋 Tất cả seller đã gán",
+                value="\n".join(lines) or "*(chưa có)*",
+                inline=False,
+            )
+        embed.set_footer(text=f"Cài bởi {_uname_plain(ctx.author)}")
+        await ctx.reply(embed=embed)
+
+    @commands.command(name="removesl")
+    async def removesl_cmd(self, ctx, seller: discord.Member = None):
+        """Admin xóa category của một seller."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền.")
+        if not seller:
+            return await ctx.reply("❌ Thiếu seller! Ví dụ: `.removesl @seller`")
+
+        remove_seller_category(seller.id)
+        await ctx.reply(f"✅ Đã xóa category của {seller.mention}.")
+
+    @commands.command(name="listsl")
+    async def listsl_cmd(self, ctx):
+        """Admin xem danh sách seller → category."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền.")
+
+        all_cats = get_all_seller_categories()
+        if not all_cats:
+            return await ctx.reply("*(Chưa có seller nào được gán category)*")
+
+        lines = []
+        for uid_str, cid in all_cats.items():
+            cat = discord.utils.get(ctx.guild.categories, id=cid)
+            cat_name = cat.name if cat else f"`ID:{cid}`"
+            lines.append(f"<@{uid_str}> → **{cat_name}**")
+
+        embed = discord.Embed(
+            title="📋 Danh Sách Seller → Category",
+            description="\n".join(lines),
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.set_footer(text=f"Tra cứu bởi {_uname_plain(ctx.author)}")
+        await ctx.reply(embed=embed)
+
+
+
 
 async def setup(bot):
     await bot.add_cog(TicketCog(bot))

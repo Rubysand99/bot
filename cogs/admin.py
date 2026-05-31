@@ -13,8 +13,7 @@ from discord.ui import View, Button, Modal, TextInput, Select
 
 from cogs.logger import send_log
 from core.data import (
-    ADMIN_IDS, BOT_VERSION, BOT_UPDATED,
-    get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
+    ADMIN_IDS, get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
     get_cfg_counter_channel, get_cfg_balance_channel, get_cfg_legit_channel,
     get_cfg_proof_channel, get_cfg_ai_channel, get_cfg_font, set_cfg_font,
     save_cfg, load_data, save_data, get_buy_roles, save_buy_roles,
@@ -22,6 +21,9 @@ from core.data import (
     can_use_dangerous_cmd, parse_amount, fmt_amount, _uname, _uname_plain,
     get_or_fetch_channel,
 )
+
+BOT_VERSION = "3.9.4"
+BOT_UPDATED = "2026-05-23"
 
 # ══════════════════════════════════════════
 # FONT UTILS
@@ -1842,80 +1844,15 @@ class AdminCog(commands.Cog):
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="🎫 Ticket", value=(
-            "`.panel` — tạo bảng chọn ticket\n"
-            "`.close` — đóng ticket\n"
-            "`.done` — hoàn thành đơn hàng\n"
-            "`.addnote` — thêm ghi chú vào ticket\n"
-            "`.ticketinfo` — lịch sử mua của user\n"
-            "`.thongke` — thống kê doanh thu"
-        ), inline=True)
-        embed.add_field(name="🤖 AI", value=(
-            "`.ai` — chat AI hoặc điều khiển bot\n"
-            "`.aireset` — xoá toàn bộ lịch sử AI\n"
-            "`.mychat` — xoá lịch sử chat của bạn"
-        ), inline=True)
-        embed.add_field(name="📨 Invite", value=(
-            "`.invite` — xem số lượt mời của bạn\n"
-            "`.invitetop` — bảng xếp hạng mời người\n"
-            "`.resetinvite` — reset invite của user"
-        ), inline=True)
-        embed.add_field(name="🏪 Dịch vụ", value=(
-            "`.sv` — xem danh sách dịch vụ & giá\n"
-            "`.giaset` — chỉnh sửa giá dịch vụ"
-        ), inline=True)
-        embed.add_field(name="🎉 Giveaway", value=(
-            "`/giveaway` — tạo giveaway mới\n"
-            "`/gend` — kết thúc giveaway sớm\n"
-            "`/greroll` — quay số lại\n"
-            "`/gwlist` — danh sách người tham gia"
-        ), inline=True)
-        embed.add_field(name="🔨 Mod", value=(
-            "`.ban` — cấm user khỏi server\n"
-            "`.unban` — bỏ cấm user\n"
-            "`.kick` — đuổi user khỏi server\n"
-            "`.timeout` / `.mute` — tắt tiếng user\n"
-            "`.untimeout` / `.unmute` — bỏ tắt tiếng\n"
-            "`.tempban` — cấm tạm thời (tự hết hạn)\n"
-            "`.warn` — cảnh cáo user\n"
-            "`.warns` — xem danh sách cảnh cáo\n"
-            "`.clearwarn` — xoá cảnh cáo của user\n"
-            "`.modlog` — lịch sử xử lý của user\n"
-            "`.slowmode` — đặt chậm gửi tin cho kênh\n"
-            "`.lock` / `.unlock` — khoá / mở kênh\n"
-            "`.xoa` — xoá hàng loạt tin nhắn\n"
-            "`.automod` — cài bộ lọc tự động"
-        ), inline=True)
-        embed.add_field(name="🏦 Banking", value=(
-            "`.stats` — thống kê thu chi ngân hàng\n"
-            "`.txlog` — lịch sử giao dịch\n"
-            "`.bankset` — cài tài khoản ngân hàng\n"
-            "`.wallet` — xem ví ảo phí giao dịch\n"
-            "`.walletreset` — reset ví ảo về 0\n"
-            "`.tru` — trừ tiền khỏi ví ảo"
-        ), inline=True)
-        embed.add_field(name="📋 Log", value=(
-            "`.setlog` — cài kênh log theo nhóm\n"
-            "`.setuplog` — tự động tạo hệ thống kênh log\n"
-            "`.loginfo` — xem cấu hình log hiện tại"
-        ), inline=True)
-        embed.add_field(name="⚙️ Admin", value=(
-            "`.st` — xem cấu hình bot\n"
-            "`.setup` — cài đặt server (kênh, role, danh mục)\n"
-            "`.clear` — xoá tin nhắn trong kênh\n"
-            "`.addrole` — thêm role cho thành viên\n"
-            "`.removerole` — xoá role của thành viên\n"
-            "`.roleall` — thêm role cho tất cả thành viên\n"
-            "`.emoji` — thêm emoji lên server\n"
-            "`.delemoji` — xoá emoji khỏi server\n"
-            "`.rename` — đổi tên kênh\n"
-            "`.mkchannel` — tạo nhiều kênh cùng lúc\n"
-            "`.setperm` — cài quyền cho kênh\n"
-            "`.ping` — kiểm tra độ trễ bot\n"
-            "`.userinfo` — xem thông tin thành viên\n"
-            "`.serverinfo` — xem thông tin server\n"
-            "`.botinfo` — xem thông tin bot"
-        ), inline=True)
+        embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke`", inline=True)
+        embed.add_field(name="🤖 AI",        value="`.ai` `.aireset` `.mychat`\n`/ai` `/aireset`", inline=True)
+        embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite`\n`/invite` `/invitetop`", inline=True)
+        embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
+        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`", inline=True)
+        embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.timeout` `.tempban`\n`.warn` `.modlog` `.xoa` `.automod`", inline=True)
+        embed.add_field(name="🏦 Banking",   value="`.stats` `.txlog` `.bankset`", inline=True)
+        embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo`", inline=True)
+        embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.roleall`\n`.emoji` `.rename` `.mkchannel`", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
 
@@ -1924,6 +1861,8 @@ class AdminCog(commands.Cog):
     async def backfill_cmd(self, ctx, limit: int = 25):
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin mới có quyền dùng lệnh này.")
+        from core.data import get_cfg_legit_channel
+        import re as _re
         IGNORED = {628400349979344919}
 
         legit_ch_id = get_cfg_legit_channel()

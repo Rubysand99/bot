@@ -13,6 +13,7 @@ Thay đổi:
 
 import re
 import asyncio
+import hashlib
 from datetime import datetime, timezone, timedelta
 
 import discord
@@ -563,7 +564,7 @@ class ModCog(commands.Cog):
     # ══════════════════════════════════════
     # .XOA — xoá hàng loạt tin nhắn
     # ══════════════════════════════════════
-    @commands.command(name="xoa", aliases=["purge"])
+    @commands.command(name="xoa", aliases=["purge", "clear"])
     async def xoa_cmd(self, ctx, amount: int = None, member: discord.Member = None):
         """
         .xoa [số] [@user]

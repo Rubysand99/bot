@@ -158,6 +158,126 @@ class BalanceCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    @commands.command(name="balance", aliases=["bal", "b"])
+    async def balance_cmd(self, ctx):
+        bal        = get_balance_data()
+        ch_id      = get_cfg_balance_channel()
+        ch_mention = f"<#{ch_id}>" if ch_id else "Chưa cài"
+        embed = discord.Embed(title="📊  Thống Kê Số Dư", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="🏦  Số dư hiện tại", value=f"**{fmt_vnd(bal['current'])}**", inline=False)
+        embed.add_field(name="📥  Tổng nạp",       value=fmt_vnd(bal['total_in']),         inline=True)
+        embed.add_field(name="📤  Tổng chi",       value=fmt_vnd(bal['total_out']),        inline=True)
+        embed.add_field(name="📉  Tổng phí 5%",    value=fmt_vnd(bal['total_fee']),        inline=True)
+        embed.add_field(name="🔢  Tổng giao dịch", value=f"**{bal['tx_count']}** lần",    inline=True)
+        embed.add_field(name="📌  Kênh balance",   value=ch_mention,                       inline=True)
+        history = bal.get("history", [])
+        if history:
+            last5 = history[-5:][::-1]
+            lines = [f"{'📥' if tx['type']=='+' else '📤'} **{fmt_vnd(tx['net'])}** — {tx['user']} — {tx['time']}" for tx in last5]
+            embed.add_field(name="🕐  5 giao dịch gần nhất", value="\n".join(lines), inline=False)
+        embed.set_footer(text="TuyTam Store  •  Nhấn nút bên dưới để xem danh sách buyer")
+        await ctx.reply(embed=embed, view=BalanceView(ctx.guild, ctx.author))
+
+    @commands.command(name="balreset")
+    async def balreset_cmd(self, ctx):
+        if not can_use_dangerous_cmd(ctx.author.id, "balreset"):
+            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+        data = load_data()
+        data["balance"] = {"current":0,"total_in":0,"total_fee":0,"total_out":0,"tx_count":0,"history":[]}
+        save_data(data)
+        await ctx.reply("✅ Đã reset toàn bộ số dư về 0.")
+        await send_log(self.bot, "BALANCE_RESET", "Reset Số Dư",
+            fields=[("👤 Bởi", ctx.author.mention, True)], user=ctx.author)
+
+    @commands.command(name="balset")
+    async def balset_cmd(self, ctx, *, amount: str = None):
+        if not can_use_dangerous_cmd(ctx.author.id, "balset"):
+            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+        if amount is None:
+            return await ctx.reply("❌ Dùng: `.balset <số tiền>`")
+        raw_str  = amount.strip().replace(".", "").replace(",", "").replace(" ", "")
+        negative = raw_str.startswith("-")
+        raw_str  = raw_str.lstrip("-+")
+        if not raw_str.isdigit():
+            return await ctx.reply("❌ Số tiền không hợp lệ!")
+        new_balance = int(raw_str) * (-1 if negative else 1)
+        bal = get_balance_data()
+        old = bal["current"]
+        bal["current"] = new_balance
+        now_str = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+        bal["history"].append({"type": "set", "raw": new_balance, "fee": 0, "net": new_balance, "user": str(ctx.author), "time": now_str})
+        bal["history"] = bal["history"][-100:]
+        save_balance_data(bal)
+        embed = discord.Embed(title="⚙️  Đã Đặt Số Dư", color=0x57F287 if new_balance >= 0 else 0x9B59B6, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="📊  Số dư cũ",  value=fmt_vnd(old),                  inline=True)
+        embed.add_field(name="✅  Số dư mới", value=f"**{fmt_vnd(new_balance)}**",  inline=True)
+        embed.set_footer(text=f"Đặt bởi {ctx.author}")
+        await ctx.reply(embed=embed)
+        await send_log(self.bot, "BALANCE_SET", "Đặt Số Dư Thủ Công",
+            fields=[
+                ("📊 Số dư cũ",  fmt_vnd(old),         True),
+                ("✅ Số dư mới", fmt_vnd(new_balance),  True),
+                ("👤 Bởi",       ctx.author.mention,    True),
+            ], user=ctx.author)
+
+    # ── SLASH COMMANDS ──
+    @discord.app_commands.command(name="balance", description="Xem thống kê số dư quỹ")
+    async def slash_balance(self, interaction: discord.Interaction):
+        bal        = get_balance_data()
+        ch_id      = get_cfg_balance_channel()
+        ch_mention = f"<#{ch_id}>" if ch_id else "Chưa cài"
+        embed = discord.Embed(title="📊  Thống Kê Số Dư", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="🏦  Số dư hiện tại", value=f"**{fmt_vnd(bal['current'])}**", inline=False)
+        embed.add_field(name="📥  Tổng nạp",       value=fmt_vnd(bal['total_in']),         inline=True)
+        embed.add_field(name="📤  Tổng chi",       value=fmt_vnd(bal['total_out']),        inline=True)
+        embed.add_field(name="📉  Tổng phí 5%",    value=fmt_vnd(bal['total_fee']),        inline=True)
+        embed.add_field(name="🔢  Tổng giao dịch", value=f"**{bal['tx_count']}** lần",    inline=True)
+        embed.add_field(name="📌  Kênh balance",   value=ch_mention,                       inline=True)
+        history = bal.get("history", [])
+        if history:
+            last5 = history[-5:][::-1]
+            lines = [f"{'📥' if tx['type']=='+' else '📤'} **{fmt_vnd(tx['net'])}** — {tx['user']} — {tx['time']}" for tx in last5]
+            embed.add_field(name="🕐  5 giao dịch gần nhất", value="\n".join(lines), inline=False)
+        embed.set_footer(text="TuyTam Store  •  Nhấn nút bên dưới để xem buyer")
+        await interaction.response.send_message(embed=embed, view=BalanceView(interaction.guild, interaction.user))
+
+    @discord.app_commands.command(name="balset", description="Đặt số dư quỹ thủ công (admin)")
+    @discord.app_commands.describe(amount="Số tiền mới, vd: 5000000 hoặc -100000")
+    async def slash_balset(self, interaction: discord.Interaction, amount: str):
+        if not can_use_dangerous_cmd(interaction.user.id, "balset"):
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
+        raw_str  = amount.strip().replace(".", "").replace(",", "").replace(" ", "")
+        negative = raw_str.startswith("-")
+        raw_str  = raw_str.lstrip("-+")
+        if not raw_str.isdigit():
+            return await interaction.response.send_message("❌ Số tiền không hợp lệ!")
+        new_balance = int(raw_str) * (-1 if negative else 1)
+        bal = get_balance_data()
+        old = bal["current"]
+        bal["current"] = new_balance
+        now_str = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+        bal["history"].append({"type": "set", "raw": new_balance, "fee": 0, "net": new_balance, "user": str(interaction.user), "time": now_str})
+        bal["history"] = bal["history"][-100:]
+        save_balance_data(bal)
+        embed = discord.Embed(title="⚙️  Đã Đặt Số Dư", color=0x57F287 if new_balance >= 0 else 0x9B59B6)
+        embed.add_field(name="📊 Cũ",  value=fmt_vnd(old),         inline=True)
+        embed.add_field(name="✅ Mới", value=fmt_vnd(new_balance),  inline=True)
+        await interaction.response.send_message(embed=embed)
+        await send_log(self.bot, "BALANCE_SET", "Đặt Số Dư Thủ Công",
+            fields=[("📊 Cũ", fmt_vnd(old), True), ("✅ Mới", fmt_vnd(new_balance), True), ("👤 Bởi", interaction.user.mention, True)],
+            user=interaction.user)
+
+    @discord.app_commands.command(name="balreset", description="Reset toàn bộ số dư về 0 (admin)")
+    async def slash_balreset(self, interaction: discord.Interaction):
+        if not can_use_dangerous_cmd(interaction.user.id, "balreset"):
+            return await interaction.response.send_message("❌ Bạn không có quyền.")
+        data = load_data()
+        data["balance"] = {"current":0,"total_in":0,"total_fee":0,"total_out":0,"tx_count":0,"history":[]}
+        save_data(data)
+        await interaction.response.send_message("✅ Đã reset toàn bộ số dư về 0.")
+        await send_log(self.bot, "BALANCE_RESET", "Reset Số Dư",
+            fields=[("👤 Bởi", interaction.user.mention, True)], user=interaction.user)
+
 
 async def setup(bot):
     await bot.add_cog(BalanceCog(bot))

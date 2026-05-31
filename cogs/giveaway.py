@@ -104,6 +104,16 @@ async def end_giveaway(message_id, channel, winners_count, prize, host_id):
             await _check_winner_invites(channel, winner_ids, prize)
 
 
+async def giveaway_timer(channel_id: int, message_id: int, winners_count: int, seconds: int):
+    await asyncio.sleep(seconds)
+    gw = active_giveaways.get(message_id)
+    if not gw or gw.get("ended"):
+        return
+    channel = discord.utils.get(__import__("discord").utils.find(lambda g: g.get_channel(channel_id), []), id=channel_id) if False else None
+    # Lấy channel qua bot instance được truyền vào qua Cog
+    # Sẽ được gọi từ GiveawayCog._giveaway_timer thay thế
+
+
 async def _check_winner_invites(channel, winner_ids, prize):
     lines  = []
     medals = ["🥇", "🥈", "🥉"]

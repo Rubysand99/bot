@@ -18,8 +18,6 @@ log = logging.getLogger("data")
 # ══════════════════════════════════════════
 # CONSTANTS
 # ══════════════════════════════════════════
-BOT_VERSION           = "3.9.5"
-BOT_UPDATED           = "2026-05-31"
 LOG_CHANNEL           = 1482234024868053083
 TICKET_CATEGORY_ID    = 1464426174611456195
 SUPPORT_ROLE_ID       = 1474572393908404305
