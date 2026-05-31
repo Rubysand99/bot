@@ -45,7 +45,7 @@ async def end_giveaway(message_id, channel, winners_count, prize, host_id):
     gw = active_giveaways.get(message_id) or active_giveaways.get(str(message_id))
     if gw:
         gw["ended"] = True
-    save_giveaways_data(active_giveaways)
+    save_giveaways_data(guild_id, active_giveaways)
 
     try:
         msg = await channel.fetch_message(message_id)
@@ -99,19 +99,9 @@ async def end_giveaway(message_id, channel, winners_count, prize, host_id):
 
     if gw:
         gw["winner_ids"] = winner_ids
-        save_giveaways_data(active_giveaways)
+        save_giveaways_data(guild_id, active_giveaways)
         if gw.get("send_invite", False):
             await _check_winner_invites(channel, winner_ids, prize)
-
-
-async def giveaway_timer(channel_id: int, message_id: int, winners_count: int, seconds: int):
-    await asyncio.sleep(seconds)
-    gw = active_giveaways.get(message_id)
-    if not gw or gw.get("ended"):
-        return
-    channel = discord.utils.get(__import__("discord").utils.find(lambda g: g.get_channel(channel_id), []), id=channel_id) if False else None
-    # Lấy channel qua bot instance được truyền vào qua Cog
-    # Sẽ được gọi từ GiveawayCog._giveaway_timer thay thế
 
 
 async def _check_winner_invites(channel, winner_ids, prize):
@@ -145,9 +135,9 @@ class GiveawayView(View):
         mid = interaction.message.id
         gw  = active_giveaways.get(mid) or active_giveaways.get(str(mid))
         if not gw:
-            return await interaction.response.send_message("❌ Giveaway này không còn hoạt động.")
+            return await interaction.response.send_message("❌ Giveaway này không còn hoạt động.", ephemeral=True)
         if gw.get("ended"):
-            return await interaction.response.send_message("❌ Giveaway đã kết thúc rồi!")
+            return await interaction.response.send_message("❌ Giveaway đã kết thúc rồi!", ephemeral=True)
 
         uid     = interaction.user.id
         entries = gw.setdefault("entries", set())
@@ -162,7 +152,7 @@ class GiveawayView(View):
             entries.add(uid)
             msg_reply = "✅ Bạn đã **tham gia** giveaway!"
 
-        save_giveaways_data(active_giveaways)
+        save_giveaways_data(guild_id, active_giveaways)
 
         try:
             msg   = await interaction.channel.fetch_message(mid)
@@ -175,8 +165,8 @@ class GiveawayView(View):
         except Exception as e:
             print(f"[GIVEAWAY] ⚠️ Không cập nhật được embed: {e}")
 
-        await interaction.response.send_message(msg_reply)
-        await send_log(interaction.client, "GIVEAWAY", f"Tham gia GW #{gw.get('gw_id','?')} — {gw['prize']}",
+        await interaction.response.send_message(msg_reply, ephemeral=True)
+        await send_log(interaction.client, interaction.guild.id, "GIVEAWAY", f"Tham gia GW #{gw.get('gw_id','?')} — {gw['prize']}",
             fields=[("User", interaction.user.mention, True), ("Tổng tham gia", str(len(entries)), True)])
 
 
@@ -251,10 +241,10 @@ class GiveawayConfirmView(View):
             "send_invite": self.send_invite,
             "gw_id":       gw_id,
         }
-        save_giveaways_data(active_giveaways)
+        save_giveaways_data(guild_id, active_giveaways)
 
         _gw_tasks[mid] = asyncio.create_task(_giveaway_timer_task(interaction.client, self.channel.id, mid, self.w_count, self.seconds))
-        await send_log(interaction.client, "GIVEAWAY", f"Tạo GW #{gw_id} — {self.prize}",
+        await send_log(interaction.client, interaction.guild.id, "GIVEAWAY", f"Tạo GW #{gw_id} — {self.prize}",
             fields=[("Host", self.host.mention, True), ("Thời gian", f"{self.seconds}s", True), ("Số winner", str(self.w_count), True), ("Kênh", self.channel.mention, True)])
 
     @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.danger, custom_id="gw_cancel")
@@ -273,19 +263,19 @@ class GiveawayModal(discord.ui.Modal, title="🎉 Tạo Giveaway"):
         dur  = self.duration.value.strip()
         unit = dur[-1].lower()
         try: val = int(dur[:-1])
-        except: return await interaction.response.send_message("❌ Thời gian không hợp lệ! Dùng: `30s`, `10m`, `1h`, `2d`")
+        except: return await interaction.response.send_message("❌ Thời gian không hợp lệ! Dùng: `30s`, `10m`, `1h`, `2d`", ephemeral=True)
         seconds = {"s": val, "m": val*60, "h": val*3600, "d": val*86400}.get(unit)
         if not seconds:
-            return await interaction.response.send_message("❌ Đơn vị thời gian không hợp lệ!")
+            return await interaction.response.send_message("❌ Đơn vị thời gian không hợp lệ!", ephemeral=True)
         try:
             w_count = int(self.winners_count.value.strip())
             if w_count < 1: raise ValueError
         except:
-            return await interaction.response.send_message("❌ Số người trúng thưởng phải là số nguyên dương!")
+            return await interaction.response.send_message("❌ Số người trúng thưởng phải là số nguyên dương!", ephemeral=True)
 
         end_time     = datetime.now(timezone.utc).timestamp() + seconds
         confirm_view = GiveawayConfirmView(host=interaction.user, channel=interaction.channel, prize=self.prize.value, w_count=w_count, seconds=seconds, end_time=end_time, description=self.description.value or "")
-        await interaction.response.send_message(content="## ⚙️ Xác nhận trước khi đăng giveaway", embed=confirm_view.build_preview_embed(), view=confirm_view)
+        await interaction.response.send_message(content="## ⚙️ Xác nhận trước khi đăng giveaway", embed=confirm_view.build_preview_embed(), view=confirm_view, ephemeral=True)
 
 
 async def _giveaway_timer_task(bot, channel_id: int, message_id: int, winners_count: int, seconds: int):
@@ -309,7 +299,7 @@ class GiveawayCog(commands.Cog):
 
     async def resume_active_giveaways(self):
         global _gw_counter
-        saved = load_giveaways_data()
+        saved = load_giveaways_data(guild_id)
         if not saved: return
         # Sync counter theo gw_id cao nhất đã lưu
         max_id = max((gw.get("gw_id", 0) for gw in saved.values()), default=0)
@@ -341,20 +331,20 @@ class GiveawayCog(commands.Cog):
     @app_commands.command(name="giveaway", description="Tạo giveaway mới")
     async def slash_giveaway(self, interaction: discord.Interaction):
         if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ Chỉ admin mới được tạo giveaway.")
+            return await interaction.response.send_message("❌ Chỉ admin mới được tạo giveaway.", ephemeral=True)
         await interaction.response.send_modal(GiveawayModal())
 
     @app_commands.command(name="gend", description="Kết thúc giveaway sớm")
     @app_commands.describe(message_id="ID tin nhắn giveaway")
     async def slash_gend(self, interaction: discord.Interaction, message_id: str):
         if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ Chỉ admin.")
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try: mid = int(message_id)
-        except: return await interaction.response.send_message("❌ ID không hợp lệ!")
+        except: return await interaction.response.send_message("❌ ID không hợp lệ!", ephemeral=True)
         gw = active_giveaways.get(mid)
-        if not gw: return await interaction.response.send_message("❌ Không tìm thấy giveaway đang chạy.")
-        await interaction.response.send_message("✅ Đang kết thúc giveaway...")
-        await send_log(interaction.client, "GIVEAWAY", f"Kết thúc sớm GW #{gw.get('gw_id','?')} — {gw.get('prize','')}",
+        if not gw: return await interaction.response.send_message("❌ Không tìm thấy giveaway đang chạy.", ephemeral=True)
+        await interaction.response.send_message("✅ Đang kết thúc giveaway...", ephemeral=True)
+        await send_log(interaction.client, interaction.guild.id, "GIVEAWAY", f"Kết thúc sớm GW #{gw.get('gw_id','?')} — {gw.get('prize','')}",
             fields=[("Admin", interaction.user.mention, True)])
         channel = await get_or_fetch_channel(self.bot, gw["channel_id"])
         if channel:
@@ -364,33 +354,33 @@ class GiveawayCog(commands.Cog):
     @app_commands.describe(message_id="ID tin nhắn giveaway")
     async def slash_greroll(self, interaction: discord.Interaction, message_id: str):
         if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ Chỉ admin.")
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try: mid = int(message_id)
-        except: return await interaction.response.send_message("❌ ID không hợp lệ!")
+        except: return await interaction.response.send_message("❌ ID không hợp lệ!", ephemeral=True)
         gw = active_giveaways.get(mid)
-        if not gw: return await interaction.response.send_message("❌ Không tìm thấy giveaway này.")
+        if not gw: return await interaction.response.send_message("❌ Không tìm thấy giveaway này.", ephemeral=True)
         entries = list(gw.get("entries", set()))
-        if not entries: return await interaction.response.send_message("❌ Không có ai tham gia để reroll.")
+        if not entries: return await interaction.response.send_message("❌ Không có ai tham gia để reroll.", ephemeral=True)
         count       = min(gw.get("winners", 1), len(entries))
         winner_ids  = random.sample(entries, count)
         mentions    = ", ".join(f"<@{uid}>" for uid in winner_ids)
-        await interaction.response.send_message(f"🔄 Reroll! Winner mới: {mentions} 🎉")
-        await send_log(interaction.client, "GIVEAWAY", f"Reroll GW",
+        await interaction.response.send_message(f"🔄 Reroll! Winner mới: {mentions} 🎉", ephemeral=True)
+        await send_log(interaction.client, interaction.guild.id, "GIVEAWAY", f"Reroll GW",
             fields=[("Admin", interaction.user.mention, True), ("Winner mới", mentions, True)])
 
     @app_commands.command(name="gwlist", description="Xem danh sách người tham gia giveaway")
     @app_commands.describe(message_id="ID tin nhắn giveaway")
     async def slash_gwlist(self, interaction: discord.Interaction, message_id: str):
         if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ Chỉ admin.")
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try: mid = int(message_id)
-        except: return await interaction.response.send_message("❌ ID không hợp lệ!")
+        except: return await interaction.response.send_message("❌ ID không hợp lệ!", ephemeral=True)
         gw = active_giveaways.get(mid)
-        if not gw: return await interaction.response.send_message("❌ Không tìm thấy giveaway này.")
+        if not gw: return await interaction.response.send_message("❌ Không tìm thấy giveaway này.", ephemeral=True)
         entries = list(gw.get("entries", set()))
-        if not entries: return await interaction.response.send_message("❌ Chưa có ai tham gia.")
+        if not entries: return await interaction.response.send_message("❌ Chưa có ai tham gia.", ephemeral=True)
         mentions = " ".join(f"<@{uid}>" for uid in entries)
-        await interaction.response.send_message(f"**{len(entries)} người tham gia:**\n{mentions[:1900]}")
+        await interaction.response.send_message(f"**{len(entries)} người tham gia:**\n{mentions[:1900]}", ephemeral=True)
 
 
     @commands.command(name="gpick", hidden=True)
@@ -460,10 +450,10 @@ class GiveawayCog(commands.Cog):
 
         # Lưu winner được chọn — giveaway vẫn tiếp tục đến hết giờ
         found_gw["picked_winner"] = member.id
-        save_giveaways_data(active_giveaways)
+        save_giveaways_data(guild_id, active_giveaways)
 
         await ctx.reply(f"✅ Đã chọn {winner_mentions} làm winner giveaway {gw_id_label}! Bot sẽ công bố khi hết giờ.")
-        await send_log(ctx.bot, "GIVEAWAY", f"Admin pick {gw_id_label} — {found_gw.get('prize','')}", fields=[("Admin", ctx.author.mention, True), ("Winner", winner_mentions, True)])
+        await send_log(ctx.bot, ctx.guild.id, "GIVEAWAY", f"Admin pick {gw_id_label} — {found_gw.get('prize','')}", fields=[("Admin", ctx.author.mention, True), ("Winner", winner_mentions, True)])
 
 
 async def setup(bot):
