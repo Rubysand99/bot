@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-from core.data import BOT_VERSION, BOT_UPDATED
+from core.data import BOT_VERSION, BOT_UPDATED, get_cfg_balance_channel
+from cogs.admin import handle_sold
+from cogs.ai_chat import handle_ai_message
+from cogs.balance import handle_balance_message
 
 CHANGELOG_CHANNEL_ID    = 1486967511839801414
 CODE_GEN_LOG_CHANNEL_ID = 1504434579967316021  # Kênh log khi user bypass link & tạo mã
@@ -164,16 +167,12 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
 
     # Auto sold — stock → sold category
-    from cogs.admin import handle_sold
     await handle_sold(bot, message)
 
     # AI channel
-    from cogs.ai_chat import handle_ai_message
     await handle_ai_message(message)
 
     # Balance channel
-    from core.data import get_cfg_balance_channel
-    from cogs.balance import handle_balance_message
     bal_ch = get_cfg_balance_channel()
     if bal_ch and message.channel.id == bal_ch:
         await handle_balance_message(message)

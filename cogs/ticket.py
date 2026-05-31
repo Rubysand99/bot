@@ -13,7 +13,7 @@ from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput, Select
 
 from core.data import (
-    ADMIN_IDS, BOT_VERSION, TRANSCRIPT_CHANNEL_ID,
+    ADMIN_IDS, TRANSCRIPT_CHANNEL_ID,
     get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
     get_cfg_counter_channel, get_cfg_proof_channel, get_cfg_balance_channel,
     get_panel_channel_id, save_panel_channel_id,

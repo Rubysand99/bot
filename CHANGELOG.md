@@ -2,9 +2,12 @@
 
 ### 🔧 Sửa lỗi / Refactor
 - `core/data.py` — Chuyển `BOT_VERSION` & `BOT_UPDATED` vào đây làm single source of truth
-- `bot.py`, `admin.py`, `ticket.py` — Import `BOT_VERSION`/`BOT_UPDATED` từ `core.data` thay vì hardcode riêng lẻ
-- `ai_chat.py` — Đưa `import aiohttp` và `from core.data import load_data, fmt_amount` lên top-level (xóa 5 local import lặp bên trong hàm)
-- `admin.py` — Xóa `from core.data import get_cfg_legit_channel` và `import re as _re` lặp trong thân hàm `.backfill` (đã có ở top-level)
+- `bot.py`, `admin.py` — Import `BOT_VERSION`/`BOT_UPDATED` từ `core.data` thay vì hardcode riêng lẻ
+- `ticket.py` — Xóa import `BOT_VERSION` thừa (không dùng)
+- `ai_chat.py` — Đưa `import aiohttp`, `load_data`, `fmt_amount` lên top-level (xóa 5 local import lặp trong thân hàm)
+- `admin.py` — Xóa `from core.data import get_cfg_legit_channel` và `import re as _re` lặp trong `.backfill`
+- `bot.py` — Đưa `from cogs.admin import handle_sold`, `handle_ai_message`, `handle_balance_message` lên top-level thay vì import trong mỗi lần `on_message`
+- `banking.py` — Fix triple-nested `os.getenv("PORT", os.getenv("PORT", ...))` → dùng đúng fallback chain
 - `banking.py` — Log cảnh báo khi `CASSO_SECRET` chưa được set lúc khởi động
 
 ---
