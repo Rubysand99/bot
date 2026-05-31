@@ -12,14 +12,13 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+from core.data import BOT_VERSION, BOT_UPDATED
+
+CHANGELOG_CHANNEL_ID    = 1486967511839801414
+CODE_GEN_LOG_CHANNEL_ID = 1504434579967316021  # Kênh log khi user bypass link & tạo mã
 
 if os.path.exists(".env"):
     load_dotenv()
-
-BOT_VERSION = "3.9.4"
-BOT_UPDATED = "2026-05-23"
-CHANGELOG_CHANNEL_ID = 1486967511839801414
-CODE_GEN_LOG_CHANNEL_ID = 1504434579967316021  # Kênh log khi user bypass link & tạo mã
 
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:

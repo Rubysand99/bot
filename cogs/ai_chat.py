@@ -10,10 +10,11 @@ import re
 import asyncio
 from datetime import datetime, timezone
 
+import aiohttp
 import discord
 from discord.ext import commands
 
-from core.data import ADMIN_IDS, get_cfg_ai_channel, _uname_plain
+from core.data import ADMIN_IDS, get_cfg_ai_channel, _uname_plain, load_data, fmt_amount
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -168,7 +169,6 @@ async def _call_groq_exec(prompt: str) -> dict:
     if not GROQ_API_KEY:
         return {"action": "unknown", "params": {"reason": "Chưa cài GROQ_API_KEY"}, "confirm_msg": ""}
 
-    import aiohttp
     messages = [
         {"role": "system", "content": AI_EXEC_SYSTEM},
         {"role": "user", "content": prompt},
@@ -202,7 +202,6 @@ async def _call_groq_clarify(action: str, params: dict) -> dict:
     """Kiểm tra params đủ chưa, nếu thiếu trả về câu hỏi."""
     if not GROQ_API_KEY:
         return {"status": "ready", "params": params}
-    import aiohttp
     prompt = json.dumps({"action": action, "params": params}, ensure_ascii=False)
     messages = [
         {"role": "system", "content": AI_CLARIFY_SYSTEM},
@@ -230,7 +229,6 @@ async def _call_groq_fill(missing_fields: list, answer: str, action: str = "") -
     """Parse câu trả lời của admin để điền vào fields còn thiếu."""
     if not GROQ_API_KEY:
         return {}
-    import aiohttp
     prompt = json.dumps({"action": action, "missing_fields": missing_fields, "answer": answer}, ensure_ascii=False)
     messages = [
         {"role": "system", "content": AI_FILL_SYSTEM},
@@ -478,7 +476,6 @@ async def _call_groq(user_id: int, user_message: str) -> str:
     messages = [{"role": "system", "content": GROQ_SYSTEM}] + history
     last_err = "Unknown error"
 
-    import aiohttp
     for model in GROQ_MODELS:
         try:
             async with aiohttp.ClientSession() as session:
@@ -902,7 +899,6 @@ class AICog(commands.Cog):
 
 async def _send_daily_report(channel, guild):
     """Gửi báo cáo tổng hợp ngày hôm qua."""
-    from core.data import load_data, fmt_amount
     from cogs.banking import get_bank_txs, fmt_vnd, _stats_period
 
     now = datetime.now(timezone.utc)
@@ -973,7 +969,6 @@ async def _send_daily_report(channel, guild):
 
 async def _send_peak_hours(channel):
     """Phân tích giờ cao điểm dựa trên ticket_history."""
-    from core.data import load_data
 
     data    = load_data()
     history = data.get("ticket_history", [])

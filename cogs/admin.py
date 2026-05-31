@@ -13,7 +13,8 @@ from discord.ui import View, Button, Modal, TextInput, Select
 
 from cogs.logger import send_log
 from core.data import (
-    ADMIN_IDS, get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
+    ADMIN_IDS, BOT_VERSION, BOT_UPDATED,
+    get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
     get_cfg_counter_channel, get_cfg_balance_channel, get_cfg_legit_channel,
     get_cfg_proof_channel, get_cfg_ai_channel, get_cfg_font, set_cfg_font,
     save_cfg, load_data, save_data, get_buy_roles, save_buy_roles,
@@ -21,9 +22,6 @@ from core.data import (
     can_use_dangerous_cmd, parse_amount, fmt_amount, _uname, _uname_plain,
     get_or_fetch_channel,
 )
-
-BOT_VERSION = "3.9.4"
-BOT_UPDATED = "2026-05-23"
 
 # ══════════════════════════════════════════
 # FONT UTILS
@@ -1926,8 +1924,6 @@ class AdminCog(commands.Cog):
     async def backfill_cmd(self, ctx, limit: int = 25):
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin mới có quyền dùng lệnh này.")
-        from core.data import get_cfg_legit_channel
-        import re as _re
         IGNORED = {628400349979344919}
 
         legit_ch_id = get_cfg_legit_channel()

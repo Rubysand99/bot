@@ -202,6 +202,8 @@ class BankingCog(commands.Cog):
 
     async def cog_load(self):
         self._task = asyncio.create_task(self.server.start())
+        if not CASSO_SECRET:
+            log.warning("[BANKING] ⚠️ CASSO_SECRET chưa được set — webhook KHÔNG xác thực request!")
         log.info("[BANKING] ✅ BankingCog loaded")
 
     async def cog_unload(self):
