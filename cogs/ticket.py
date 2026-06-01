@@ -481,8 +481,8 @@ class TicketButtons(View):
 
     @discord.ui.button(label="Hoàn thành đơn", emoji="✅", style=discord.ButtonStyle.green, custom_id="complete_order")
     async def complete_order(self, interaction: discord.Interaction, button: Button):
-        if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin mới có quyền hoàn thành đơn.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         await interaction.channel.send(
             f"⚠️ {interaction.user.mention} — hãy dùng lệnh `.done <số tiền>` để hoàn thành đơn.\nVí dụ: `.done 50k`, `.done 1tr5`, `.done 200000`",
@@ -519,7 +519,7 @@ class TicketCog(commands.Cog):
 
     @commands.command(name="done")
     async def done_cmd(self, ctx, amount_str: str = None):
-        if not is_staff_member(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
+        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Chỉ admin mới có quyền hoàn thành đơn.")
         if not (ctx.channel.topic and "|" in ctx.channel.topic): return await ctx.reply("❌ Đây không phải kênh ticket.")
         if not amount_str: return await ctx.reply("❌ Thiếu số tiền! Ví dụ: `.done 50k`, `.done 1tr5`")
 
@@ -620,8 +620,8 @@ class TicketCog(commands.Cog):
     @discord.app_commands.command(name="done", description="Hoàn thành đơn hàng trong ticket")
     @discord.app_commands.describe(amount="Số tiền giao dịch, vd: 50k, 1tr5, 200000")
     async def slash_done(self, interaction: discord.Interaction, amount: str):
-        if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin mới có quyền hoàn thành đơn.")
         if not (interaction.channel.topic and "|" in interaction.channel.topic):
             return await interaction.response.send_message("❌ Đây không phải kênh ticket.")
         parsed = parse_amount(amount)

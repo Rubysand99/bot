@@ -536,7 +536,117 @@ class GiveawayCog(commands.Cog):
             embed.add_field(name="🔴 Đã kết thúc", value="*(không có)*", inline=False)
 
         embed.set_footer(text=f"Tổng {len(active_giveaways)} giveaway trong data  •  TuyTam Store")
-        await ctx.reply(embed=embed)
+
+        view = GwStatusView(bot=self.bot)
+        await ctx.reply(embed=embed, view=view)
+
+
+class GwStatusView(View):
+    """View đính kèm embed .gwstatus — cho phép kết thúc sớm hoặc xoá giveaway."""
+    def __init__(self, bot):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self._rebuild_selects()
+
+    def _rebuild_selects(self):
+        """Tạo lại 2 Select từ active_giveaways hiện tại."""
+        self.clear_items()
+
+        running_opts = []
+        all_opts     = []
+
+        for mid, gw in active_giveaways.items():
+            gw_id = gw.get("gw_id", "?")
+            prize = gw.get("prize", "?")[:50]
+            label = f"GW #{gw_id} — {prize}"
+            if not gw.get("ended"):
+                running_opts.append(discord.SelectOption(label=label[:100], value=str(mid), description="Đang chạy"))
+            all_opts.append(discord.SelectOption(label=label[:100], value=str(mid), description="Đã kết thúc" if gw.get("ended") else "Đang chạy"))
+
+        if running_opts:
+            end_select = Select(
+                placeholder="⚡ Kết thúc sớm giveaway...",
+                options=running_opts[:25],
+                custom_id="gw_end_select",
+                row=0,
+            )
+            end_select.callback = self._end_early_callback
+            self.add_item(end_select)
+
+        if all_opts:
+            del_select = Select(
+                placeholder="🗑️ Xoá giveaway khỏi data...",
+                options=all_opts[:25],
+                custom_id="gw_del_select",
+                row=1,
+            )
+            del_select.callback = self._delete_callback
+            self.add_item(del_select)
+
+    async def _end_early_callback(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+
+        mid_str = interaction.data["values"][0]
+        try: mid = int(mid_str)
+        except: return await interaction.response.send_message("❌ ID không hợp lệ.", ephemeral=True)
+
+        gw = active_giveaways.get(mid)
+        if not gw:
+            return await interaction.response.send_message("❌ Không tìm thấy giveaway.", ephemeral=True)
+        if gw.get("ended"):
+            return await interaction.response.send_message("⚠️ Giveaway này đã kết thúc rồi.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        channel = await get_or_fetch_channel(self.bot, gw["channel_id"])
+        if not channel:
+            return await interaction.followup.send("❌ Không tìm thấy kênh giveaway.", ephemeral=True)
+
+        # Huỷ timer đang chạy nếu có
+        task = _gw_tasks.pop(mid, None)
+        if task and not task.done():
+            task.cancel()
+
+        gw["ended"] = True
+        await end_giveaway(mid, channel, gw["winners"], gw.get("prize", "phần thưởng"), gw.get("host", 0))
+
+        await send_log(self.bot, "GIVEAWAY",
+            f"Kết thúc sớm GW #{gw.get('gw_id','?')} — {gw.get('prize','')}",
+            fields=[("Admin", interaction.user.mention, True), ("Kênh", channel.mention, True)])
+
+        await interaction.followup.send(
+            f"✅ Đã kết thúc sớm **GW #{gw.get('gw_id','?')}** — {gw.get('prize','')}",
+            ephemeral=True,
+        )
+
+    async def _delete_callback(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+
+        mid_str = interaction.data["values"][0]
+        try: mid = int(mid_str)
+        except: return await interaction.response.send_message("❌ ID không hợp lệ.", ephemeral=True)
+
+        gw = active_giveaways.pop(mid, None)
+        if gw is None:
+            return await interaction.response.send_message("❌ Không tìm thấy giveaway.", ephemeral=True)
+
+        # Huỷ timer nếu còn
+        task = _gw_tasks.pop(mid, None)
+        if task and not task.done():
+            task.cancel()
+
+        save_giveaways_data(active_giveaways)
+
+        await send_log(self.bot, "GIVEAWAY",
+            f"Xoá GW #{gw.get('gw_id','?')} — {gw.get('prize','')}",
+            fields=[("Admin", interaction.user.mention, True)])
+
+        await interaction.response.send_message(
+            f"🗑️ Đã xoá **GW #{gw.get('gw_id','?')}** — {gw.get('prize','')} khỏi data.",
+            ephemeral=True,
+        )
 
 
 async def setup(bot):
