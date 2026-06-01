@@ -43,7 +43,6 @@ channel_create cần: name (tên kênh), type (text/voice), privacy (public/priv
 role_create cần: name (tên role)
 role_add/role_remove cần: role_name, user_id
 balance_add/sub/set cần: user_id, amount
-point_add/set cần: user_id, amount  
 mod_ban/kick/warn cần: user_id, reason
 mod_mute cần: user_id, duration, reason
 purge cần: amount
@@ -107,10 +106,6 @@ NHÓM BALANCE:
 - "trừ [số]k/đ của @user" → {"action": "balance_sub", "params": {"user_id": "MENTIONED_USER", "amount": số}}
 - "set/đặt balance @user [số]" → {"action": "balance_set", "params": {"user_id": "MENTIONED_USER", "amount": số}}
 
-NHÓM POINT:
-- "cộng/thêm [số] point cho @user" → {"action": "point_add", "params": {"user_id": "MENTIONED_USER", "amount": số}}
-- "set point @user [số]" → {"action": "point_set", "params": {"user_id": "MENTIONED_USER", "amount": số}}
-
 NHÓM MOD:
 - "ban @user [lý do]" → {"action": "mod_ban", "params": {"user_id": "MENTIONED_USER", "reason": "lý do"}}
 - "kick @user [lý do]" → {"action": "mod_kick", "params": {"user_id": "MENTIONED_USER", "reason": "lý do"}}
@@ -121,8 +116,6 @@ NHÓM MOD:
 NHÓM GIVEAWAY:
 - "kết thúc/end giveaway [id]" → {"action": "giveaway_end", "params": {"message_id": "id"}}
 - "reroll giveaway [id]" → {"action": "giveaway_reroll", "params": {"message_id": "id"}}
-
-NHÓM MINIGAME:
 
 KHÔNG HIỂU: {"action": "unknown", "params": {"reason": "mô tả ngắn lý do"}}
 
@@ -263,26 +256,11 @@ async def _run_action(ctx, action: dict) -> str:
         name     = params.get("name", "kênh-mới").lower().replace(" ", "-")
         ch_type  = params.get("type", "text")
         privacy  = params.get("privacy", "public")
-
-        # Bot luôn có toàn quyền trong kênh do nó tạo
-        bot_perms = discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            manage_channels=True,
-            manage_messages=True,
-            read_message_history=True,
-            embed_links=True,
-            attach_files=True,
-        )
-
+        overwrites = {}
         if privacy == "private":
             overwrites = {
                 ctx.guild.default_role: discord.PermissionOverwrite(view_channel=False),
-                ctx.guild.me: bot_perms,
-            }
-        else:
-            overwrites = {
-                ctx.guild.me: bot_perms,
+                ctx.guild.me: discord.PermissionOverwrite(view_channel=True),
             }
         try:
             if ch_type == "voice":
@@ -385,17 +363,6 @@ async def _run_action(ctx, action: dict) -> str:
         return f"✅ {labels[act]} {amount:,} VNĐ cho {user.display_name}."
 
     # ── POINT ──
-    if act in ("point_add", "point_set"):
-        user = resolve_user()
-        if not user:
-            return "❌ Cần mention @user."
-        amount = int(params.get("amount", 0))
-        cmd_map = {"point_add": "addpoint", "point_set": "setpoint"}
-        ok, err = await invoke_cmd(cmd_map[act], user.id, amount)
-        if not ok: return err
-        labels = {"point_add": "Cộng", "point_set": "Set"}
-        return f"✅ {labels[act]} {amount} point cho {user.display_name}."
-
     # ── MOD ──
     if act in ("mod_ban", "mod_kick", "mod_mute", "mod_warn"):
         user = resolve_user()
@@ -716,17 +683,17 @@ class AICog(commands.Cog):
     @discord.app_commands.command(name="aireset", description="Xoá toàn bộ lịch sử AI (admin)")
     async def slash_aireset(self, interaction: discord.Interaction):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.")
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         _ai_chat_history.clear()
-        await interaction.response.send_message("✅ Đã xoá toàn bộ lịch sử AI.")
+        await interaction.response.send_message("✅ Đã xoá toàn bộ lịch sử AI.", ephemeral=True)
 
     @discord.app_commands.command(name="mychat", description="Xoá lịch sử chat AI của bạn")
     async def slash_mychat(self, interaction: discord.Interaction):
         if interaction.user.id in _ai_chat_history:
             del _ai_chat_history[interaction.user.id]
-            await interaction.response.send_message("✅ Đã xoá lịch sử chat AI của bạn.")
+            await interaction.response.send_message("✅ Đã xoá lịch sử chat AI của bạn.", ephemeral=True)
         else:
-            await interaction.response.send_message("ℹ️ Bạn chưa có lịch sử chat AI.")
+            await interaction.response.send_message("ℹ️ Bạn chưa có lịch sử chat AI.", ephemeral=True)
 
 
 async def setup(bot):

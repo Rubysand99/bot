@@ -212,10 +212,10 @@ class InviteCog(commands.Cog):
             counts = _get_invite_counts()
             counts.pop(str(member.id), None)
             _save_invite_counts(counts)
-            await interaction.response.send_message(f"✅ Đã reset invite của {member.mention}.")
+            await interaction.response.send_message(f"✅ Đã reset invite của {member.mention}.", ephemeral=True)
         else:
             _save_invite_counts({})
-            await interaction.response.send_message("✅ Đã reset toàn bộ invite server.")
+            await interaction.response.send_message("✅ Đã reset toàn bộ invite server.", ephemeral=True)
 
 
 async def setup(bot):

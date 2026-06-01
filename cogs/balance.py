@@ -139,7 +139,7 @@ class BalanceView(View):
         data = load_data()
         raw  = data.get("user_total_spent", {})
         if not raw:
-            return await interaction.response.send_message("❌ Chưa có dữ liệu buyer nào.")
+            return await interaction.response.send_message("❌ Chưa có dữ liệu buyer nào.", ephemeral=True)
         entries = []
         for uid_str, spent in raw.items():
             if spent <= 0: continue
@@ -148,7 +148,7 @@ class BalanceView(View):
             entries.append((member, uid, spent))
         entries.sort(key=lambda x: x[2], reverse=True)
         if not entries:
-            return await interaction.response.send_message("❌ Chưa có dữ liệu buyer nào.")
+            return await interaction.response.send_message("❌ Chưa có dữ liệu buyer nào.", ephemeral=True)
         view = BuyerSpendingView(entries, self.requester)
         view._update_buttons()
         await interaction.response.send_message(embed=view._build_embed(), view=view)
@@ -245,12 +245,12 @@ class BalanceCog(commands.Cog):
     @discord.app_commands.describe(amount="Số tiền mới, vd: 5000000 hoặc -100000")
     async def slash_balset(self, interaction: discord.Interaction, amount: str):
         if not can_use_dangerous_cmd(interaction.user.id, "balset"):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         raw_str  = amount.strip().replace(".", "").replace(",", "").replace(" ", "")
         negative = raw_str.startswith("-")
         raw_str  = raw_str.lstrip("-+")
         if not raw_str.isdigit():
-            return await interaction.response.send_message("❌ Số tiền không hợp lệ!")
+            return await interaction.response.send_message("❌ Số tiền không hợp lệ!", ephemeral=True)
         new_balance = int(raw_str) * (-1 if negative else 1)
         bal = get_balance_data()
         old = bal["current"]
@@ -262,7 +262,7 @@ class BalanceCog(commands.Cog):
         embed = discord.Embed(title="⚙️  Đã Đặt Số Dư", color=0x57F287 if new_balance >= 0 else 0x9B59B6)
         embed.add_field(name="📊 Cũ",  value=fmt_vnd(old),         inline=True)
         embed.add_field(name="✅ Mới", value=fmt_vnd(new_balance),  inline=True)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         await send_log(self.bot, "BALANCE_SET", "Đặt Số Dư Thủ Công",
             fields=[("📊 Cũ", fmt_vnd(old), True), ("✅ Mới", fmt_vnd(new_balance), True), ("👤 Bởi", interaction.user.mention, True)],
             user=interaction.user)
@@ -270,11 +270,11 @@ class BalanceCog(commands.Cog):
     @discord.app_commands.command(name="balreset", description="Reset toàn bộ số dư về 0 (admin)")
     async def slash_balreset(self, interaction: discord.Interaction):
         if not can_use_dangerous_cmd(interaction.user.id, "balreset"):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         data = load_data()
         data["balance"] = {"current":0,"total_in":0,"total_fee":0,"total_out":0,"tx_count":0,"history":[]}
         save_data(data)
-        await interaction.response.send_message("✅ Đã reset toàn bộ số dư về 0.")
+        await interaction.response.send_message("✅ Đã reset toàn bộ số dư về 0.", ephemeral=True)
         await send_log(self.bot, "BALANCE_RESET", "Reset Số Dư",
             fields=[("👤 Bởi", interaction.user.mention, True)], user=interaction.user)
 

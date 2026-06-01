@@ -96,19 +96,6 @@ def _default_data() -> dict:
         "ticket_notes":     {},
         "invite_counts":    {},
         "ticket_history":   [],
-        "user_points":      {},
-        "point_codes":      {},
-        "point_log":        [],
-        "seller_compensation": {},
-        "point_cfg": {
-            "points_per_redeem": 1,
-            "point_value":       0,
-            "max_discount_pct":  0,
-            "cooldown_hours":    24,
-            "code_expire_mins":  10,
-        },
-        "reward_shop":      [],
-        "exchange_log":     [],
         "seller_qr":        {},        # {user_id: qr_path} — QR riêng của từng seller
         "seller_categories": {},       # {user_id: category_id} — category riêng của từng seller
         "log_channels":     {},        # {group: channel_id} — kênh log theo nhóm
@@ -399,58 +386,6 @@ def get_monthly_stats(year: int, month: int) -> dict:
         "total_amount": total_amount,
         "records":      records,
     }
-
-
-# ══════════════════════════════════════════
-# SELLER COMPENSATION
-# ══════════════════════════════════════════
-def add_seller_compensation(seller_id: int, amount: int, ticket_name: str, buyer_id: int):
-    data = load_data()
-    data.setdefault("seller_compensation", {})
-    key = str(seller_id)
-    if key not in data["seller_compensation"]:
-        data["seller_compensation"][key] = {"total_owed": 0, "paid": 0, "records": []}
-    data["seller_compensation"][key]["total_owed"] += amount
-    data["seller_compensation"][key]["records"].append({
-        "ticket": ticket_name, "buyer_id": buyer_id,
-        "amount": amount, "time": datetime.now(timezone.utc).isoformat(), "paid": False,
-    })
-    save_data(data)
-
-def mark_seller_paid(seller_id: int, amount: int):
-    data = load_data()
-    key  = str(seller_id)
-    if key in data.get("seller_compensation", {}):
-        data["seller_compensation"][key]["paid"] = data["seller_compensation"][key].get("paid", 0) + amount
-        save_data(data)
-
-def get_seller_compensation(seller_id: int) -> dict:
-    return load_data().get("seller_compensation", {}).get(str(seller_id), {"total_owed": 0, "paid": 0, "records": []})
-
-def get_all_seller_compensation() -> dict:
-    return load_data().get("seller_compensation", {})
-
-# ══════════════════════════════════════════
-# REWARD SHOP
-# ══════════════════════════════════════════
-def get_reward_shop() -> list:
-    return load_data().get("reward_shop", [])
-
-def get_reward_item(item_id: str) -> dict | None:
-    return next((i for i in get_reward_shop() if i["id"] == item_id), None)
-
-def save_reward_shop(items: list):
-    data = load_data(); data["reward_shop"] = items; save_data(data)
-
-def add_exchange_record(user_id: int, item_id: str, item_name: str, points_used: int):
-    data = load_data()
-    data.setdefault("exchange_log", [])
-    data["exchange_log"].append({
-        "user_id": user_id, "item_id": item_id, "item_name": item_name,
-        "points": points_used, "time": datetime.now(timezone.utc).isoformat(), "status": "pending",
-    })
-    save_data(data)
-
 
 # ══════════════════════════════════════════
 # INVITE COUNTS

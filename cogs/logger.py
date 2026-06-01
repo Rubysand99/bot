@@ -282,6 +282,101 @@ class LoggerCog(commands.Cog):
         await msg.edit(content=None, embed=embed)
 
 
+    @commands.command(name="testlog", aliases=["logtest"])
+    async def test_log(self, ctx, group: str = None):
+        """Gửi log test vào từng kênh để kiểm tra hoạt động.
+        Dùng: .testlog          → test tất cả nhóm
+              .testlog <nhóm>   → test 1 nhóm cụ thể
+        """
+        if ctx.author.id not in ADMIN_IDS:
+            return
+
+        # Map nhóm → event đại diện để test
+        GROUP_TEST_EVENTS = {
+            "ticket":   ("TICKET_CREATE",   "Test — Ticket tạo"),
+            "balance":  ("BALANCE_IN",      "Test — Nạp tiền"),
+            "mod":      ("MOD_WARN",        "Test — Cảnh cáo"),
+            "giveaway": ("GIVEAWAY_START",  "Test — Giveaway bắt đầu"),
+            "member":   ("MEMBER_JOIN",     "Test — Thành viên tham gia"),
+            "role":     ("ROLE_ADD",        "Test — Thêm role"),
+            "ai":       ("AI_USED",         "Test — AI sử dụng"),
+            "admin":    ("CMD_USED",        "Test — Lệnh admin"),
+            "general":  ("INFO",            "Test — Thông tin chung"),
+        }
+
+        # Chọn nhóm cần test
+        if group:
+            group = group.lower()
+            if group not in GROUP_TEST_EVENTS:
+                valid = ", ".join(f"`{g}`" for g in GROUP_TEST_EVENTS)
+                return await ctx.reply(f"❌ Nhóm `{group}` không hợp lệ.\nNhóm hợp lệ: {valid}")
+            groups_to_test = {group: GROUP_TEST_EVENTS[group]}
+        else:
+            groups_to_test = GROUP_TEST_EVENTS
+
+        fallback_id = get_cfg_log_rudy()
+        status_lines = []
+
+        for grp, (event_type, title) in groups_to_test.items():
+            ch_id     = get_log_channel(grp)
+            label     = LOG_GROUP_LABELS[grp]
+            using_fallback = False
+
+            if not ch_id:
+                if fallback_id:
+                    ch_id = fallback_id
+                    using_fallback = True
+                else:
+                    status_lines.append(f"⚠️ **{label}** — Chưa cài kênh, không có fallback")
+                    continue
+
+            channel = await get_or_fetch_channel(self.bot, ch_id)
+            if not channel:
+                status_lines.append(f"❌ **{label}** — Không tìm được kênh `{ch_id}`")
+                continue
+
+            try:
+                await send_log(
+                    self.bot,
+                    event_type,
+                    title,
+                    fields=[
+                        ("🧪 Loại test",   label,                    True),
+                        ("👤 Bởi",         ctx.author.mention,        True),
+                        ("📌 Kênh test",   channel.mention,           True),
+                    ],
+                    description=(
+                        f"Đây là log **test** từ lệnh `.testlog`.\n"
+                        f"Nếu bạn thấy tin này → kênh `{channel.name}` hoạt động bình thường ✅"
+                        + (f"\n⚠️ *Dùng kênh fallback vì nhóm `{grp}` chưa được cài riêng.*" if using_fallback else "")
+                    ),
+                    user=ctx.author,
+                    footer=f"testlog • {grp} • {event_type}",
+                )
+                tag = " *(fallback)*" if using_fallback else ""
+                status_lines.append(f"✅ **{label}** → {channel.mention}{tag}")
+            except Exception as e:
+                status_lines.append(f"❌ **{label}** → `{channel.name}`: {e}")
+
+        # Gửi bảng kết quả
+        embed = discord.Embed(
+            title="🧪 Kết Quả Test Log",
+            description="\n".join(status_lines),
+            color=0x57F287 if all(l.startswith("✅") for l in status_lines) else 0xFEE75C,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(
+            name="💡 Ghi chú",
+            value=(
+                "✅ = log gửi thành công\n"
+                "⚠️ = chưa cài kênh riêng, dùng fallback log_rudy\n"
+                "❌ = lỗi, kiểm tra quyền bot trong kênh đó"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text=f"Yêu cầu bởi {ctx.author}  •  .setlog <nhóm> #kênh để cài kênh")
+        await ctx.reply(embed=embed)
+
     @commands.command(name="loginfo")
     async def log_info(self, ctx):
         """Xem toàn bộ kênh log đang được cài."""

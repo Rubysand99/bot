@@ -1459,15 +1459,6 @@ class AdminCog(commands.Cog):
         embed.set_footer(text=f"Yêu cầu bởi {ctx.author}  •  Timeout 2 phút")
         await ctx.reply(embed=embed, view=PriceManagerView())
 
-    # ── .clear ──
-    @commands.command(name="clear")
-    async def clear_cmd(self, ctx, amount: int = None):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền.")
-        if amount is None: return await ctx.reply("❌ Dùng: `.clear <số lượng>` (tối đa 500)")
-        amount = max(1, min(amount, 500))
-        deleted = await ctx.channel.purge(limit=amount + 1)
-        await ctx.send(f"🗑️ Đã xoá **{len(deleted)-1}** tin nhắn.", delete_after=5)
-
     # ── .addrole / .removerole ──
     @commands.command(name="addrole", aliases=["giverole"])
     async def addrole_cmd(self, ctx, member: discord.Member = None, role: discord.Role = None):
@@ -1489,43 +1480,6 @@ class AdminCog(commands.Cog):
         embed.add_field(name="👤 Thành viên", value=member.mention, inline=True)
         embed.add_field(name="🏷️ Role",       value=role.mention,   inline=True)
         await ctx.reply(embed=embed)
-
-    # ── .roleall ──
-    @commands.command(name="roleall")
-    async def roleall_cmd(self, ctx, role: discord.Role = None):
-        """Thêm role cho toàn bộ member. Dùng: .roleall @role hoặc .roleall <role_id>"""
-        if ctx.author.id not in ADMIN_IDS:
-            return await ctx.reply("❌ Bạn không có quyền.")
-        if not role:
-            return await ctx.reply("❌ Dùng: `.roleall @role` hoặc `.roleall <role_id>`")
-
-        members = [m for m in ctx.guild.members if not m.bot and role not in m.roles]
-        if not members:
-            return await ctx.reply(f"ℹ️ Tất cả member đã có role {role.mention} rồi.")
-
-        msg = await ctx.reply(f"⏳ Đang thêm {role.mention} cho **{len(members)}** member...")
-        success, failed = 0, 0
-        for member in members:
-            try:
-                await member.add_roles(role, reason=f"roleall bởi {ctx.author}")
-                success += 1
-            except Exception:
-                failed += 1
-
-        embed = discord.Embed(
-            title="✅ Roleall Hoàn Tất",
-            color=0x57F287,
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.add_field(name="🏷️ Role",       value=role.mention,      inline=True)
-        embed.add_field(name="✅ Thành công",  value=str(success),      inline=True)
-        embed.add_field(name="❌ Thất bại",    value=str(failed),       inline=True)
-        embed.add_field(name="👤 Bởi",         value=ctx.author.mention, inline=False)
-        await msg.edit(content=None, embed=embed)
-        await send_log(self.bot, "ADMIN", "Roleall",
-            fields=[("🏷️ Role", role.mention, True), ("✅ Thêm được", str(success), True),
-                    ("👤 Bởi", ctx.author.mention, True)],
-            user=ctx.author)
 
     # ── .emoji / .delemoji ──
     @commands.command(name="emoji")
@@ -1680,6 +1634,7 @@ class AdminCog(commands.Cog):
                      "`/close` `/done` `/addnote`", False),
                 ]
             },
+
             "ai": {
                 "emoji": "🤖", "title": "AI Chat",
                 "fields": [
@@ -1722,6 +1677,9 @@ class AdminCog(commands.Cog):
                      "`/gend <message_id>` — Kết thúc giveaway sớm\n"
                      "`/greroll <message_id>` — Quay số lại\n"
                      "`/gwlist <message_id>` — Xem danh sách người tham gia", False),
+                    ("🔧 Prefix commands (admin)",
+                     "`.gwstatus` — Xem toàn bộ giveaway đang chạy & đã kết thúc\n"
+                     "`.gpick <gw_id> <@user>` — Chọn tay winner cho giveaway", False),
                 ]
             },
             "mod": {
@@ -1774,7 +1732,8 @@ class AdminCog(commands.Cog):
                     ("📋 Lệnh",
                      "`.setlog <nhóm> #kênh` — Cài kênh log cho từng nhóm\n"
                      "`.setuplog [category_id]` — Tự động tạo toàn bộ kênh log\n"
-                     "`.loginfo` — Xem kênh log đang được cài", False),
+                     "`.loginfo` — Xem kênh log đang được cài\n"
+                     "`.testlog [nhóm]` — Gửi log test để kiểm tra hoạt động", False),
                     ("🗂️ Nhóm log",
                      "`ticket` `balance` `mod` `giveaway`\n"
                      "`member` `role` `ai` `admin` `general`", False),
@@ -1789,9 +1748,8 @@ class AdminCog(commands.Cog):
                      "`.botinfo` — Thông tin bot\n"
                      "`.ping` — Kiểm tra độ trễ\n"
                      "`.clear <n>` — Xóa n tin nhắn\n"
-                     "`.addrole @user @role` — Thêm role cho 1 người\n"
+                     "`.addrole @user @role` — Thêm role\n"
                      "`.removerole @user @role` — Xóa role\n"
-                     "`.roleall @role` — Thêm role cho toàn bộ member\n"
                      "`.userinfo [@user]` — Thông tin thành viên\n"
                      "`.serverinfo` — Thông tin server\n"
                      "`.backfill [số]` — Quét lại kênh legit, thả ✅ cho tin bị bỏ sót (mặc định 25)", False),
@@ -1811,6 +1769,7 @@ class AdminCog(commands.Cog):
         # Normalize topic aliases
         ALIASES = {
             "ticket": "ticket", "vé": "ticket",
+
             "ai": "ai",
             "invite": "invite", "inv": "invite",
             "dichvu": "dichvu", "dịch vụ": "dichvu", "dv": "dichvu", "sv": "dichvu",
@@ -1848,11 +1807,11 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🤖 AI",        value="`.ai` `.aireset` `.mychat`\n`/ai` `/aireset`", inline=True)
         embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
-        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`", inline=True)
+        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gpick`", inline=True)
         embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.timeout` `.tempban`\n`.warn` `.modlog` `.xoa` `.automod`", inline=True)
         embed.add_field(name="🏦 Banking",   value="`.stats` `.txlog` `.bankset`", inline=True)
         embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo`", inline=True)
-        embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.roleall`\n`.emoji` `.rename` `.mkchannel`", inline=True)
+        embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel`", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
 

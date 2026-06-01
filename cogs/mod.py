@@ -248,19 +248,19 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên", reason="Lý do ban")
     async def slash_ban(self, interaction: discord.Interaction, member: discord.Member, reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         if member.top_role >= interaction.guild.me.top_role:
-            return await interaction.response.send_message("❌ Role thành viên này cao hơn bot.")
+            return await interaction.response.send_message("❌ Role thành viên này cao hơn bot.", ephemeral=True)
         try:
             await member.ban(reason=f"{reason} — Bởi {interaction.user}", delete_message_days=0)
         except discord.Forbidden:
-            return await interaction.response.send_message("❌ Bot không có quyền ban.")
+            return await interaction.response.send_message("❌ Bot không có quyền ban.", ephemeral=True)
         _add_mod_log("ban", member.id, str(member), str(interaction.user), reason)
         embed = discord.Embed(title="🔨 Đã Ban", color=0xED4245, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="👤 Thành viên", value=f"{member} (`{member.id}`)", inline=True)
         embed.add_field(name="📝 Lý do",      value=reason,                      inline=True)
         embed.add_field(name="🛡️ Mod",        value=interaction.user.mention,    inline=True)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         await send_log(self.bot, "INFO", f"Ban — {member}",
             fields=[("👤 Thành viên", f"{member} (`{member.id}`)", True),
                     ("📝 Lý do", reason, True), ("🛡️ Mod", str(interaction.user), True)],
@@ -291,9 +291,9 @@ class ModCog(commands.Cog):
     @app_commands.describe(user_id="ID của user cần unban", reason="Lý do")
     async def slash_unban(self, interaction: discord.Interaction, user_id: str, reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         if not user_id.isdigit():
-            return await interaction.response.send_message("❌ ID không hợp lệ!")
+            return await interaction.response.send_message("❌ ID không hợp lệ!", ephemeral=True)
         try:
             user = await self.bot.fetch_user(int(user_id))
             await interaction.guild.unban(user, reason=f"{reason} — Bởi {interaction.user}")
@@ -301,9 +301,9 @@ class ModCog(commands.Cog):
             embed = discord.Embed(title="✅ Đã Unban", color=0x57F287)
             embed.add_field(name="👤 User",  value=f"{user} (`{user.id}`)", inline=True)
             embed.add_field(name="📝 Lý do", value=reason,                  inline=True)
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
         except discord.NotFound:
-            await interaction.response.send_message("❌ User không tìm thấy.")
+            await interaction.response.send_message("❌ User không tìm thấy.", ephemeral=True)
 
     # ══════════════════════════════════════
     # TEMPBAN — ban tạm thời
@@ -358,20 +358,20 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên", duration="Thời gian: 10m, 1h, 2d", reason="Lý do")
     async def slash_tempban(self, interaction: discord.Interaction, member: discord.Member, duration: str = "1d", reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         td = _parse_duration(duration)
         if not td:
-            return await interaction.response.send_message("❌ Thời gian không hợp lệ!")
+            return await interaction.response.send_message("❌ Thời gian không hợp lệ!", ephemeral=True)
         try:
             await member.ban(reason=f"[TempBan {_fmt_duration(td)}] {reason}", delete_message_days=0)
         except discord.Forbidden:
-            return await interaction.response.send_message("❌ Bot không có quyền ban.")
+            return await interaction.response.send_message("❌ Bot không có quyền ban.", ephemeral=True)
         _add_mod_log("tempban", member.id, str(member), str(interaction.user), reason, _fmt_duration(td))
         embed = discord.Embed(title="⏱️ Đã TempBan", color=0xE67E22)
         embed.add_field(name="👤 Thành viên", value=member.mention,    inline=True)
         embed.add_field(name="⏱️ Thời gian",  value=_fmt_duration(td), inline=True)
         embed.add_field(name="📝 Lý do",      value=reason,            inline=True)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         async def _auto_unban(guild=interaction.guild, uid=member.id, delay=td.total_seconds()):
             await asyncio.sleep(delay)
             try:
@@ -415,16 +415,16 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên", reason="Lý do kick")
     async def slash_kick(self, interaction: discord.Interaction, member: discord.Member, reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         try:
             await member.kick(reason=f"{reason} — Bởi {interaction.user}")
         except discord.Forbidden:
-            return await interaction.response.send_message("❌ Bot không có quyền kick.")
+            return await interaction.response.send_message("❌ Bot không có quyền kick.", ephemeral=True)
         _add_mod_log("kick", member.id, str(member), str(interaction.user), reason)
         embed = discord.Embed(title="👢 Đã Kick", color=0xFEE75C)
         embed.add_field(name="👤 Thành viên", value=member.mention, inline=True)
         embed.add_field(name="📝 Lý do",      value=reason,         inline=True)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ══════════════════════════════════════
     # TIMEOUT (thay Mute — dùng Discord native)
@@ -467,22 +467,22 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên", duration="Thời gian: 10m, 1h, 2d (tối đa 28d)", reason="Lý do")
     async def slash_timeout(self, interaction: discord.Interaction, member: discord.Member, duration: str = "10m", reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         td = _parse_duration(duration)
         if not td:
-            return await interaction.response.send_message("❌ Thời gian không hợp lệ!")
+            return await interaction.response.send_message("❌ Thời gian không hợp lệ!", ephemeral=True)
         if td.total_seconds() > 28 * 86400:
-            return await interaction.response.send_message("❌ Tối đa 28 ngày.")
+            return await interaction.response.send_message("❌ Tối đa 28 ngày.", ephemeral=True)
         try:
             await member.timeout(datetime.now(timezone.utc) + td, reason=f"{reason} — Bởi {interaction.user}")
         except discord.Forbidden:
-            return await interaction.response.send_message("❌ Bot không có quyền timeout.")
+            return await interaction.response.send_message("❌ Bot không có quyền timeout.", ephemeral=True)
         _add_mod_log("timeout", member.id, str(member), str(interaction.user), reason, _fmt_duration(td))
         embed = discord.Embed(title="🔇 Đã Timeout", color=0x9B59B6)
         embed.add_field(name="👤", value=member.mention,    inline=True)
         embed.add_field(name="⏱️", value=_fmt_duration(td), inline=True)
         embed.add_field(name="📝", value=reason,            inline=True)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @commands.command(name="untimeout", aliases=["unmute", "uto"])
     async def untimeout_cmd(self, ctx, member: discord.Member = None):
@@ -503,13 +503,13 @@ class ModCog(commands.Cog):
     @app_commands.command(name="untimeout", description="Gỡ timeout thành viên")
     async def slash_untimeout(self, interaction: discord.Interaction, member: discord.Member):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         try:
             await member.timeout(None, reason=f"Gỡ timeout bởi {interaction.user}")
         except discord.Forbidden:
-            return await interaction.response.send_message("❌ Bot không có quyền.")
+            return await interaction.response.send_message("❌ Bot không có quyền.", ephemeral=True)
         _add_mod_log("untimeout", member.id, str(member), str(interaction.user), "Gỡ timeout thủ công")
-        await interaction.response.send_message(f"✅ Đã gỡ timeout cho {member.mention}.")
+        await interaction.response.send_message(f"✅ Đã gỡ timeout cho {member.mention}.", ephemeral=True)
 
     # ══════════════════════════════════════
     # SLOWMODE / LOCK
@@ -526,10 +526,10 @@ class ModCog(commands.Cog):
     @app_commands.describe(seconds="Số giây (0 = tắt, tối đa 21600)")
     async def slash_slowmode(self, interaction: discord.Interaction, seconds: int = 0):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         seconds = max(0, min(seconds, 21600))
         await interaction.channel.edit(slowmode_delay=seconds)
-        await interaction.response.send_message(f"⏱️ Slowmode **{seconds}s**" if seconds else "✅ Đã tắt slowmode.")
+        await interaction.response.send_message(f"⏱️ Slowmode **{seconds}s**" if seconds else "✅ Đã tắt slowmode.", ephemeral=True)
 
     @commands.command(name="lock")
     async def lock_cmd(self, ctx, channel: discord.TextChannel = None):
@@ -548,23 +548,23 @@ class ModCog(commands.Cog):
     @app_commands.command(name="lock", description="Khóa kênh")
     @app_commands.describe(channel="Kênh cần khóa (để trống = kênh hiện tại)")
     async def slash_lock(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
-        if not self._is_mod(interaction.user): return await interaction.response.send_message("❌ Bạn không có quyền.")
+        if not self._is_mod(interaction.user): return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         ch = channel or interaction.channel
         await ch.set_permissions(interaction.guild.default_role, send_messages=False)
-        await interaction.response.send_message(f"🔒 Đã khóa {ch.mention}.")
+        await interaction.response.send_message(f"🔒 Đã khóa {ch.mention}.", ephemeral=True)
 
     @app_commands.command(name="unlock", description="Mở khóa kênh")
     @app_commands.describe(channel="Kênh cần mở khóa (để trống = kênh hiện tại)")
     async def slash_unlock(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
-        if not self._is_mod(interaction.user): return await interaction.response.send_message("❌ Bạn không có quyền.")
+        if not self._is_mod(interaction.user): return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         ch = channel or interaction.channel
         await ch.set_permissions(interaction.guild.default_role, send_messages=None)
-        await interaction.response.send_message(f"🔓 Đã mở khóa {ch.mention}.")
+        await interaction.response.send_message(f"🔓 Đã mở khóa {ch.mention}.", ephemeral=True)
 
     # ══════════════════════════════════════
     # .XOA — xoá hàng loạt tin nhắn
     # ══════════════════════════════════════
-    @commands.command(name="xoa", aliases=["purge"])
+    @commands.command(name="del", aliases=["xoa", "purge", "clear"])
     async def xoa_cmd(self, ctx, amount: int = None, member: discord.Member = None):
         """
         .xoa [số] [@user]
@@ -702,7 +702,7 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên", reason="Lý do")
     async def slash_warn(self, interaction: discord.Interaction, member: discord.Member, reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         remaining = _check_warn_cooldown(interaction.user.id, member.id)
         if remaining > 0:
             return await interaction.response.send_message(
@@ -714,7 +714,7 @@ class ModCog(commands.Cog):
         embed.add_field(name="👤 Thành viên", value=member.mention, inline=True)
         embed.add_field(name="📝 Lý do",      value=reason,         inline=True)
         embed.add_field(name="⚠️ Tổng warn",  value=f"**{count}**", inline=True)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         asyncio.create_task(self._apply_warn_action(interaction.guild, member, count))
 
     @commands.command(name="warns", aliases=["warnlist"])
@@ -745,7 +745,7 @@ class ModCog(commands.Cog):
             embed.set_footer(text=f"Tổng: {len(warns)} warn")
         else:
             embed.description = "✅ Không có warn nào!"
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @commands.command(name="clearwarn", aliases=["warnreset"])
     async def clearwarn_cmd(self, ctx, member: discord.Member = None, index: str = None):
@@ -768,15 +768,15 @@ class ModCog(commands.Cog):
     @app_commands.describe(member="Thành viên", index="Số thứ tự warn (để trống = xoá tất cả)")
     async def slash_clearwarn(self, interaction: discord.Interaction, member: discord.Member, index: int = None):
         if not self._is_mod(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         if index:
             ok = _remove_warn(member.id, index - 1)
             if not ok:
-                return await interaction.response.send_message(f"❌ Không tìm thấy warn #{index}.")
-            await interaction.response.send_message(f"✅ Đã xoá warn #{index} của {member.mention}.")
+                return await interaction.response.send_message(f"❌ Không tìm thấy warn #{index}.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Đã xoá warn #{index} của {member.mention}.", ephemeral=True)
         else:
             _clear_warns(member.id)
-            await interaction.response.send_message(f"✅ Đã xoá toàn bộ warn của {member.mention}.")
+            await interaction.response.send_message(f"✅ Đã xoá toàn bộ warn của {member.mention}.", ephemeral=True)
 
     # ══════════════════════════════════════
     # MODLOG — lịch sử hành động mod
@@ -836,7 +836,7 @@ class ModCog(commands.Cog):
                 embed.add_field(name=f"{icon} {entry['action'].upper()} — {entry['time'][:10]}",
                                 value=value, inline=False)
             embed.set_footer(text=f"Tổng {len(logs)} hành động")
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ══════════════════════════════════════
     # AUTO-MOD CONFIG
