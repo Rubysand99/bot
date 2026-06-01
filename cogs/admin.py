@@ -296,37 +296,56 @@ class SettingsView(View):
 
 
 def _build_ticket_roles_embed() -> discord.Embed:
-    """Embed hiển thị config ticket → role hiện tại."""
+    """Embed hiển thị config ticket → role hiện tại (6 loại)."""
     from cogs.ticket import SERVICE_TABLE  # import lazy tránh circular
     data = load_data()
     roles_cfg = data.get("ticket_type_roles", {})
-    lines = []
-    for key, info in SERVICE_TABLE.items():
-        group = roles_cfg.get(key)
-        if group == "seller":
-            tag = "🏪 Seller"
-        elif group == "builder":
-            tag = "🏗️ Builder"
-        else:
-            tag = "*(chưa cài)*"
-        lines.append(f"{info['label']} → **{tag}**")
+
+    def _tag(key):
+        g = roles_cfg.get(key)
+        if g == "seller":  return "🏪 Seller"
+        if g == "builder": return "🏗️ Builder"
+        return "*(chưa cài)*"
+
+    # Service tickets
+    svc_lines = [f"{info['label']} → **{_tag(key)}**" for key, info in SERVICE_TABLE.items()]
+    # Order tickets
+    order_lines = [
+        f"💰 Money → **{_tag('order_money')}**",
+        f"💀 Skeleton → **{_tag('order_skeleton')}**",
+        f"📦 Khác → **{_tag('order_other')}**",
+    ]
+
     embed = discord.Embed(
         title="🎫 Cấu Hình Role Theo Loại Ticket",
-        description="\n".join(lines),
         color=0x5865F2,
     )
+    embed.add_field(name="🎮 Dịch Vụ",  value="\n".join(svc_lines),   inline=False)
+    embed.add_field(name="🛒 Mua / Bán", value="\n".join(order_lines), inline=False)
     embed.set_footer(text="Chọn loại ticket bên dưới để gán role")
     return embed
+
+
+# Bảng hiển thị tên đẹp cho cả 6 loại (dùng trong Select)
+_ALL_TICKET_OPTIONS = [
+    # service
+    ("orderbase",      "🏯 Order Base",    "Dịch vụ"),
+    ("giveaway",       "🎁 Nhận Giveaway", "Dịch vụ"),
+    ("support",        "🆘 Hỗ Trợ",        "Dịch vụ"),
+    # order
+    ("order_money",    "💰 Money",          "Mua/Bán"),
+    ("order_skeleton", "💀 Skeleton",       "Mua/Bán"),
+    ("order_other",    "📦 Khác",           "Mua/Bán"),
+]
 
 
 class TicketRoleConfigView(View):
     """View cho phép admin gán từng loại ticket → seller hoặc builder."""
     def __init__(self):
         super().__init__(timeout=120)
-        from cogs.ticket import SERVICE_TABLE
         options = [
-            discord.SelectOption(label=info["label"], value=key, description=info["note"])
-            for key, info in SERVICE_TABLE.items()
+            discord.SelectOption(label=label, value=key, description=category)
+            for key, label, category in _ALL_TICKET_OPTIONS
         ]
         self.add_item(_TicketTypeSelect(options))
 
@@ -340,10 +359,12 @@ class _TicketTypeSelect(Select):
         if interaction.user.id not in ADMIN_IDS:
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         ticket_key = self.values[0]
+        # Tìm label đẹp
+        label = next((lbl for k, lbl, _ in _ALL_TICKET_OPTIONS if k == ticket_key), ticket_key)
         view = View(timeout=60)
-        view.add_item(_RoleGroupSelect(ticket_key))
+        view.add_item(_RoleGroupSelect(ticket_key, label))
         await interaction.response.send_message(
-            f"🏷️ Loại ticket **{ticket_key}** — chọn nhóm role:",
+            f"🏷️ Loại ticket **{label}** — chọn nhóm role:",
             view=view,
             ephemeral=True,
         )
@@ -351,14 +372,15 @@ class _TicketTypeSelect(Select):
 
 class _RoleGroupSelect(Select):
     """Bước 2: chọn seller hoặc builder."""
-    def __init__(self, ticket_key: str):
+    def __init__(self, ticket_key: str, label: str):
         self.ticket_key = ticket_key
+        self.label_name = label
         super().__init__(
             placeholder="Gán cho nhóm nào?",
             options=[
-                discord.SelectOption(label="🏪 Seller",   value="seller",  description="Chỉ role Seller vào ticket này"),
-                discord.SelectOption(label="🏗️ Builder", value="builder", description="Chỉ role Builder Base vào ticket này"),
-                discord.SelectOption(label="🔄 Cả hai (mặc định)", value="none", description="Không giới hạn, cả seller và builder"),
+                discord.SelectOption(label="🏪 Seller",              value="seller",  description="Chỉ role Seller vào ticket này"),
+                discord.SelectOption(label="🏗️ Builder",            value="builder", description="Chỉ role Builder Base vào ticket này"),
+                discord.SelectOption(label="🔄 Cả hai (mặc định)",  value="none",    description="Không giới hạn, cả seller và builder"),
             ],
         )
 
@@ -369,7 +391,7 @@ class _RoleGroupSelect(Select):
         set_ticket_type_role(self.ticket_key, group)
         label_map = {"seller": "🏪 Seller", "builder": "🏗️ Builder", None: "🔄 Cả hai"}
         await interaction.response.send_message(
-            f"✅ Ticket **{self.ticket_key}** → {label_map[group]}",
+            f"✅ **{self.label_name}** → {label_map[group]}",
             ephemeral=True,
         )
 

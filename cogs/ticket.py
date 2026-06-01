@@ -36,7 +36,6 @@ BUILDER_BASE_ROLE_ID = _BUILDER_ROLE_ID
 # ── Bảng SERVICE (không có giá) ──
 SERVICE_TABLE = {
     "orderbase": {"label": "🏯 Order Base",    "note": "Đặt thiết kế base theo yêu cầu",  "color": 0xE67E22, "type_label": "🏯 ORDER BASE",    "channel_prefix": "base"},
-    "modfixlag": {"label": "⚡ Mod Fix Lag",   "note": "Hỗ trợ cài mod tối ưu FPS",       "color": 0x1ABC9C, "type_label": "⚡ MOD FIX LAG",   "channel_prefix": "mod"},
     "giveaway":  {"label": "🎁 Nhận Giveaway", "note": "Xác nhận & nhận thưởng giveaway", "color": 0xF1C40F, "type_label": "🎁 NHẬN GIVEAWAY",  "channel_prefix": "ticket"},
     "support":   {"label": "🆘 Hỗ Trợ",        "note": "Hỗ trợ mọi vấn đề",              "color": 0x3498DB, "type_label": "🆘 HỖ TRỢ",         "channel_prefix": "ticket"},
 }
@@ -166,7 +165,7 @@ def build_panel_embed(guild: discord.Guild) -> discord.Embed:
         description="Chào mừng đến với **TuyTam Store**!\nNhấn nút bên dưới để tạo ticket giao dịch.",
         color=0x5865F2, timestamp=datetime.now(timezone.utc)
     )
-    embed.add_field(name="🛒  Dịch vụ", value="› Mua / Bán Money, Skeleton, Elytra\n› 🏯 Order Base\n› ⚡ Mod Fix Lag\n› 🎁 Nhận Giveaway\n› 🆘 Hỗ Trợ", inline=True)
+    embed.add_field(name="🛒  Dịch vụ", value="› Mua / Bán Money, Skeleton, Elytra\n› 🏯 Order Base\n› 🎁 Nhận Giveaway\n› 🆘 Hỗ Trợ", inline=True)
     embed.add_field(name="📋  Ticket bao gồm", value="› Tạo kênh riêng tư\n› Staff hỗ trợ 24/7\n› Transcript sau giao dịch", inline=True)
     embed.add_field(name="⚠️  Lưu ý", value="› Không spam ticket\n› Ghi rõ số lượng & item\n› Thanh toán đúng giá niêm yết", inline=False)
     embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
@@ -363,8 +362,10 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
 
         color, type_label = (0x57F287, "🛒 MUA HÀNG") if trade_type == "sell" else (0xFEE75C, "💸 BÁN HÀNG")
 
-        # ticket thương mại (mua/bán) dùng cả hai role → role_group=None
-        overwrites = _build_ticket_overwrites(guild, interaction.user, seller_id, role_group=None)
+        # ticket mua/bán đọc role_group theo item_key
+        _order_cfg_key = {"money": "order_money", "skeleton": "order_skeleton", "other": "order_other"}
+        order_role_group = get_ticket_type_role(_order_cfg_key.get(item_key, "order_other"))
+        overwrites = _build_ticket_overwrites(guild, interaction.user, seller_id, role_group=order_role_group)
         category   = discord.utils.get(guild.categories, id=get_cfg_category())
         channel    = await guild.create_text_channel(name=channel_name, overwrites=overwrites, category=category, topic=f"{interaction.user.id}||{trade_type}|{item_key}|open")
 
