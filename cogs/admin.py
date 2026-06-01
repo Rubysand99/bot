@@ -20,6 +20,8 @@ from core.data import (
     get_user_total_spent, add_user_spent, get_price_sections, save_price_sections,
     can_use_dangerous_cmd, parse_amount, fmt_amount, _uname, _uname_plain,
     get_or_fetch_channel,
+    get_ticket_type_role, set_ticket_type_role, get_all_ticket_type_roles,
+    BUILDER_BASE_ROLE_ID,
 )
 
 BOT_VERSION = "3.9.4"
@@ -282,6 +284,94 @@ class SettingsView(View):
     async def proof(self,    i, b): await self._send_channel_select(i, "cfg_proof_channel",   "Proof Channel",    "Kênh nhận done tự động")
     @discord.ui.button(label="🤖 AI Channel",       style=discord.ButtonStyle.secondary, row=2)
     async def ai(self,       i, b): await self._send_channel_select(i, "cfg_ai_channel",      "AI Channel",       "Kênh AI tự động trả lời mọi tin nhắn")
+    @discord.ui.button(label="🎫 Ticket Roles",     style=discord.ButtonStyle.primary,   row=3)
+    async def ticket_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_message(
+            embed=_build_ticket_roles_embed(),
+            view=TicketRoleConfigView(),
+            ephemeral=True,
+        )
+
+
+def _build_ticket_roles_embed() -> discord.Embed:
+    """Embed hiển thị config ticket → role hiện tại."""
+    from cogs.ticket import SERVICE_TABLE  # import lazy tránh circular
+    data = load_data()
+    roles_cfg = data.get("ticket_type_roles", {})
+    lines = []
+    for key, info in SERVICE_TABLE.items():
+        group = roles_cfg.get(key)
+        if group == "seller":
+            tag = "🏪 Seller"
+        elif group == "builder":
+            tag = "🏗️ Builder"
+        else:
+            tag = "*(chưa cài)*"
+        lines.append(f"{info['label']} → **{tag}**")
+    embed = discord.Embed(
+        title="🎫 Cấu Hình Role Theo Loại Ticket",
+        description="\n".join(lines),
+        color=0x5865F2,
+    )
+    embed.set_footer(text="Chọn loại ticket bên dưới để gán role")
+    return embed
+
+
+class TicketRoleConfigView(View):
+    """View cho phép admin gán từng loại ticket → seller hoặc builder."""
+    def __init__(self):
+        super().__init__(timeout=120)
+        from cogs.ticket import SERVICE_TABLE
+        options = [
+            discord.SelectOption(label=info["label"], value=key, description=info["note"])
+            for key, info in SERVICE_TABLE.items()
+        ]
+        self.add_item(_TicketTypeSelect(options))
+
+
+class _TicketTypeSelect(Select):
+    """Bước 1: chọn loại ticket."""
+    def __init__(self, options):
+        super().__init__(placeholder="Chọn loại ticket cần cài...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        ticket_key = self.values[0]
+        view = View(timeout=60)
+        view.add_item(_RoleGroupSelect(ticket_key))
+        await interaction.response.send_message(
+            f"🏷️ Loại ticket **{ticket_key}** — chọn nhóm role:",
+            view=view,
+            ephemeral=True,
+        )
+
+
+class _RoleGroupSelect(Select):
+    """Bước 2: chọn seller hoặc builder."""
+    def __init__(self, ticket_key: str):
+        self.ticket_key = ticket_key
+        super().__init__(
+            placeholder="Gán cho nhóm nào?",
+            options=[
+                discord.SelectOption(label="🏪 Seller",   value="seller",  description="Chỉ role Seller vào ticket này"),
+                discord.SelectOption(label="🏗️ Builder", value="builder", description="Chỉ role Builder Base vào ticket này"),
+                discord.SelectOption(label="🔄 Cả hai (mặc định)", value="none", description="Không giới hạn, cả seller và builder"),
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        group = None if self.values[0] == "none" else self.values[0]
+        set_ticket_type_role(self.ticket_key, group)
+        label_map = {"seller": "🏪 Seller", "builder": "🏗️ Builder", None: "🔄 Cả hai"}
+        await interaction.response.send_message(
+            f"✅ Ticket **{self.ticket_key}** → {label_map[group]}",
+            ephemeral=True,
+        )
 
 class ChannelConfigSelect(Select):
     def __init__(self, cfg_key, title, options):

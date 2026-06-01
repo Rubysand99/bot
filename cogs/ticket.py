@@ -25,12 +25,13 @@ from core.data import (
     get_seller_category, save_seller_category,
     remove_seller_category, get_all_seller_categories,
     get_or_fetch_channel,
+    get_ticket_type_role, BUILDER_BASE_ROLE_ID as _BUILDER_ROLE_ID,
 )
 from cogs.logger import send_log
 
 BOT_VERSION = "3.3.5"
 
-BUILDER_BASE_ROLE_ID = 1484158340849205308
+BUILDER_BASE_ROLE_ID = _BUILDER_ROLE_ID
 
 # ── Bảng SERVICE (không có giá) ──
 SERVICE_TABLE = {
@@ -106,23 +107,54 @@ async def sync_ticket_counter(bot, guild: discord.Guild):
         asyncio.create_task(write_counter_to_channel(bot, max_num))
         print(f"[SYNC] Ticket counter đồng bộ → {max_num:03d}")
 
-def _build_ticket_overwrites(guild, user, seller_id=None):
+def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None = None):
+    """
+    role_group: "seller" | "builder" | None
+      - "seller"  → chỉ Seller Role vào kênh
+      - "builder" → chỉ Builder Base Role vào kênh
+      - None      → cả hai (hành vi cũ, dùng cho ticket thương mại)
+    Admin luôn có full quyền bất kể role_group.
+    """
+    _staff_perm  = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_messages=True, attach_files=True, embed_links=True, manage_channels=True, manage_permissions=True)
+    _member_perm = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+        user: _member_perm,
     }
+
+    # Admin luôn full quyền
     for admin_id in ADMIN_IDS:
         m = guild.get_member(admin_id)
-        if m: overwrites[m] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_messages=True)
-    support_role = guild.get_role(get_cfg_support_role())
-    if support_role: overwrites[support_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_messages=True)
-    seller_role = guild.get_role(get_cfg_seller_role())
-    if seller_role: overwrites[seller_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_messages=True, attach_files=True, embed_links=True, manage_channels=True, manage_permissions=True)
-    builder_base_role = guild.get_role(BUILDER_BASE_ROLE_ID)
-    if builder_base_role: overwrites[builder_base_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_messages=True, attach_files=True, embed_links=True, manage_channels=True, manage_permissions=True)
+        if m:
+            overwrites[m] = _staff_perm
+
+    # Role theo nhóm
+    if role_group == "seller":
+        seller_role = guild.get_role(get_cfg_seller_role())
+        if seller_role:
+            overwrites[seller_role] = _staff_perm
+    elif role_group == "builder":
+        builder_role = guild.get_role(BUILDER_BASE_ROLE_ID)
+        if builder_role:
+            overwrites[builder_role] = _staff_perm
+    else:
+        # Không config / ticket thương mại → cả hai role + support
+        support_role = guild.get_role(get_cfg_support_role())
+        if support_role:
+            overwrites[support_role] = _staff_perm
+        seller_role = guild.get_role(get_cfg_seller_role())
+        if seller_role:
+            overwrites[seller_role] = _staff_perm
+        builder_role = guild.get_role(BUILDER_BASE_ROLE_ID)
+        if builder_role:
+            overwrites[builder_role] = _staff_perm
+
     if seller_id:
         sm = guild.get_member(seller_id)
-        if sm: overwrites[sm] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_messages=True)
+        if sm:
+            overwrites[sm] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_messages=True)
+
     return overwrites
 
 # ══════════════════════════════════════════
@@ -331,7 +363,8 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
 
         color, type_label = (0x57F287, "🛒 MUA HÀNG") if trade_type == "sell" else (0xFEE75C, "💸 BÁN HÀNG")
 
-        overwrites = _build_ticket_overwrites(guild, interaction.user, seller_id)
+        # ticket thương mại (mua/bán) dùng cả hai role → role_group=None
+        overwrites = _build_ticket_overwrites(guild, interaction.user, seller_id, role_group=None)
         category   = discord.utils.get(guild.categories, id=get_cfg_category())
         channel    = await guild.create_text_channel(name=channel_name, overwrites=overwrites, category=category, topic=f"{interaction.user.id}||{trade_type}|{item_key}|open")
 
@@ -373,7 +406,10 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         number = await get_next_ticket_number(bot)
         created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
 
-        overwrites = _build_ticket_overwrites(guild, interaction.user)
+        # Đọc role group từ config
+        role_group = get_ticket_type_role(service_key)  # "seller" | "builder" | None
+
+        overwrites = _build_ticket_overwrites(guild, interaction.user, role_group=role_group)
         category   = discord.utils.get(guild.categories, id=get_cfg_category())
         channel    = await guild.create_text_channel(name=f"ticket-{number}", overwrites=overwrites, category=category, topic=f"{interaction.user.id}||service|{service_key}|open")
 
@@ -384,10 +420,14 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        if service_key == "orderbase":
+        # Ping đúng role theo config
+        if role_group == "builder":
             ping_str = f"<@&{BUILDER_BASE_ROLE_ID}>"
+        elif role_group == "seller":
+            ping_str = f"<@&{get_cfg_seller_role()}>"
         else:
             ping_str = f"<@&{get_cfg_support_role()}>"
+
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
     except Exception as e:

@@ -536,3 +536,25 @@ def is_staff_member(member) -> bool:
     bbr = guild.get_role(BUILDER_BASE_ROLE_ID)
     if bbr and bbr in member.roles: return True
     return False
+
+# ══════════════════════════════════════════
+# TICKET TYPE → ROLE GROUP
+# ══════════════════════════════════════════
+def get_ticket_type_role(ticket_key: str) -> str | None:
+    """Trả về "seller" | "builder" | None cho loại ticket."""
+    return load_data().get("ticket_type_roles", {}).get(ticket_key)
+
+def set_ticket_type_role(ticket_key: str, group: str | None) -> None:
+    """Lưu group ("seller" | "builder" | None) cho loại ticket."""
+    data = load_data()
+    roles_cfg = data.setdefault("ticket_type_roles", {})
+    if group is None:
+        roles_cfg.pop(ticket_key, None)
+    else:
+        roles_cfg[ticket_key] = group
+    data["ticket_type_roles"] = roles_cfg
+    save_data(data)
+
+def get_all_ticket_type_roles() -> dict:
+    """Trả về toàn bộ map {ticket_key: group}."""
+    return load_data().get("ticket_type_roles", {})
