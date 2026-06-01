@@ -305,6 +305,7 @@ def _build_ticket_roles_embed() -> discord.Embed:
         g = roles_cfg.get(key)
         if g == "seller":  return "🏪 Seller"
         if g == "builder": return "🏗️ Builder"
+        if g == "admin":   return "👑 Admin"
         return "*(chưa cài)*"
 
     # Service tickets
@@ -388,6 +389,7 @@ class _RoleGroupSelect(Select):
             options=[
                 discord.SelectOption(label="🏪 Seller",              value="seller",  description="Chỉ role Seller vào ticket này"),
                 discord.SelectOption(label="🏗️ Builder",            value="builder", description="Chỉ role Builder Base vào ticket này"),
+                discord.SelectOption(label="👑 Admin (ADMIN_IDS)",   value="admin",   description="Chỉ Admin trong ADMIN_IDS vào ticket này"),
                 discord.SelectOption(label="🔄 Cả hai (mặc định)",  value="none",    description="Không giới hạn, cả seller và builder"),
             ],
         )
@@ -397,7 +399,7 @@ class _RoleGroupSelect(Select):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         group = None if self.values[0] == "none" else self.values[0]
         set_ticket_type_role(self.ticket_key, group)
-        label_map = {"seller": "🏪 Seller", "builder": "🏗️ Builder", None: "🔄 Cả hai"}
+        label_map = {"seller": "🏪 Seller", "builder": "🏗️ Builder", "admin": "👑 Admin (ADMIN_IDS)", None: "🔄 Cả hai"}
         await interaction.response.send_message(
             f"✅ **{self.label_name}** → {label_map[group]}",
             ephemeral=True,

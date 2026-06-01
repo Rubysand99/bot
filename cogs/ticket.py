@@ -108,9 +108,10 @@ async def sync_ticket_counter(bot, guild: discord.Guild):
 
 def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None = None):
     """
-    role_group: "seller" | "builder" | None
+    role_group: "seller" | "builder" | "admin" | None
       - "seller"  → chỉ Seller Role vào kênh
       - "builder" → chỉ Builder Base Role vào kênh
+      - "admin"   → chỉ Admin trong ADMIN_IDS vào kênh
       - None      → cả hai (hành vi cũ, dùng cho ticket thương mại)
     Admin luôn có full quyền bất kể role_group.
     """
@@ -137,6 +138,8 @@ def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None
         builder_role = guild.get_role(BUILDER_BASE_ROLE_ID)
         if builder_role:
             overwrites[builder_role] = _staff_perm
+    elif role_group == "admin":
+        pass  # Chỉ ADMIN_IDS — đã thêm ở trên, không thêm role nào khác
     else:
         # Không config / ticket thương mại → cả hai role + support
         support_role = guild.get_role(get_cfg_support_role())
@@ -376,7 +379,10 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        ping_target = f"<@{seller_id}>" if seller_id else f"<@&{get_cfg_support_role()}>"
+        ping_target = f"<@{seller_id}>" if seller_id else (
+            " ".join(f"<@{aid}>" for aid in ADMIN_IDS) if order_role_group == "admin"
+            else f"<@&{get_cfg_support_role()}>"
+        )
         await channel.send(f"{ping_target} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
 
@@ -426,6 +432,8 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
             ping_str = f"<@&{BUILDER_BASE_ROLE_ID}>"
         elif role_group == "seller":
             ping_str = f"<@&{get_cfg_seller_role()}>"
+        elif role_group == "admin":
+            ping_str = " ".join(f"<@{aid}>" for aid in ADMIN_IDS)
         else:
             ping_str = f"<@&{get_cfg_support_role()}>"
 
