@@ -16,9 +16,14 @@ Nhóm kênh:
 """
 
 from datetime import datetime, timezone
+import asyncio
 import discord
-from discord.ext import commands
-from core.data import ADMIN_IDS, get_cfg_log_rudy, get_log_channels, get_log_channel_by_group, set_log_channel_db, get_or_fetch_channel
+from discord.ext import commands, tasks
+from core.data import (
+    ADMIN_IDS, get_cfg_log_rudy, get_log_channels, get_log_channel_by_group,
+    set_log_channel_db, get_or_fetch_channel,
+    get_balance_data, get_monthly_stats, load_giveaways_data, fmt_amount,
+)
 
 LOG_ICONS = {
     "TICKET_CREATE":   ("🎫", 0x57F287),
@@ -29,6 +34,7 @@ LOG_ICONS = {
     "BALANCE_OUT":     ("📤", 0xED4245),
     "BALANCE_SET":     ("⚙️",  0xFEE75C),
     "BALANCE_RESET":   ("🔄", 0x99AAB5),
+    "BANK_TXNS":       ("🏦", 0x2ECC71),
     "MOD_BAN":         ("🔨", 0xED4245),
     "MOD_KICK":        ("👢", 0xE67E22),
     "MOD_MUTE":        ("🔇", 0xF0A500),
@@ -60,6 +66,7 @@ LOG_ROUTES: dict[str, str] = {
     "BALANCE_OUT":     "balance",
     "BALANCE_SET":     "balance",
     "BALANCE_RESET":   "balance",
+    "BANK_TXNS":       "balance",
     "MOD_BAN":         "mod",
     "MOD_KICK":        "mod",
     "MOD_MUTE":        "mod",
@@ -174,6 +181,130 @@ async def send_log(
 class LoggerCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.daily_report_task.start()
+
+    def cog_unload(self):
+        self.daily_report_task.cancel()
+
+    # ══════════════════════════════════════════
+    # BÁO CÁO HÀNG NGÀY 8H SÁNG
+    # ══════════════════════════════════════════
+    @tasks.loop(hours=1)
+    async def daily_report_task(self):
+        """Kiểm tra mỗi giờ, khi đúng 8h sáng UTC+7 (= 01:00 UTC) thì gửi báo cáo."""
+        now = datetime.now(timezone.utc)
+        # UTC+7 = UTC + 7h → 8h sáng UTC+7 = 01:00 UTC
+        if now.hour != 1:
+            return
+        await self._send_daily_report()
+
+    @daily_report_task.before_loop
+    async def before_daily_report(self):
+        await self.bot.wait_until_ready()
+
+    async def _send_daily_report(self):
+        """Build và gửi embed báo cáo ngày hôm qua vào kênh general log."""
+        now = datetime.now(timezone.utc)
+        # Lấy dữ liệu hôm qua (ngày hiện tại theo UTC+7)
+        from datetime import timedelta
+        yesterday = now - timedelta(days=1)
+        y, m = yesterday.year, yesterday.month
+        day  = yesterday.day
+
+        # ── Ticket stats (từ monthly stats, lọc theo ngày hôm qua) ──
+        stats    = get_monthly_stats(y, m)
+        records  = stats.get("records", [])
+        day_recs = []
+        for t in records:
+            try:
+                dt = datetime.fromisoformat(t.get("closed_at", ""))
+                if dt.day == day and dt.month == m and dt.year == y:
+                    day_recs.append(t)
+            except Exception:
+                pass
+        ticket_count  = len(day_recs)
+        ticket_amount = sum(t.get("amount", 0) for t in day_recs)
+
+        # ── Balance snapshot hiện tại ──
+        bal = get_balance_data()
+        bal_current   = bal.get("current", 0)
+        bal_total_in  = bal.get("total_in", 0)
+        bal_total_out = bal.get("total_out", 0)
+        bal_tx_count  = bal.get("tx_count", 0)
+
+        # ── Giveaway đang chạy / đã kết thúc hôm qua ──
+        gw_data    = load_giveaways_data()
+        gw_running = sum(1 for gw in gw_data.values() if not gw.get("ended"))
+        gw_ended_yesterday = 0
+        for gw in gw_data.values():
+            end_time = gw.get("end_time", 0)
+            if gw.get("ended") and end_time:
+                try:
+                    end_dt = datetime.fromtimestamp(end_time, tz=timezone.utc)
+                    if end_dt.day == day and end_dt.month == m and end_dt.year == y:
+                        gw_ended_yesterday += 1
+                except Exception:
+                    pass
+
+        date_label = yesterday.strftime("%d/%m/%Y")
+
+        embed = discord.Embed(
+            title=f"📊 Báo Cáo Ngày — {date_label}",
+            color=0x5865F2,
+            timestamp=now,
+        )
+        embed.add_field(
+            name="🎫 Ticket",
+            value=f"**{ticket_count}** đơn hoàn thành\n💰 Doanh thu: **{fmt_amount(ticket_amount)}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="🏦 Balance",
+            value=(
+                f"💵 Hiện tại: **{fmt_amount(bal_current)}**\n"
+                f"📥 Tổng nạp: **{fmt_amount(bal_total_in)}**\n"
+                f"📤 Tổng rút: **{fmt_amount(bal_total_out)}**\n"
+                f"🔢 Tổng GD: **{bal_tx_count}**"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="🎉 Giveaway",
+            value=f"🟢 Đang chạy: **{gw_running}**\n🏁 Kết thúc hôm qua: **{gw_ended_yesterday}**",
+            inline=True,
+        )
+
+        # Top buyer hôm qua
+        if day_recs:
+            buyer_totals: dict = {}
+            for t in day_recs:
+                uid = t.get("user_id")
+                buyer_totals[uid] = buyer_totals.get(uid, 0) + t.get("amount", 0)
+            top3 = sorted(buyer_totals.items(), key=lambda x: x[1], reverse=True)[:3]
+            medals = ["🥇", "🥈", "🥉"]
+            top_lines = [f"{medals[i]} <@{uid}> — **{fmt_amount(amt)}**" for i, (uid, amt) in enumerate(top3)]
+            embed.add_field(name="🏆 Top Buyer Hôm Qua", value="\n".join(top_lines), inline=False)
+
+        embed.set_footer(text="TuyTam Store  •  Báo cáo tự động lúc 8:00 SA")
+
+        # Gửi vào kênh general log
+        ch_id = get_log_channel("general") or get_cfg_log_rudy()
+        if not ch_id:
+            return
+        channel = await get_or_fetch_channel(self.bot, ch_id)
+        if channel:
+            try:
+                await channel.send(embed=embed)
+            except Exception as e:
+                print(f"[DAILY_REPORT] ❌ Lỗi gửi báo cáo: {e}")
+
+    @commands.command(name="baocao", aliases=["report"])
+    async def manual_report(self, ctx):
+        """Admin gọi thủ công báo cáo ngay lập tức."""
+        if ctx.author.id not in ADMIN_IDS:
+            return
+        await self._send_daily_report()
+        await ctx.message.add_reaction("✅")
 
     # ── LỆNH CÀI KÊNH LOG ──
     @commands.command(name="setlog")
