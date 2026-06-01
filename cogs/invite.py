@@ -16,6 +16,7 @@ from core.data import ADMIN_IDS, load_data, save_data, _uname, _uname_plain
 
 _invite_cache: dict[int, dict[str, int]] = {}
 _pending_joins: dict[int, dict] = {}
+_member_inviters: dict[int, dict] = {}   # member_id → {inviter_id, guild_id} — lưu sau cửa sổ fake
 
 
 def _get_invite_counts() -> dict:
@@ -157,6 +158,9 @@ class InviteCog(commands.Cog):
                     if not still_here:
                         _add_invite(inviter_id, "fake", 1)
                         print(f"[INVITE] ⚠️ Fake invite: {member} invited by {inviter_id}")
+                    else:
+                        # Thành viên ở lại → lưu để tính left sau này nếu rời
+                        _member_inviters[member.id] = {"inviter_id": inviter_id, "guild_id": member.guild.id}
                     _pending_joins.pop(member.id, None)
                 asyncio.create_task(_check_fake())
 
@@ -166,7 +170,14 @@ class InviteCog(commands.Cog):
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         await cache_invites(member.guild)
-        _pending_joins.pop(member.id, None)
+        # Nếu rời trong cửa sổ 10 phút → đang chờ check fake, không tính left
+        if member.id in _pending_joins:
+            _pending_joins.pop(member.id, None)
+            return
+        # Đã qua cửa sổ fake → tính left cho inviter nếu còn lưu
+        inv_info = _member_inviters.pop(member.id, None)
+        if inv_info:
+            _add_invite(inv_info["inviter_id"], "left", 1)
 
     # ── SLASH COMMANDS ──
     @discord.app_commands.command(name="invite", description="Xem thống kê invite của thành viên")

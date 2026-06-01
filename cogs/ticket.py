@@ -29,7 +29,7 @@ from core.data import (
 )
 from cogs.logger import send_log
 
-BOT_VERSION = "3.3.5"
+# BOT_VERSION được import từ bot.py khi cần — không hardcode lại ở đây
 
 BUILDER_BASE_ROLE_ID = _BUILDER_ROLE_ID
 
@@ -50,10 +50,24 @@ _ITEM_OPTIONS = [
 # ══════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════
-async def has_ticket(guild, user):
-    for channel in guild.text_channels:
-        if channel.topic and str(user.id) in channel.topic:
+# Cache: user_id → channel_id (ticket đang mở)
+_open_tickets: dict[int, int] = {}
+
+def _register_ticket(user_id: int, channel_id: int):
+    _open_tickets[user_id] = channel_id
+
+def _unregister_ticket(user_id: int):
+    _open_tickets.pop(user_id, None)
+
+async def has_ticket(guild, user) -> bool:
+    """Kiểm tra user có ticket đang mở không — dùng cache O(1) thay vì quét toàn bộ kênh."""
+    channel_id = _open_tickets.get(user.id)
+    if channel_id:
+        ch = guild.get_channel(channel_id)
+        if ch:
             return True
+        # Kênh không còn tồn tại → dọn cache
+        _unregister_ticket(user.id)
     return False
 
 async def read_counter_from_channel(bot) -> int:
@@ -205,7 +219,7 @@ def build_transcript_html(channel_name, messages, info: dict = None):
     for msg in messages:
         avatar = msg.author.display_avatar.url if msg.author.display_avatar else ""
         raw = msg.content or ""
-        content = discord.utils.escape_mentions(raw).replace("<","&lt;").replace(">","&gt;") if raw else "<i style='color:#72767d'>(không có nội dung)</i>"
+        content = (raw.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;") if raw else "<i style='color:#72767d'>(không có nội dung)</i>")
         attach_html = ""
         for att in msg.attachments:
             if att.content_type and att.content_type.startswith("image/"):
@@ -287,6 +301,18 @@ async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
     if transcript_ch:
         file2 = discord.File(io.BytesIO(html.encode("utf-8")), filename=f"transcript-{channel.name}.html")
         await transcript_ch.send(embed=embed, file=file2)
+
+    # Dọn cache open ticket
+    if user_id:
+        _unregister_ticket(user_id)
+
+    # Dọn completed_key để tránh document MongoDB phình to
+    channel_id = channel.id
+    data = load_data()
+    completed_key = f"completed_{channel_id}"
+    if completed_key in data:
+        del data[completed_key]
+        save_data(data)
 
     await channel.delete()
 
@@ -384,6 +410,7 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
             else f"<@&{get_cfg_support_role()}>"
         )
         await channel.send(f"{ping_target} | {interaction.user.mention}", embed=embed, view=TicketButtons())
+        _register_ticket(interaction.user.id, channel.id)
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
 
         await send_log(
@@ -438,6 +465,7 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
             ping_str = f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
+        _register_ticket(interaction.user.id, channel.id)
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
     except Exception as e:
         try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`")

@@ -29,8 +29,11 @@ GROQ_SYSTEM = (
 )
 
 AI_HISTORY_LIMIT = 10
-_ai_chat_history: dict = {}   # user_id → list of {"role": ..., "content": ...}
+DANGEROUS_ACTIONS = {"mod_ban", "mod_kick", "mod_mute"}  # Lệnh cần confirm trước khi chạy
+_ai_chat_history: dict = {}   # user_id → {"messages": [...], "last_used": float timestamp}
+AI_HISTORY_TTL = 7200  # 2 giờ — dọn history không hoạt động
 _pending_actions: dict = {}   # user_id → {"action": ..., "params": ..., "missing": [...], "ctx_channel": int}
+_pending_confirm: dict = {}   # user_id → action dict chờ xác nhận nguy hiểm
 
 # System prompt để AI kiểm tra thiếu thông tin & hỏi lại
 AI_CLARIFY_SYSTEM = """Bạn là AI kiểm tra xem một yêu cầu Discord có đủ thông tin để thực thi không.
@@ -125,6 +128,42 @@ QUY TẮC:
 - confirm_msg: mô tả ngắn gọn hành động bằng tiếng Việt
 
 Format: {"action": "...", "params": {...}, "confirm_msg": "..."}"""
+
+
+
+# ─────────────────────────────────────────────
+# CONFIRM VIEW — cho lệnh nguy hiểm
+# ─────────────────────────────────────────────
+class AIConfirmView(discord.ui.View):
+    """Yêu cầu admin xác nhận trước khi chạy lệnh nguy hiểm (ban/kick/mute)."""
+    def __init__(self, ctx, action: dict):
+        super().__init__(timeout=30)
+        self.ctx    = ctx
+        self.action = action
+
+    @discord.ui.button(label="✅ Xác nhận", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.ctx.author.id:
+            return await interaction.response.send_message("❌ Chỉ người ra lệnh mới xác nhận được.", ephemeral=True)
+        self.stop()
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content="⚙️ Đang thực thi...", view=self)
+        result = await _run_action(self.ctx, self.action)
+        await interaction.followup.send(result)
+
+    @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.ctx.author.id:
+            return await interaction.response.send_message("❌ Chỉ người ra lệnh mới huỷ được.", ephemeral=True)
+        self.stop()
+        await interaction.response.edit_message(content="🚫 Đã huỷ.", view=None)
+
+    async def on_timeout(self):
+        try:
+            await self.message.edit(content="⏰ Hết thời gian xác nhận — đã huỷ.", view=None)
+        except Exception:
+            pass
 
 
 async def _call_groq_exec(prompt: str) -> dict:
@@ -396,11 +435,21 @@ async def _call_groq(user_id: int, user_message: str) -> str:
     if not GROQ_API_KEY:
         return "❌ Chưa cài `GROQ_API_KEY` trong biến môi trường."
 
-    history = _ai_chat_history.setdefault(user_id, [])
+    import time as _time
+    now = _time.time()
+
+    # Dọn TTL — xóa history cũ hơn AI_HISTORY_TTL
+    stale = [uid for uid, v in _ai_chat_history.items() if now - v.get("last_used", 0) > AI_HISTORY_TTL]
+    for uid in stale:
+        del _ai_chat_history[uid]
+
+    entry = _ai_chat_history.setdefault(user_id, {"messages": [], "last_used": now})
+    history = entry["messages"]
     history.append({"role": "user", "content": user_message})
     if len(history) > AI_HISTORY_LIMIT * 2:
-        _ai_chat_history[user_id] = history[-(AI_HISTORY_LIMIT * 2):]
-        history = _ai_chat_history[user_id]
+        entry["messages"] = history[-(AI_HISTORY_LIMIT * 2):]
+        history = entry["messages"]
+    entry["last_used"] = now
 
     messages = [{"role": "system", "content": GROQ_SYSTEM}] + history
     last_err = "Unknown error"
@@ -425,7 +474,8 @@ async def _call_groq(user_id: int, user_message: str) -> str:
                         continue
                     data  = await resp.json()
                     reply = data["choices"][0]["message"]["content"]
-            _ai_chat_history[user_id].append({"role": "assistant", "content": reply})
+            _ai_chat_history[user_id]["messages"].append({"role": "assistant", "content": reply})
+            _ai_chat_history[user_id]["last_used"] = _time.time()
             return reply
         except Exception as e:
             last_err = str(e)
@@ -468,140 +518,6 @@ class AICog(commands.Cog):
             await ctx.reply("✅ Đã xoá lịch sử chat AI của bạn.", delete_after=10)
         else:
             await ctx.reply("ℹ️ Bạn chưa có lịch sử chat AI.", delete_after=10)
-
-    @commands.command(name="ai")
-    async def ai_cmd(self, ctx, *, prompt: str = None):
-        if not prompt:
-            if ctx.author.id not in ADMIN_IDS:
-                return
-            embed = discord.Embed(
-                title="🤖 Hướng dẫn dùng AI", color=0x5865F2,
-                description=(
-                    "**`.ai <câu hỏi/yêu cầu>`** — Chat với AI hoặc điều khiển bot\n\n"
-                    "💬 **Chat thường:**\n"
-                    "› `.ai nitro là gì?`\n"
-                    "› `.ai hôm nay có gì hot không`\n\n"
-                    "🔧 **Điều khiển bot** *(Admin)*:\n"
-                    "› `.ai đóng ticket này`\n"
-                    "› `.ai cộng 50k cho @user`\n"
-                    "› `.ai ban @user lý do spam`\n\n"
-                    "📋 **Lệnh đặc biệt:**\n"
-                    "› `.ai tomtat [n]` — Tóm tắt `n` tin nhắn gần nhất\n"
-                    "› `.ai dich <ngôn ngữ> <văn bản>` — Dịch văn bản\n"
-                    "› `.ai phantich @user` — Phân tích phong cách chat\n"
-                    "› `.ai reset` — Xoá lịch sử hội thoại\n\n"
-                    "💡 AI nhớ tối đa **10 tin nhắn** gần nhất."
-                )
-            )
-            return await ctx.reply(embed=embed)
-
-        parts = prompt.strip().split()
-        sub   = parts[0].lower()
-
-        if sub == "reset":
-            if ctx.author.id in _ai_chat_history:
-                del _ai_chat_history[ctx.author.id]
-            return await ctx.reply("✅ Đã xoá lịch sử chat AI của bạn.", delete_after=10)
-
-        if sub == "tomtat":
-            limit = 30
-            if len(parts) > 1 and parts[1].isdigit():
-                limit = max(5, min(int(parts[1]), 100))
-            async with ctx.typing():
-                msgs = [m async for m in ctx.channel.history(limit=limit + 1) if not m.author.bot and m.id != ctx.message.id]
-                msgs.reverse()
-                if not msgs: return await ctx.reply("❌ Không có tin nhắn nào để tóm tắt.")
-                chat_log = "\n".join(f"{_uname_plain(m.author)}: {m.content}" for m in msgs if m.content)[:4000]
-                task  = f"Tóm tắt ngắn gọn nội dung cuộc trò chuyện sau trong kênh Discord (bằng tiếng Việt, tối đa 300 từ):\n\n{chat_log}"
-                reply = await _call_groq(ctx.author.id, task)
-            embed = discord.Embed(title=f"📋 Tóm tắt {len(msgs)} tin nhắn gần nhất", description=reply, color=0x5865F2, timestamp=datetime.now(timezone.utc))
-            embed.set_footer(text=f"Yêu cầu bởi {_uname_plain(ctx.author)}")
-            return await ctx.reply(embed=embed)
-
-        if sub == "dich":
-            if len(parts) < 3:
-                return await ctx.reply("❌ Dùng: `.ai dich <ngôn ngữ> <văn bản>`")
-            lang  = parts[1]
-            text  = " ".join(parts[2:])
-            async with ctx.typing():
-                task  = f"Dịch đoạn văn bản sau sang {lang}, chỉ trả về bản dịch, không giải thích:\n\n{text}"
-                reply = await _call_groq(ctx.author.id, task)
-            embed = discord.Embed(title=f"🌐 Dịch sang {lang}", color=0x5865F2, timestamp=datetime.now(timezone.utc))
-            embed.add_field(name="📝 Gốc",    value=text[:500],  inline=False)
-            embed.add_field(name="✅ Dịch",   value=reply[:500], inline=False)
-            embed.set_footer(text=f"Yêu cầu bởi {_uname_plain(ctx.author)}")
-            return await ctx.reply(embed=embed)
-
-        if sub == "phantich":
-            target = ctx.message.mentions[0] if ctx.message.mentions else ctx.author
-            async with ctx.typing():
-                msgs = [m async for m in ctx.channel.history(limit=50) if m.author.id == target.id and m.content and m.id != ctx.message.id]
-                if len(msgs) < 3:
-                    return await ctx.reply(f"❌ Cần ít nhất 3 tin nhắn của {target.display_name} để phân tích.")
-                msgs.reverse()
-                chat_log = "\n".join(f"{_uname_plain(m.author)}: {m.content}" for m in msgs)[:4000]
-                task  = f"Hãy phân tích phong cách chat của người dùng '{_uname_plain(target)}' dựa trên các tin nhắn sau (bằng tiếng Việt, súc tích):\n\n{chat_log}"
-                reply = await _call_groq(ctx.author.id, task)
-            embed = discord.Embed(title=f"🔍 Phân Tích Chat — {target.display_name}", description=reply, color=0x9B59B6, timestamp=datetime.now(timezone.utc))
-            embed.set_thumbnail(url=target.display_avatar.url)
-            embed.set_footer(text=f"Yêu cầu bởi {_uname_plain(ctx.author)}")
-            return await ctx.reply(embed=embed)
-
-        # ── Chỉ ADMIN ──
-        if ctx.author.id not in ADMIN_IDS:
-            return
-
-        async with ctx.typing():
-            action = await _call_groq_exec(prompt)
-
-        act = action.get("action", "unknown")
-
-        if act == "unknown":
-            # AI không nhận ra lệnh → chat thường
-            async with ctx.typing():
-                reply = await _call_groq(ctx.author.id, prompt)
-            if len(reply) <= 2000:
-                return await ctx.reply(reply)
-            for chunk in [reply[i:i+1990] for i in range(0, len(reply), 1990)]:
-                await ctx.channel.send(chunk)
-            return
-
-        # Kiểm tra params đủ chưa
-        async with ctx.typing():
-            clarify = await _call_groq_clarify(act, action.get("params", {}))
-
-        if clarify.get("status") == "need_info":
-            # Lưu trạng thái chờ
-            _pending_actions[ctx.author.id] = {
-                "action":      act,
-                "params":      action.get("params", {}),
-                "missing":     clarify.get("missing", []),
-                "ctx_channel": ctx.channel.id,
-                "original":    prompt,
-            }
-            embed = discord.Embed(
-                title="🤖 AI cần thêm thông tin",
-                description=f"**Yêu cầu:** {prompt}\n\n❓ {clarify.get('question', 'Vui lòng cung cấp thêm thông tin.')}",
-                color=0xF0A500,
-                timestamp=datetime.now(timezone.utc),
-            )
-            embed.set_footer(text="Trả lời trực tiếp vào đây (không cần gõ .ai)")
-            return await ctx.reply(embed=embed)
-
-        # Đủ thông tin → thực thi luôn
-        action["params"] = clarify.get("params", action.get("params", {}))
-        confirm = action.get("confirm_msg", "")
-        embed = discord.Embed(
-            title="🤖 AI → Bot",
-            description=f"**Yêu cầu:** {prompt}\n**Thực hiện:** {confirm}",
-            color=0x5865F2,
-            timestamp=datetime.now(timezone.utc),
-        )
-        embed.set_footer(text=f"Bởi {_uname_plain(ctx.author)}")
-        await ctx.reply(embed=embed)
-        async with ctx.typing():
-            result = await _run_action(ctx, action)
-        return await ctx.send(result)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -651,8 +567,23 @@ class AICog(commands.Cog):
             embed.set_footer(text="Trả lời trực tiếp vào đây (không cần gõ .ai)")
             return await message.reply(embed=embed)
 
-        # Đủ rồi → thực thi
+        # Đủ rồi → kiểm tra nguy hiểm trước khi thực thi
         action["params"] = clarify.get("params", params)
+        ctx = await self.bot.get_context(message)
+
+        if action.get("action") in DANGEROUS_ACTIONS:
+            confirm_msg = action.get("confirm_msg", "Thực hiện hành động này")
+            embed = discord.Embed(
+                title="⚠️ Xác nhận lệnh nguy hiểm",
+                description=f"**Yêu cầu:** {pending['original']}\n**Thực hiện:** {confirm_msg}\n\n⏰ Tự động huỷ sau 30 giây.",
+                color=0xED4245,
+                timestamp=datetime.now(timezone.utc),
+            )
+            embed.set_footer(text=f"Bởi {_uname_plain(message.author)}")
+            view = AIConfirmView(ctx, action)
+            view.message = await message.reply(embed=embed, view=view)
+            return
+
         embed = discord.Embed(
             title="🤖 AI → Bot",
             description=f"**Yêu cầu:** {pending['original']}\n**Thực hiện:** Đang xử lý...",
@@ -662,24 +593,11 @@ class AICog(commands.Cog):
         embed.set_footer(text=f"Bởi {_uname_plain(message.author)}")
         await message.reply(embed=embed)
 
-        # Tạo fake ctx từ message gốc
-        ctx = await self.bot.get_context(message)
         async with message.channel.typing():
             result = await _run_action(ctx, action)
         await message.channel.send(result)
 
     # ── SLASH COMMANDS ──
-    @discord.app_commands.command(name="ai", description="Chat với AI Groq")
-    @discord.app_commands.describe(prompt="Câu hỏi hoặc yêu cầu của bạn")
-    async def slash_ai(self, interaction: discord.Interaction, prompt: str):
-        await interaction.response.defer()
-        reply = await _call_groq(interaction.user.id, prompt)
-        if len(reply) <= 2000:
-            await interaction.followup.send(reply)
-        else:
-            for chunk in [reply[i:i+1990] for i in range(0, len(reply), 1990)]:
-                await interaction.followup.send(chunk)
-
     @discord.app_commands.command(name="aireset", description="Xoá toàn bộ lịch sử AI (admin)")
     async def slash_aireset(self, interaction: discord.Interaction):
         if interaction.user.id not in ADMIN_IDS:

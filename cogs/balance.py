@@ -58,7 +58,7 @@ async def handle_balance_message(message: discord.Message):
         bal["history"].append({"type": "-", "raw": raw, "fee": 0, "net": raw, "user": str(message.author), "time": now_str})
         bal["history"] = bal["history"][-100:]
         save_balance_data(bal)
-        color = 0xED4245 if bal["current"] >= 0 else 0x9B59B6
+        color = 0xED4245 if bal["current"] < 0 else 0x9B59B6
         embed = discord.Embed(title="💸  Chi Tiền", color=color, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="💵  Số tiền chi",   value=f"**{fmt_vnd(raw)}**",                                                                          inline=True)
         embed.add_field(name="🏦  Số dư còn lại", value=f"**{fmt_vnd(bal['current'])}**" + (" ⚠️" if bal["current"] < 0 else ""), inline=True)

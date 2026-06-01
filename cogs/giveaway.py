@@ -11,7 +11,7 @@ import discord
 from cogs.logger import send_log
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import View, Button, Modal, TextInput
+from discord.ui import View, Button, Modal, TextInput, Select
 
 from core.data import (
     ADMIN_IDS, load_giveaways_data, save_giveaways_data,
@@ -79,7 +79,7 @@ async def end_giveaway(message_id, channel, winners_count, prize, host_id):
         from cogs.logger import send_log as _sl
         bot_ref = channel.guild._state._get_client()
         import asyncio as _asyncio
-        _asyncio.get_event_loop().create_task(_sl(bot_ref, "GIVEAWAY", f"Kết thúc GW — {prize}",
+        _asyncio.create_task(_sl(bot_ref, "GIVEAWAY", f"Kết thúc GW — {prize}",
             fields=[("Winner", winner_mentions, True), ("Host", f"<@{host_id}>", True), ("Kênh", channel.mention, True)]))
     except Exception:
         pass
@@ -103,15 +103,6 @@ async def end_giveaway(message_id, channel, winners_count, prize, host_id):
         if gw.get("send_invite", False):
             await _check_winner_invites(channel, winner_ids, prize)
 
-
-async def giveaway_timer(channel_id: int, message_id: int, winners_count: int, seconds: int):
-    await asyncio.sleep(seconds)
-    gw = active_giveaways.get(message_id)
-    if not gw or gw.get("ended"):
-        return
-    channel = discord.utils.get(__import__("discord").utils.find(lambda g: g.get_channel(channel_id), []), id=channel_id) if False else None
-    # Lấy channel qua bot instance được truyền vào qua Cog
-    # Sẽ được gọi từ GiveawayCog._giveaway_timer thay thế
 
 
 async def _check_winner_invites(channel, winner_ids, prize):
@@ -429,7 +420,12 @@ class GiveawayCog(commands.Cog):
         if target.startswith("<@") and target.endswith(">"):
             uid_str = target[2:-1].lstrip("!")
             if uid_str.isdigit():
-                member = ctx.guild.get_member(int(uid_str)) or await ctx.guild.fetch_member(int(uid_str)).catch(None)
+                member = ctx.guild.get_member(int(uid_str))
+                if not member:
+                    try:
+                        member = await ctx.guild.fetch_member(int(uid_str))
+                    except Exception:
+                        member = None
         # Thử user ID thuần
         if not member and target.isdigit():
             try:

@@ -101,9 +101,8 @@ async def on_ready():
         try:
             with open("CHANGELOG.md", "r", encoding="utf-8") as f:
                 content = f.read()
-            import re
             # Lấy block entry mới nhất (từ ## đầu đến ## tiếp theo)
-            blocks = re.split(r"\n(?=## \[)", content)
+            blocks = _re.split(r"\n(?=## \[)", content)
             latest = next((b for b in blocks if b.strip().startswith("##")), "")
 
             if latest:

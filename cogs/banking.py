@@ -162,11 +162,13 @@ class CassoWebhookServer:
             await self._runner.cleanup()
 
     async def handle(self, request: web.Request) -> web.Response:
-        if CASSO_SECRET:
-            token = request.headers.get("Secure-Token", "")
-            if token != CASSO_SECRET:
-                log.warning("[BANKING] ⚠️ Webhook nhận request sai secret token")
-                return web.Response(status=401, text="Unauthorized")
+        if not CASSO_SECRET:
+            log.warning("[BANKING] ⚠️ CASSO_SECRET chưa cài — từ chối mọi webhook request")
+            return web.Response(status=503, text="Webhook disabled: CASSO_SECRET not configured")
+        token = request.headers.get("Secure-Token", "")
+        if token != CASSO_SECRET:
+            log.warning("[BANKING] ⚠️ Webhook nhận request sai secret token")
+            return web.Response(status=401, text="Unauthorized")
         try:
             payload = await request.json()
         except Exception:

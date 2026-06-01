@@ -1756,21 +1756,6 @@ class AdminCog(commands.Cog):
                      "`/close` `/done` `/addnote`", False),
                 ]
             },
-
-            "ai": {
-                "emoji": "🤖", "title": "AI Chat",
-                "fields": [
-                    ("💬 Lệnh",
-                     "`.ai <câu hỏi>` — Hỏi AI\n"
-                     "`.ai tomtat` — Tóm tắt đoạn hội thoại\n"
-                     "`.ai dich` — Dịch văn bản\n"
-                     "`.ai phantich` — Phân tích nội dung\n"
-                     "`.aireset` — Reset lịch sử chat với AI\n"
-                     "`.mychat` — Xem lịch sử chat của bạn", False),
-                    ("🔷 Slash commands",
-                     "`/ai` `/aireset` `/mychat`", False),
-                ]
-            },
             "invite": {
                 "emoji": "📨", "title": "Invite",
                 "fields": [
@@ -1892,7 +1877,6 @@ class AdminCog(commands.Cog):
         ALIASES = {
             "ticket": "ticket", "vé": "ticket",
 
-            "ai": "ai",
             "invite": "invite", "inv": "invite",
             "dichvu": "dichvu", "dịch vụ": "dichvu", "dv": "dichvu", "sv": "dichvu",
             "giveaway": "giveaway", "gw": "giveaway",
@@ -1905,7 +1889,7 @@ class AdminCog(commands.Cog):
         if topic:
             key = ALIASES.get(topic.lower().strip())
             if not key:
-                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "ai", "invite", "dichvu", "giveaway", "mod", "banking", "log", "admin"])
+                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "invite", "dichvu", "giveaway", "mod", "banking", "log", "admin"])
                 return await ctx.reply(f"❌ Không tìm thấy mục `{topic}`.\nCác mục hợp lệ: {topics_list}")
             t = TOPICS[key]
             embed = discord.Embed(
@@ -1926,7 +1910,6 @@ class AdminCog(commands.Cog):
             timestamp=datetime.now(timezone.utc)
         )
         embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke`", inline=True)
-        embed.add_field(name="🤖 AI",        value="`.ai` `.aireset` `.mychat`\n`/ai` `/aireset`", inline=True)
         embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gpick`", inline=True)

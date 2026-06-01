@@ -170,8 +170,10 @@ async def _flush_to_mongo():
 # HIGH-LEVEL API
 # ══════════════════════════════════════════
 def load_data() -> dict:
+    """Trả về shallow copy của cache để tránh các cog mutate trực tiếp.
+    Dùng save_data() để ghi lại sau khi thay đổi."""
     if _data_cache is not None:
-        return _data_cache
+        return dict(_data_cache)
     return _default_data()
 
 def save_data(data: dict):
