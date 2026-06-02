@@ -13,6 +13,8 @@ Thay đổi:
 
 import re
 import asyncio
+import logging
+log = logging.getLogger(__name__)
 import hashlib
 from datetime import datetime, timezone, timedelta
 
@@ -242,7 +244,8 @@ class ModCog(commands.Cog):
         try:
             await member.send(embed=discord.Embed(title="🔨 Bạn đã bị ban",
                 description=f"**Server:** {ctx.guild.name}\n**Lý do:** {reason}", color=0xED4245))
-        except: pass
+        except Exception:
+            pass
 
     @app_commands.command(name="ban", description="Ban thành viên khỏi server")
     @app_commands.describe(member="Thành viên", reason="Lý do ban")
@@ -339,7 +342,8 @@ class ModCog(commands.Cog):
             await member.send(embed=discord.Embed(title="⏱️ Bạn đã bị ban tạm thời",
                 description=f"**Server:** {ctx.guild.name}\n**Thời gian:** {_fmt_duration(td)}\n**Lý do:** {reason}",
                 color=0xE67E22))
-        except: pass
+        except Exception:
+            pass
 
         # Tự động unban sau thời gian
         async def _auto_unban(guild=ctx.guild, uid=member.id, delay=td.total_seconds()):
@@ -409,7 +413,8 @@ class ModCog(commands.Cog):
         try:
             await member.send(embed=discord.Embed(title="👢 Bạn đã bị kick",
                 description=f"**Server:** {ctx.guild.name}\n**Lý do:** {reason}", color=0xFEE75C))
-        except: pass
+        except Exception:
+            pass
 
     @app_commands.command(name="kick", description="Kick thành viên khỏi server")
     @app_commands.describe(member="Thành viên", reason="Lý do kick")
@@ -461,7 +466,8 @@ class ModCog(commands.Cog):
             await member.send(embed=discord.Embed(title="🔇 Bạn đã bị timeout",
                 description=f"**Server:** {ctx.guild.name}\n**Thời gian:** {_fmt_duration(td)}\n**Lý do:** {reason}",
                 color=0x9B59B6))
-        except: pass
+        except Exception:
+            pass
 
     @app_commands.command(name="timeout", description="Timeout thành viên (Discord native, tự hết hạn)")
     @app_commands.describe(member="Thành viên", duration="Thời gian: 10m, 1h, 2d (tối đa 28d)", reason="Lý do")
@@ -584,7 +590,8 @@ class ModCog(commands.Cog):
 
         try:
             await ctx.message.delete()
-        except: pass
+        except Exception:
+            pass
 
         if member:
             # Lọc theo member — cần fetch nhiều hơn rồi lọc
@@ -652,10 +659,12 @@ class ModCog(commands.Cog):
             except Exception: pass
         elif action == "kick":
             try: await member.kick(reason=f"Auto-kick: {count} warns")
-            except: pass
+            except Exception as _e:
+                log.debug(f"[SILENT] {_e}")
         elif action == "ban":
             try: await member.ban(reason=f"Auto-ban: {count} warns", delete_message_days=0)
-            except: pass
+            except Exception as _e:
+                log.debug(f"[SILENT] {_e}")
 
     @commands.command(name="warn", aliases=["w"])
     async def warn_cmd(self, ctx, member: discord.Member = None, *, reason: str = "Không có lý do"):
@@ -695,7 +704,8 @@ class ModCog(commands.Cog):
             await member.send(embed=discord.Embed(title="⚠️ Bạn đã bị cảnh cáo",
                 description=f"**Server:** {ctx.guild.name}\n**Lý do:** {reason}\n**Tổng warn:** {count}",
                 color=0xFEE75C))
-        except: pass
+        except Exception:
+            pass
         asyncio.create_task(self._apply_warn_action(ctx.guild, member, count))
 
     @app_commands.command(name="warn", description="Cảnh cáo thành viên")
@@ -1081,7 +1091,8 @@ class ModCog(commands.Cog):
         if reason:
             try:
                 await message.delete()
-            except: pass
+            except Exception:
+                pass
             try:
                 warn_embed = discord.Embed(
                     title="🛡️ Auto-Mod",
@@ -1092,7 +1103,8 @@ class ModCog(commands.Cog):
                 notif = await message.channel.send(embed=warn_embed)
                 await asyncio.sleep(5)
                 await notif.delete()
-            except: pass
+            except Exception:
+                pass
             if am.get("log_violations"):
                 await send_log(self.bot, "INFO", f"Auto-Mod — {message.author}",
                     fields=[("👤 User",    message.author.mention,          True),
@@ -1105,11 +1117,13 @@ class ModCog(commands.Cog):
         # 5. Anti-spam text
         if am.get("anti_spam") and _check_spam(message.author.id):
             try: await message.delete()
-            except: pass
+            except Exception:
+                pass
             try:
                 await message.channel.send(
                     f"🚫 {message.author.mention} bạn đang gửi tin nhắn quá nhanh!", delete_after=5)
-            except: pass
+            except Exception:
+                pass
             if am.get("log_violations"):
                 await send_log(self.bot, "INFO", f"Anti-Spam Text — {message.author}",
                     fields=[("👤", message.author.mention, True), ("📌", message.channel.mention, True)],
@@ -1120,7 +1134,8 @@ class ModCog(commands.Cog):
         if am.get("anti_image_spam") and (message.attachments or message.stickers):
             if _check_image_spam(message.author.id, message):
                 try: await message.delete()
-                except: pass
+                except Exception:
+                    pass
                 try:
                     notif = await message.channel.send(
                         embed=discord.Embed(
@@ -1135,7 +1150,8 @@ class ModCog(commands.Cog):
                     )
                     await asyncio.sleep(6)
                     await notif.delete()
-                except: pass
+                except Exception as _e:
+                    log.debug(f"[SILENT] {_e}")
                 # Tự động timeout 5 phút
                 try:
                     if isinstance(message.author, discord.Member):
@@ -1143,7 +1159,8 @@ class ModCog(commands.Cog):
                             datetime.now(timezone.utc) + timedelta(minutes=5),
                             reason="Auto-Mod: spam ảnh/sticker"
                         )
-                except: pass
+                except Exception as _e:
+                    log.debug(f"[SILENT] {_e}")
                 if am.get("log_violations"):
                     await send_log(self.bot, "INFO", f"Anti-Spam Ảnh — {message.author}",
                         fields=[

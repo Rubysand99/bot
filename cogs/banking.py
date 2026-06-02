@@ -69,14 +69,47 @@ def save_banking_cfg(cfg: dict):
     save_data(data)
 
 def get_bank_txs() -> list:
-    return load_data().get("banking_txs", [])
+    """Đọc từ in-memory cache banking_txs (được load lúc khởi động)."""
+    from core.data import _data_cache
+    if _data_cache is not None:
+        return list(_data_cache.get("_banking_txs", []))
+    return []
 
 def append_bank_tx(tx: dict):
-    data = load_data()
-    data.setdefault("banking_txs", [])
-    data["banking_txs"].append(tx)
-    data["banking_txs"] = data["banking_txs"][-MAX_TX_HISTORY:]
-    save_data(data)
+    """Lưu giao dịch vào collection MongoDB riêng, không ghi vào document chính."""
+    from core.data import _get_mongo, _data_cache
+    import asyncio
+    # Cập nhật in-memory cache
+    if _data_cache is not None:
+        cache = _data_cache.setdefault("_banking_txs", [])
+        cache.append(tx)
+        _data_cache["_banking_txs"] = cache[-MAX_TX_HISTORY:]
+
+    async def _save():
+        try:
+            _, __, col = _get_mongo_banktxs()
+            await col.insert_one({**tx})
+            # Giữ tối đa MAX_TX_HISTORY bản ghi — xoá cũ nhất nếu vượt
+            count = await col.count_documents({})
+            if count > MAX_TX_HISTORY:
+                oldest = await col.find({}, {"_id": 1}).sort("_id", 1).limit(count - MAX_TX_HISTORY).to_list(None)
+                ids = [d["_id"] for d in oldest]
+                await col.delete_many({"_id": {"$in": ids}})
+        except Exception as e:
+            log.error(f"[BANKING] ❌ Lỗi lưu banking_tx vào MongoDB: {e}")
+
+    try:
+        asyncio.get_running_loop().create_task(_save())
+    except RuntimeError:
+        pass
+
+def _get_mongo_banktxs():
+    """Trả về collection banking_txs riêng."""
+    from core.data import _get_mongo, _mongo_client
+    _get_mongo()  # đảm bảo đã init
+    from core.data import _mongo_client as mc
+    col = mc["tuytam_bot"]["banking_txs"]
+    return None, None, col
 
 def fmt_vnd(amount: int) -> str:
     sign = "-" if amount < 0 else ""

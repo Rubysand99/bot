@@ -6,6 +6,8 @@ import os
 import io
 import asyncio
 _ticket_create_lock = asyncio.Lock()
+import logging
+log = logging.getLogger(__name__)
 from datetime import datetime, timezone
 
 import discord
@@ -79,7 +81,8 @@ async def read_counter_from_channel(bot) -> int:
         async for msg in channel.history(limit=1):
             if msg.content.startswith("ticket:"):
                 return int(msg.content.split(":")[1])
-    except: pass
+    except Exception as _e:
+        log.debug(f"[SILENT] {_e}")
     return 0
 
 async def write_counter_to_channel(bot, number: int):
@@ -90,7 +93,8 @@ async def write_counter_to_channel(bot, number: int):
     try:
         await channel.purge(limit=5)
         await channel.send(f"ticket:{number:03d}")
-    except: pass
+    except Exception:
+        pass
 
 async def get_next_ticket_number(bot) -> str:
     async with _ticket_create_lock:
@@ -244,7 +248,8 @@ async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
     if channel.topic:
         parts = channel.topic.split("|")
         try: user_id = int(parts[0]) if parts[0].isdigit() else None
-        except: pass
+        except Exception as _e:
+            log.debug(f"[SILENT] {_e}")
         mc_name    = parts[1] if len(parts) > 1 and parts[1] not in ("service","") else None
         trade_type = parts[2] if len(parts) > 2 else None
         item_key   = parts[3] if len(parts) > 3 else None
@@ -349,7 +354,8 @@ class ItemSelect(Select):
             await create_order_ticket(interaction, trade_type=self.trade_type, item_key=item_key, item_label=item_label)
         except Exception as e:
             try: await interaction.followup.send(f"❌ Lỗi: `{e}`")
-            except: pass
+            except Exception:
+                pass
 
 class ItemSelectView(View):
     def __init__(self, trade_type: str):
@@ -367,7 +373,8 @@ class ServiceSelect(Select):
             await create_service_ticket(interaction, self.values[0])
         except Exception as e:
             try: await interaction.followup.send(f"❌ Lỗi: `{e}`")
-            except: pass
+            except Exception:
+                pass
 
 class ServiceSelectView(View):
     def __init__(self):
@@ -427,7 +434,8 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
 
     except Exception as e:
         try: await interaction.followup.send(f"❌ Có lỗi xảy ra khi tạo ticket: `{e}`")
-        except: pass
+        except Exception:
+            pass
 
 async def create_service_ticket(interaction: discord.Interaction, service_key: str):
     guild = interaction.guild
@@ -469,7 +477,8 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
     except Exception as e:
         try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`")
-        except: pass
+        except Exception:
+            pass
 
 # ══════════════════════════════════════════
 # PANEL VIEW
@@ -484,7 +493,8 @@ class TicketPanel(View):
             await interaction.response.send_message("🛒 **Bạn muốn mua loại nào?**", view=ItemSelectView(trade_type="sell"), ephemeral=True)
         except Exception as e:
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
-            except: pass
+            except Exception:
+                pass
 
     @discord.ui.button(label="Bán hàng", emoji="💸", style=discord.ButtonStyle.blurple, custom_id="panel_sell")
     async def sell(self, interaction: discord.Interaction, button: Button):
@@ -492,7 +502,8 @@ class TicketPanel(View):
             await interaction.response.send_message("💸 **Bạn muốn bán loại nào?**", view=ItemSelectView(trade_type="buy"), ephemeral=True)
         except Exception as e:
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
-            except: pass
+            except Exception:
+                pass
 
     @discord.ui.button(label="Dịch Vụ", emoji="🎮", style=discord.ButtonStyle.grey, custom_id="panel_service")
     async def service(self, interaction: discord.Interaction, button: Button):
@@ -500,7 +511,8 @@ class TicketPanel(View):
             await interaction.response.send_message("🎮 **Bạn cần dịch vụ nào?**", view=ServiceSelectView(), ephemeral=True)
         except Exception as e:
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
-            except: pass
+            except Exception:
+                pass
 
 # ══════════════════════════════════════════
 # TICKET BUTTONS
@@ -635,7 +647,8 @@ class TicketCog(commands.Cog):
     async def orderbase_cmd(self, ctx):
         if ctx.author.id not in ADMIN_IDS: return
         try: await ctx.message.delete()
-        except: pass
+        except Exception:
+            pass
         embed = discord.Embed(
             title="# Nhận Làm Base Village Trong <:emoji_17:1483684359415267449>",
             description="**Giá Chỉ Từ 20-35m Tùy Theo Base Mà Ae Chọn**\n\n**Cam Kết:**\n<:emoji_17:1483684359415267449> •Tự Tìm Chỗ Xây Base Lun Nhé Ae\n<:emoji_17:1483684359415267449> •Base Có Chỗ Nhân Giống Village\n<:emoji_17:1483684359415267449> •Bảo Hành 8h Kể Từ Khi Mua\n<:emoji_17:1483684359415267449> •Nếu Bị Raid Trong Giờ Bảo Hành Sẽ Đc Hoàn Tiền\n\n**Nên Ae Yên Tâm Mà Thuê** ✅\n\n**Ai Muốn Có 1 Base Village Tuyệt Vời Mà Còn Rẻ Thì Hãy Tạo <#1464415587378659564> Để Có 1 Base Xịn Nhé**",

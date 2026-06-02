@@ -29,16 +29,21 @@ PROOF_CHANNEL_ID      = 1469647159560241318
 TRANSCRIPT_CHANNEL_ID = 1464430574524436679
 FEEDBACK_CHANNEL_ID   = 1502464872686948403
 CHANGELOG_CHANNEL_ID  = 1486967511839801414
+MAX_TX_HISTORY_CACHE  = 500  # Số banking_tx giữ trong memory cache
 
 # FIX: ADMIN_IDS đọc từ env, fallback hardcode
 def _load_admin_ids() -> list[int]:
     env = os.getenv("ADMIN_IDS", "")
     if env:
         try:
-            return [int(x.strip()) for x in env.split(",") if x.strip()]
+            ids = [int(x.strip()) for x in env.split(",") if x.strip()]
+            if ids:
+                return ids
         except ValueError:
-            log.warning("[DATA] ⚠️ ADMIN_IDS env không hợp lệ, dùng hardcode")
-    return [846332174734983219, 1464961078042689588]
+            pass
+    log.critical("[DATA] ❌ ADMIN_IDS env chưa cài hoặc không hợp lệ! "
+                 "Bot sẽ không có admin nào. Hãy set biến môi trường ADMIN_IDS.")
+    return []
 
 ADMIN_IDS = _load_admin_ids()
 QR_FILE   = "/data/qr_code.png" if os.path.isdir("/data") else "./qr_code.png"
@@ -53,14 +58,16 @@ if not MONGO_URI:
 _mongo_client = None
 _col_data     = None
 _col_giveaway = None
+_col_banktxs  = None
 
 def _get_mongo():
-    global _mongo_client, _col_data, _col_giveaway
+    global _mongo_client, _col_data, _col_giveaway, _col_banktxs
     if _mongo_client is None:
         _mongo_client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=5000)
         _db           = _mongo_client["tuytam_bot"]
         _col_data     = _db["bot_data"]
         _col_giveaway = _db["giveaways"]
+        _col_banktxs  = _db["banking_txs"]
     return _col_data, _col_giveaway
 
 # ══════════════════════════════════════════
@@ -96,8 +103,7 @@ def _default_data() -> dict:
         "banking_cfg": {
             "log_channel":    0,       # Channel ID nhận embed mỗi GD ngân hàng
             "notify_channel": 0,       # (tuỳ chọn) kênh ping riêng
-        },
-        "banking_txs":      [],        # List giao dịch từ Casso webhook (max 500)
+        }
     }
 
 # ══════════════════════════════════════════
@@ -198,6 +204,15 @@ async def init_data_cache():
         _data_cache["_giveaways"] = giveaways
     except Exception as e:
         log.warning(f"[DATA] ⚠️ Không load được giveaways: {e}")
+
+    # Load banking_txs từ collection riêng vào cache
+    try:
+        col_bank = _mongo_client["tuytam_bot"]["banking_txs"]
+        txs = await col_bank.find({}, {"_id": 0}).sort("_id", -1).limit(MAX_TX_HISTORY_CACHE).to_list(None)
+        _data_cache["_banking_txs"] = list(reversed(txs))
+    except Exception as e:
+        log.warning(f"[DATA] ⚠️ Không load được banking_txs: {e}")
+        _data_cache.setdefault("_banking_txs", [])
         _data_cache.setdefault("_giveaways", {})
     print(f"[DATA] ✅ Đã kết nối MongoDB — ticket#{_data_cache.get('ticket', 0):03d}")
 

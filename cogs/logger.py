@@ -227,7 +227,8 @@ class LoggerCog(commands.Cog):
 
 
         # ── Banking (Casso): giao dịch ngân hàng 24h qua ──
-        banking_txs = load_data().get("banking_txs", [])
+        from core.data import _data_cache
+        banking_txs = list((_data_cache or {}).get("_banking_txs", []))
         bank_in_24h = bank_out_24h = bank_tx_24h = 0
         for tx in banking_txs:
             try:
