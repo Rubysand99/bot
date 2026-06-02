@@ -12,8 +12,6 @@ cogs/
   admin.py      # .st (settings UI), .help, .backfill, .mkchannel, mod cmds, slash admin
   ticket.py     # Panel → ticket kênh, .done/.sellerchannel/.sch, QR seller
   giveaway.py   # /giveaway /gend /greroll /gwlist, _gw_tasks dict
-  balance.py    # Cộng/trừ/set/reset balance (VNĐ)
-  banking.py    # Casso webhook, txlog, stats
   ai_chat.py    # Groq AI, bỏ qua msg bắt đầu . hoặc !
   invite.py     # Tracking invite, leaderboard, .resetinvite
   mod.py        # Ban/Kick/Mute/Unmute/Warn/Automod

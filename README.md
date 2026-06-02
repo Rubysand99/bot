@@ -1,6 +1,6 @@
 # 🤖 Rudeus Bot — TuyTam Store
 
-Bot Discord quản lý server, ticket, balance, giveaway cho TuyTam Store.
+Bot Discord quản lý server, ticket, giveaway cho TuyTam Store.
 
 ## ✨ Tính năng chính
 
@@ -9,10 +9,6 @@ Bot Discord quản lý server, ticket, balance, giveaway cho TuyTam Store.
 - Đóng ticket, xuất transcript HTML
 - Thống kê đơn hàng theo tháng
 
-### 💰 Hệ thống Balance
-- Cộng/trừ/set số dư trong kênh balance chỉ định
-- Phí 5% khi nạp, lịch sử giao dịch 100 bản ghi gần nhất
-- Thống kê tổng nạp/chi/phí, danh sách buyer
 
 ### 🔨 Moderation
 - Ban/Kick/Mute/Warn với DM thông báo
@@ -38,7 +34,6 @@ Bot Discord quản lý server, ticket, balance, giveaway cho TuyTam Store.
 |------|-------|
 | `.help` | Xem tất cả lệnh |
 | `.panel` | Tạo panel ticket |
-| `.balance` | Xem số dư quỹ |
 | `.sv` | Xem bảng giá dịch vụ |
 | `.ai <câu hỏi>` | Chat với AI |
 | `.st` | Cài đặt bot |
@@ -71,8 +66,6 @@ tuytam_bot/
 ├── cogs/
 │   ├── admin.py
 │   ├── ai_chat.py
-│   ├── balance.py
-│   ├── banking.py
 │   ├── giveaway.py
 │   ├── invite.py
 │   ├── logger.py

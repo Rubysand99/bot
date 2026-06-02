@@ -13,7 +13,6 @@ cogs/
   admin.py      # .st (settings UI), .help, .backfill, .mkchannel, mod cmds, slash admin
   ticket.py     # Panel → ticket kênh, .done/.sellerchannel/.sch, QR seller
   giveaway.py   # /giveaway /gend /greroll /gwlist, _gw_tasks dict
-  balance.py    # Cộng/trừ/set/reset balance (VNĐ)
   point.py      # .gencode .redeem .addpoint .setpoint .pointall .shop .exchange
   minigame.py   # Bầu Cua nhiều người (.bc open/cancel), Búa Kéo Bao (.bkb)
   ai_chat.py    # Groq AI, bỏ qua msg bắt đầu . hoặc !

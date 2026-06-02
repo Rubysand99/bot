@@ -46,7 +46,6 @@ Với mỗi action, kiểm tra params còn thiếu:
 channel_create cần: name (tên kênh), type (text/voice), privacy (public/private)
 role_create cần: name (tên role)
 role_add/role_remove cần: role_name, user_id
-balance_add/sub/set cần: user_id, amount
 mod_ban/kick/warn cần: user_id, reason
 mod_mute cần: user_id, duration, reason
 purge cần: amount
@@ -105,10 +104,6 @@ NHÓM ROLE:
 - "thêm role [tên] cho @user" → {"action": "role_add", "params": {"role_name": "tên", "user_id": "MENTIONED_USER"}}
 - "xoá role [tên] của @user" → {"action": "role_remove", "params": {"role_name": "tên", "user_id": "MENTIONED_USER"}}
 
-NHÓM BALANCE:
-- "cộng/thêm [số]k/đ cho @user" → {"action": "balance_add", "params": {"user_id": "MENTIONED_USER", "amount": số}}
-- "trừ [số]k/đ của @user" → {"action": "balance_sub", "params": {"user_id": "MENTIONED_USER", "amount": số}}
-- "set/đặt balance @user [số]" → {"action": "balance_set", "params": {"user_id": "MENTIONED_USER", "amount": số}}
 
 NHÓM MOD:
 - "ban @user [lý do]" → {"action": "mod_ban", "params": {"user_id": "MENTIONED_USER", "reason": "lý do"}}
@@ -390,17 +385,6 @@ async def _run_action(ctx, action: dict) -> str:
         except Exception as e:
             return f"❌ Lỗi purge: {e}"
 
-    # ── BALANCE ──
-    if act in ("balance_add", "balance_sub", "balance_set"):
-        user = resolve_user()
-        if not user:
-            return "❌ Cần mention @user."
-        amount = int(params.get("amount", 0))
-        cmd_map = {"balance_add": "addbal", "balance_sub": "subbal", "balance_set": "setbal"}
-        ok, err = await invoke_cmd(cmd_map[act], user.id, amount)
-        if not ok: return err
-        labels = {"balance_add": "Cộng", "balance_sub": "Trừ", "balance_set": "Set"}
-        return f"✅ {labels[act]} {amount:,} VNĐ cho {user.display_name}."
 
     # ── POINT ──
     # ── MOD ──

@@ -28,7 +28,6 @@ LEGIT_CHANNEL_ID      = 0
 PROOF_CHANNEL_ID      = 1469647159560241318
 TRANSCRIPT_CHANNEL_ID = 1464430574524436679
 FEEDBACK_CHANNEL_ID   = 1502464872686948403
-BALANCE_CHANNEL_ID    = 1464999465294369035
 CHANGELOG_CHANNEL_ID  = 1486967511839801414
 
 # FIX: ADMIN_IDS đọc từ env, fallback hardcode
@@ -78,7 +77,6 @@ def _default_data() -> dict:
         "cfg_support_role":    SUPPORT_ROLE_ID,
         "cfg_seller_role":     SELLER_ROLE_ID,
         "cfg_counter_channel": COUNTER_CHANNEL_ID,
-        "cfg_balance_channel": BALANCE_CHANNEL_ID,
         "cfg_legit_channel":   LEGIT_CHANNEL_ID,
         "cfg_proof_channel":   PROOF_CHANNEL_ID,
         "cfg_ai_channel":      0,
@@ -86,10 +84,6 @@ def _default_data() -> dict:
         "dangerous_cmd_overrides": {},
         "sellers":          [],
         "sv_prices":        [],
-        "balance": {
-            "current": 0, "total_in": 0, "total_fee": 0,
-            "total_out": 0, "tx_count": 0, "history": []
-        },
         "buy_roles":        [],
         "user_total_spent": {},
         "ratings":          [],
@@ -216,7 +210,6 @@ def get_cfg_category()        -> int: return load_data().get("cfg_ticket_categor
 def get_cfg_support_role()    -> int: return load_data().get("cfg_support_role", SUPPORT_ROLE_ID)
 def get_cfg_seller_role()     -> int: return load_data().get("cfg_seller_role", SELLER_ROLE_ID)
 def get_cfg_counter_channel() -> int: return load_data().get("cfg_counter_channel", COUNTER_CHANNEL_ID)
-def get_cfg_balance_channel() -> int: return load_data().get("cfg_balance_channel", BALANCE_CHANNEL_ID)
 def get_cfg_legit_channel()   -> int: return load_data().get("cfg_legit_channel", LEGIT_CHANNEL_ID)
 def get_cfg_proof_channel()   -> int: return load_data().get("cfg_proof_channel", PROOF_CHANNEL_ID)
 def get_cfg_ai_channel()      -> int: return load_data().get("cfg_ai_channel", 0)
@@ -237,17 +230,8 @@ def save_sellers(sellers: list):
     data = load_data(); data["sellers"] = sellers; save_data(data)
 
 # ══════════════════════════════════════════
-# BALANCE
 # ══════════════════════════════════════════
-def get_balance_data() -> dict:
-    data = load_data()
-    if "balance" not in data:
-        data["balance"] = {"current":0,"total_in":0,"total_fee":0,"total_out":0,"tx_count":0,"history":[]}
-        save_data(data)
-    return data["balance"]
 
-def save_balance_data(bal: dict):
-    data = load_data(); data["balance"] = bal; save_data(data)
 
 # ══════════════════════════════════════════
 # TICKET COUNTER — FIX: async + Lock

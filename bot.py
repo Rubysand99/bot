@@ -33,7 +33,6 @@ bot     = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 COGS = [
     "cogs.logger",
     "cogs.ticket",
-    "cogs.balance",
     "cogs.ai_chat",
     "cogs.invite",
     "cogs.giveaway",
@@ -169,12 +168,6 @@ async def on_message(message: discord.Message):
     from cogs.ai_chat import handle_ai_message
     await handle_ai_message(message)
 
-    # Balance channel
-    from core.data import get_cfg_balance_channel
-    from cogs.balance import handle_balance_message
-    bal_ch = get_cfg_balance_channel()
-    if bal_ch and message.channel.id == bal_ch:
-        await handle_balance_message(message)
 
     # Legit & Vouch
     await _handle_legit(message)

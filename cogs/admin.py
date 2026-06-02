@@ -14,7 +14,7 @@ from discord.ui import View, Button, Modal, TextInput, Select
 from cogs.logger import send_log
 from core.data import (
     ADMIN_IDS, get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
-    get_cfg_counter_channel, get_cfg_balance_channel, get_cfg_legit_channel,
+    get_cfg_counter_channel, get_cfg_legit_channel,
     get_cfg_proof_channel, get_cfg_ai_channel, get_cfg_font, set_cfg_font,
     save_cfg, load_data, save_data, get_buy_roles, save_buy_roles,
     get_user_total_spent, add_user_spent, get_price_sections, save_price_sections,
@@ -276,8 +276,6 @@ class SettingsView(View):
     async def support(self,  i, b): await self._send_role_select(i, "cfg_support_role",   "Support Role")
     @discord.ui.button(label="🏪 Seller Role",      style=discord.ButtonStyle.secondary, row=1)
     async def seller(self,   i, b): await self._send_role_select(i, "cfg_seller_role",    "Seller Role")
-    @discord.ui.button(label="💰 Balance Channel",  style=discord.ButtonStyle.secondary, row=1)
-    async def balance(self,  i, b): await self._send_channel_select(i, "cfg_balance_channel", "Balance Channel",  "Kênh nhận +/- tiền tự động")
     @discord.ui.button(label="✅ Legit Channel",    style=discord.ButtonStyle.secondary, row=1)
     async def legit(self,    i, b): await self._send_channel_select(i, "cfg_legit_channel",   "Legit Channel",    "Kênh nhận +1legit tự động")
     @discord.ui.button(label="📸 Proof Channel",   style=discord.ButtonStyle.secondary, row=2)
@@ -1559,7 +1557,6 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🎫 Ticket Category",    value=ch("cfg_ticket_category", 0),                              inline=True)
         embed.add_field(name="🛡️ Support Role",      value=ro("cfg_support_role",    1474572393908404305), inline=True)
         embed.add_field(name="🏪 Seller Role",       value=ro("cfg_seller_role",     0),                   inline=True)
-        embed.add_field(name="💰 Balance Channel",   value=ch("cfg_balance_channel", 1464999465294369035), inline=True)
         embed.add_field(name="✅ Legit Channel",     value=ch("cfg_legit_channel",   0),                   inline=True)
         embed.add_field(name="📸 Proof Channel",    value=ch("cfg_proof_channel",   1469647159560241318), inline=True)
         embed.add_field(name="🤖 AI Channel",        value=ch("cfg_ai_channel",      0),                   inline=True)
@@ -1824,7 +1821,7 @@ class AdminCog(commands.Cog):
                      "`/xoa` `/slowmode` `/lock` `/unlock`", False),
                 ]
             },
-            "banking": {
+                        "banking": {
                 "emoji": "🏦", "title": "Banking",
                 "fields": [
                     ("📋 Lệnh",
