@@ -407,7 +407,6 @@ class LoggerCog(commands.Cog):
             "role":     "log-role",
             "ai":       "log-ai",
             "admin":    "log-admin",
-            "balance":  "log-balance",
             "general":  "log-general",
         }
 
