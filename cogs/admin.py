@@ -552,8 +552,8 @@ class AdminCog(commands.Cog):
     @app_commands.describe(amount="Số tin nhắn cần xoá (1-500)")
     async def slash_clear(self, interaction: discord.Interaction, amount: int):
         if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
-        if amount < 1 or amount > 500: return await interaction.response.send_message("❌ Số lượng phải từ 1 đến 500.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        if amount < 1 or amount > 500: return await interaction.response.send_message("❌ Số lượng phải từ 1 đến 500.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         deleted = await interaction.channel.purge(limit=amount)
         await interaction.followup.send(f"🗑️ Đã xoá **{len(deleted)}** tin nhắn.")
@@ -562,24 +562,24 @@ class AdminCog(commands.Cog):
     @app_commands.describe(member="Thành viên", role="Role cần thêm")
     async def slash_addrole(self, interaction: discord.Interaction, member: discord.Member, role: discord.Role):
         if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
-        if role >= interaction.guild.me.top_role: return await interaction.response.send_message("❌ Role này cao hơn role của bot.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        if role >= interaction.guild.me.top_role: return await interaction.response.send_message("❌ Role này cao hơn role của bot.", ephemeral=True)
         await member.add_roles(role, reason=f"Bởi {interaction.user}")
         embed = discord.Embed(title="✅ Đã Thêm Role", color=0x57F287)
         embed.add_field(name="👤 Thành viên", value=member.mention, inline=True)
         embed.add_field(name="🏷️ Role",       value=role.mention,   inline=True)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="removerole", description="Xoá role của thành viên")
     @app_commands.describe(member="Thành viên", role="Role cần xoá")
     async def slash_removerole(self, interaction: discord.Interaction, member: discord.Member, role: discord.Role):
         if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         await member.remove_roles(role, reason=f"Bởi {interaction.user}")
         embed = discord.Embed(title="✅ Đã Xoá Role", color=0xFEE75C)
         embed.add_field(name="👤 Thành viên", value=member.mention, inline=True)
         embed.add_field(name="🏷️ Role",       value=role.mention,   inline=True)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="ping", description="Kiểm tra độ trễ bot")
     async def slash_ping(self, interaction: discord.Interaction):
@@ -587,7 +587,7 @@ class AdminCog(commands.Cog):
         color = 0x57F287 if lat < 100 else (0xFEE75C if lat < 200 else 0xED4245)
         status = "Tốt 🟢" if lat < 100 else ("Bình thường 🟡" if lat < 200 else "Chậm 🔴")
         embed = discord.Embed(title="🏓 Pong!", description=f"Độ trễ: **{lat}ms** — {status}", color=color)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="userinfo", description="Xem thông tin thành viên")
     @app_commands.describe(member="Thành viên (để trống = bản thân)")
@@ -601,7 +601,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📥 Vào server",value=f"<t:{int(m.joined_at.timestamp())}:D>" if m.joined_at else "N/A", inline=True)
         embed.add_field(name="🏷️ Roles",     value=" ".join(roles[-10:]) if roles else "Không có",            inline=False)
         embed.set_thumbnail(url=m.display_avatar.url)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="serverinfo", description="Xem thông tin server")
     async def slash_serverinfo(self, interaction: discord.Interaction):
@@ -614,7 +614,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="👥 Thành viên",value=f"👤 {g.member_count - bots}  🤖 {bots}",                 inline=True)
         embed.add_field(name="💬 Kênh",     value=f"📝 {len(g.text_channels)}  🔊 {len(g.voice_channels)}", inline=True)
         if g.icon: embed.set_thumbnail(url=g.icon.url)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="botinfo", description="Xem thông tin bot")
     async def slash_botinfo(self, interaction: discord.Interaction):
@@ -624,7 +624,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🌐 Servers",  value=f"**{len(self.bot.guilds)}**",            inline=True)
         embed.add_field(name="📋 Version",  value=f"`v{BOT_VERSION}`",                     inline=True)
         if self.bot.user.avatar: embed.set_thumbnail(url=self.bot.user.avatar.url)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ── Stock → Sold auto-move ──
     @commands.Cog.listener()

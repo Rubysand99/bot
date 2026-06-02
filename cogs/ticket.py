@@ -578,7 +578,7 @@ class TicketCog(commands.Cog):
 
         parts = ctx.channel.topic.split("|")
         try: user_id = int(parts[0]) if parts[0].isdigit() else None
-        except: user_id = None
+        except Exception: user_id = None
         if not user_id: return await ctx.reply("❌ Không đọc được thông tin buyer từ ticket.")
 
         trade_type = parts[2] if len(parts) > 2 else None
@@ -661,38 +661,38 @@ class TicketCog(commands.Cog):
     @discord.app_commands.command(name="close", description="Đóng ticket hiện tại")
     async def slash_close(self, interaction: discord.Interaction):
         if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền.")
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         if not (interaction.channel.topic and "|" in interaction.channel.topic):
-            return await interaction.response.send_message("❌ Đây không phải kênh ticket.")
-        await interaction.response.send_message("🔒 Đang đóng ticket...")
+            return await interaction.response.send_message("❌ Đây không phải kênh ticket.", ephemeral=True)
+        await interaction.response.send_message("🔒 Đang đóng ticket...", ephemeral=True)
         await _close_ticket(interaction.channel, self.bot, closer=interaction.user)
 
     @discord.app_commands.command(name="done", description="Hoàn thành đơn hàng trong ticket")
     @discord.app_commands.describe(amount="Số tiền giao dịch, vd: 50k, 1tr5, 200000")
     async def slash_done(self, interaction: discord.Interaction, amount: str):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin mới có quyền hoàn thành đơn.")
+            return await interaction.response.send_message("❌ Chỉ admin mới có quyền hoàn thành đơn.", ephemeral=True)
         if not (interaction.channel.topic and "|" in interaction.channel.topic):
-            return await interaction.response.send_message("❌ Đây không phải kênh ticket.")
+            return await interaction.response.send_message("❌ Đây không phải kênh ticket.", ephemeral=True)
         parsed = parse_amount(amount)
         if not parsed or parsed <= 0:
-            return await interaction.response.send_message(f"❌ Số tiền `{amount}` không hợp lệ!")
+            return await interaction.response.send_message(f"❌ Số tiền `{amount}` không hợp lệ!", ephemeral=True)
         parts = interaction.channel.topic.split("|")
         try: user_id = int(parts[0]) if parts[0].isdigit() else None
-        except: user_id = None
+        except Exception: user_id = None
         if not user_id:
-            return await interaction.response.send_message("❌ Không đọc được thông tin buyer.")
+            return await interaction.response.send_message("❌ Không đọc được thông tin buyer.", ephemeral=True)
         trade_type = parts[2] if len(parts) > 2 else None
         if trade_type not in ("sell", "buy"):
-            return await interaction.response.send_message("ℹ️ Ticket dịch vụ không tính đơn hàng.")
+            return await interaction.response.send_message("ℹ️ Ticket dịch vụ không tính đơn hàng.", ephemeral=True)
         buyer = interaction.guild.get_member(user_id)
         if not buyer:
-            return await interaction.response.send_message(f"❌ Không tìm thấy buyer (ID: `{user_id}`).")
+            return await interaction.response.send_message(f"❌ Không tìm thấy buyer (ID: `{user_id}`).", ephemeral=True)
         data = load_data()
         completed_key = f"completed_{interaction.channel.id}"
         if data.get(completed_key):
             total = get_user_total_spent(user_id)
-            return await interaction.response.send_message(f"⚠️ Đơn này đã hoàn thành rồi!\nTổng: **{fmt_amount(total)}**")
+            return await interaction.response.send_message(f"⚠️ Đơn này đã hoàn thành rồi!\nTổng: **{fmt_amount(total)}**", ephemeral=True)
         data[completed_key] = True
         save_data(data)
         new_total = add_user_spent(user_id, parsed)

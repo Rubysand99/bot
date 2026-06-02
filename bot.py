@@ -196,7 +196,8 @@ async def _handle_legit(message: discord.Message):
     try:
         await ch.edit(name=f"{base}-{new_num}", reason=f"+1 legit bởi {message.author}")
         await message.add_reaction("✅")
-    except: pass
+    except Exception:
+        pass
 
 async def _handle_vouch(message: discord.Message):
     from core.data import get_cfg_proof_channel
@@ -213,7 +214,8 @@ async def _handle_vouch(message: discord.Message):
     try:
         await ch.edit(name=f"{base}-{new_num}", reason=f"+1 vouch bởi {message.author}")
         await message.add_reaction("✅")
-    except: pass
+    except Exception:
+        pass
 
 
 
