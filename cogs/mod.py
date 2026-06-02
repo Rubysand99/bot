@@ -22,7 +22,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from core.data import ADMIN_IDS, load_data, save_data, _uname_plain
+from core.data import (
+    ADMIN_IDS, load_data, save_data, _uname_plain,
+    add_tempban, remove_tempban, get_active_tempbans,
+)
 from cogs.logger import send_log
 
 # ══════════════════════════════════════════
@@ -209,6 +212,44 @@ class ModCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def cog_load(self):
+        """Resume tất cả tempban còn hiệu lực từ MongoDB sau khi restart."""
+        import time as _time
+        active = get_active_tempbans()
+        now = _time.time()
+        resumed = 0
+        for uid_str, info in active.items():
+            uid = int(uid_str)
+            unban_at = info.get("unban_at", 0)
+            guild_id = info.get("guild_id")
+            delay = max(0.0, unban_at - now)
+
+            async def _resume_unban(uid=uid, guild_id=guild_id, delay=delay):
+                await asyncio.sleep(delay)
+                guild = self.bot.get_guild(guild_id)
+                if guild is None:
+                    try:
+                        guild = await self.bot.fetch_guild(guild_id)
+                    except Exception:
+                        remove_tempban(uid)
+                        return
+                try:
+                    user = await self.bot.fetch_user(uid)
+                    await guild.unban(user, reason="TempBan hết hạn — resume sau restart")
+                    await send_log(self.bot, "INFO", f"TempBan hết hạn — {user}",
+                        fields=[("👤", f"{user} (`{uid}`)", True), ("⏱️", "Resume sau restart", True)],
+                        color=0x57F287)
+                except Exception:
+                    pass
+                finally:
+                    remove_tempban(uid)
+
+            asyncio.create_task(_resume_unban())
+            resumed += 1
+
+        if resumed:
+            log.info(f"[TEMPBAN] ▶️  Resume {resumed} tempban(s) từ MongoDB")
+
     def _is_mod(self, member: discord.Member) -> bool:
         if member.id in ADMIN_IDS: return True
         if member.guild_permissions.administrator: return True
@@ -345,6 +386,11 @@ class ModCog(commands.Cog):
         except Exception:
             pass
 
+        # Persist vào MongoDB để resume sau restart
+        import time as _time
+        unban_at = _time.time() + td.total_seconds()
+        add_tempban(member.id, ctx.guild.id, unban_at, reason)
+
         # Tự động unban sau thời gian
         async def _auto_unban(guild=ctx.guild, uid=member.id, delay=td.total_seconds()):
             await asyncio.sleep(delay)
@@ -356,6 +402,8 @@ class ModCog(commands.Cog):
                     color=0x57F287)
             except Exception:
                 pass
+            finally:
+                remove_tempban(uid)
         asyncio.create_task(_auto_unban())
 
     @app_commands.command(name="tempban", description="Ban tạm thời, tự unban sau thời gian")
@@ -376,6 +424,11 @@ class ModCog(commands.Cog):
         embed.add_field(name="⏱️ Thời gian",  value=_fmt_duration(td), inline=True)
         embed.add_field(name="📝 Lý do",      value=reason,            inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        # Persist vào MongoDB để resume sau restart
+        import time as _time
+        unban_at = _time.time() + td.total_seconds()
+        add_tempban(member.id, interaction.guild.id, unban_at, reason)
+
         async def _auto_unban(guild=interaction.guild, uid=member.id, delay=td.total_seconds()):
             await asyncio.sleep(delay)
             try:
@@ -383,6 +436,8 @@ class ModCog(commands.Cog):
                 await guild.unban(user, reason="TempBan hết hạn")
             except Exception:
                 pass
+            finally:
+                remove_tempban(uid)
         asyncio.create_task(_auto_unban())
 
     # ══════════════════════════════════════

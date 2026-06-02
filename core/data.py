@@ -559,3 +559,51 @@ def set_ticket_type_role(ticket_key: str, group: str | None) -> None:
 def get_all_ticket_type_roles() -> dict:
     """Trả về toàn bộ map {ticket_key: group}."""
     return load_data().get("ticket_type_roles", {})
+
+# ══════════════════════════════════════════
+# TEMPBAN PERSISTENCE
+# Lưu {user_id: {guild_id, unban_at (unix timestamp), reason}} vào MongoDB
+# ══════════════════════════════════════════
+def get_active_tempbans() -> dict:
+    """Trả về dict {str(user_id): {guild_id, unban_at, reason}}."""
+    return dict(load_data().get("_tempbans", {}))
+
+def add_tempban(user_id: int, guild_id: int, unban_at: float, reason: str = "") -> None:
+    """Lưu tempban vào MongoDB."""
+    data = load_data()
+    data.setdefault("_tempbans", {})
+    data["_tempbans"][str(user_id)] = {
+        "guild_id": guild_id,
+        "unban_at": unban_at,
+        "reason": reason,
+    }
+    save_data(data)
+
+def remove_tempban(user_id: int) -> None:
+    """Xoá tempban khỏi MongoDB (sau khi unban xong)."""
+    data = load_data()
+    data.setdefault("_tempbans", {})
+    data["_tempbans"].pop(str(user_id), None)
+    save_data(data)
+
+# ══════════════════════════════════════════
+# INVITE STATE PERSISTENCE
+# Lưu _member_inviters và _pending_joins vào MongoDB
+# ══════════════════════════════════════════
+def get_member_inviters() -> dict:
+    """Trả về {str(member_id): {inviter_id, guild_id}}."""
+    return dict(load_data().get("_member_inviters", {}))
+
+def save_member_inviters(inviters: dict) -> None:
+    data = load_data()
+    data["_member_inviters"] = {str(k): v for k, v in inviters.items()}
+    save_data(data)
+
+def get_pending_joins() -> dict:
+    """Trả về {str(member_id): {inviter_id, guild_id, joined_at}}."""
+    return dict(load_data().get("_pending_joins", {}))
+
+def save_pending_joins(pending: dict) -> None:
+    data = load_data()
+    data["_pending_joins"] = {str(k): v for k, v in pending.items()}
+    save_data(data)

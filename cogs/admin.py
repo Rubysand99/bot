@@ -1,9 +1,7 @@
 """
 cogs/admin.py — AdminCog: commands, slash commands, event handlers.
 UI Views/Modals nằm trong cogs/admin_views.py.
-"""
-"""
-cogs/admin.py — Settings, setup server, sv/giaset, lệnh mod, slash mod commands.
+v4.0.0 — 2026-05-30
 """
 
 import re as _re
@@ -28,120 +26,16 @@ from core.data import (
     BUILDER_BASE_ROLE_ID,
 )
 
-BOT_VERSION = "3.9.4"
-BOT_UPDATED = "2026-05-23"
-
-# ══════════════════════════════════════════
-# FONT UTILS
-# ══════════════════════════════════════════
-_FONT_MAPS = {
-    "bold":           {**{chr(ord('A')+i): chr(0x1D400+i) for i in range(26)}, **{chr(ord('a')+i): chr(0x1D41A+i) for i in range(26)}, **{str(i): chr(0x1D7CE+i) for i in range(10)}},
-    "bold_italic":    {**{chr(ord('A')+i): chr(0x1D468+i) for i in range(26)}, **{chr(ord('a')+i): chr(0x1D482+i) for i in range(26)}},
-    "sans_bold":      {**{chr(ord('A')+i): chr(0x1D5D4+i) for i in range(26)}, **{chr(ord('a')+i): chr(0x1D5EE+i) for i in range(26)}, **{str(i): chr(0x1D7EC+i) for i in range(10)}},
-    "script":         {**{chr(ord('A')+i): chr(0x1D4D0+i) for i in range(26)}, **{chr(ord('a')+i): chr(0x1D4EA+i) for i in range(26)}},
-    "double":         {**{chr(ord('A')+i): chr(0x1D538+i) for i in range(26)}, **{chr(ord('a')+i): chr(0x1D552+i) for i in range(26)}},
-    "math_bold_serif":{**{chr(ord('A')+i): chr(0x1D400+i) for i in range(26)}, **{chr(ord('a')+i): chr(0x1D41A+i) for i in range(26)}, **{str(i): chr(0x1D7CE+i) for i in range(10)}},
-    "normal": {},
-}
-_FONT_MAPS["script"].update({"B":"ℬ","E":"ℰ","F":"ℱ","H":"ℋ","I":"ℐ","L":"ℒ","M":"ℳ","R":"ℛ","e":"ℯ","g":"ℊ","o":"ℴ"})
-_FONT_MAPS["double"].update({"C":"ℂ","H":"ℍ","N":"ℕ","P":"ℙ","Q":"ℚ","R":"ℝ","Z":"ℤ"})
-
-FONT_LABELS = {
-    "normal": "Thường (giữ nguyên)",
-    "bold": "𝐁𝐨𝐥𝐝  —  𝐐𝐮𝐢𝐞𝐭 𝐒𝐜𝐡𝐞𝐦𝐚𝐭𝐢𝐜𝐬",
-    "bold_italic": "𝑩𝒐𝒍𝒅 𝑰𝒕𝒂𝒍𝒊𝒄  —  𝑸𝒖𝒊𝒆𝒕 𝑺𝒄𝒉𝒆𝒎𝒂𝒕𝒊𝒄𝒔",
-    "sans_bold": "𝗦𝗮𝗻𝘀 𝗕𝗼𝗹𝗱  —  𝗤𝘂𝗶𝗲𝘁 𝗦𝗰𝗵𝗲𝗺𝗮𝘁𝗶𝗰𝘀",
-    "script": "𝒮𝒸𝓇𝒾𝓅𝓉  —  𝒬𝓊𝒾ℯ𝓉 𝒮𝒸𝒽ℯ𝓂𝒶𝓉𝒾𝒸𝓈",
-    "double": "𝔻𝕠𝕦𝕓𝕝𝕖  —  ℚ𝕦𝕚𝕖𝕥 𝕊𝕔𝕙𝕖𝕞𝕒𝕥𝕚𝕔𝕤",
-    "math_bold_serif": "𝐌𝐚𝐭𝐡 𝐁𝐨𝐥𝐝 𝐒𝐞𝐫𝐢𝐟  —  𝐐𝐮𝐢𝐞𝐭 𝐒𝐜𝐡𝐞𝐦𝐚𝐭𝐢𝐜𝐬",
-}
-
-def _apply_font(text: str, font: str) -> str:
-    if font == "normal" or font not in _FONT_MAPS: return text
-    return "".join(_FONT_MAPS[font].get(c, c) for c in text)
-
-def _strip_unicode_font(text: str) -> str:
-    ranges = [(0x1D400,0x1D419,ord('A')),(0x1D41A,0x1D433,ord('a')),(0x1D468,0x1D481,ord('A')),(0x1D482,0x1D49B,ord('a')),(0x1D4D0,0x1D4E9,ord('A')),(0x1D4EA,0x1D503,ord('a')),(0x1D538,0x1D551,ord('A')),(0x1D552,0x1D56B,ord('a')),(0x1D5D4,0x1D5ED,ord('A')),(0x1D5EE,0x1D607,ord('a')),(0x1D7CE,0x1D7D7,ord('0')),(0x1D7EC,0x1D7F5,ord('0'))]
-    special = {'ℬ':'B','ℰ':'E','ℱ':'F','ℋ':'H','ℐ':'I','ℒ':'L','ℳ':'M','ℛ':'R','ℯ':'e','ℊ':'g','ℴ':'o','ℂ':'C','ℍ':'H','ℕ':'N','ℙ':'P','ℚ':'Q','ℝ':'R','ℤ':'Z','\u212F':'e','\u210A':'g','\u2134':'o','\u212C':'B','\u2130':'E','\u2131':'F','\u210B':'H','\u2110':'I','\u2112':'L','\u2133':'M','\u211B':'R'}
-    result = []
-    for c in text:
-        if c in special: result.append(special[c]); continue
-        cp, converted = ord(c), False
-        for start, end, base in ranges:
-            if start <= cp <= end: result.append(chr(base + (cp - start))); converted = True; break
-        if not converted: result.append(c)
-    return ''.join(result)
-
-def _detect_channel_parts(name: str):
-    icon_m = _re.match(r'^((?:[\U00010000-\U0010FFFF]|[\u2600-\u26FF]|[\u2700-\u27BF]|[\U0001F300-\U0001F9FF])+)', name)
-    icon   = icon_m.group(1) if icon_m else ""
-    rest   = name[len(icon):].lstrip()
-    sep    = ""
-    sep_m  = _re.match(r'^([•·\-–—|])\s*', rest)
-    if sep_m: sep = sep_m.group(1); rest = rest[sep_m.end():]
-    rest_plain = _strip_unicode_font(rest)
-    num_m = _re.search(r'[\-–](\d+)$', rest_plain)
-    trailing_num, base_text = "", rest_plain
-    if num_m: trailing_num = num_m.group(0); base_text = rest_plain[:num_m.start()]
-    return {"icon": icon, "sep": sep, "base_text": base_text, "trailing_num": trailing_num, "original": name}
-
-def _rebuild_name(parts: dict, new_base: str, font: str = "normal") -> str:
-    styled = _apply_font(new_base, font)
-    result = parts["icon"]
-    if parts["icon"] and parts["sep"]: result += parts["sep"]
-    return (result + styled + parts["trailing_num"]).strip()
-
-# ══════════════════════════════════════════
-# AUTO GIVE BUY ROLES
-# ══════════════════════════════════════════
-async def auto_give_buy_roles(guild: discord.Guild, member: discord.Member, total_spent: int):
-    buy_roles = get_buy_roles()
-    if not buy_roles: return None
-    target_cfg = None
-    for r in reversed(buy_roles):
-        min_a = r.get("min_amount", 0)
-        max_a = r.get("max_amount")
-        if total_spent >= min_a and (max_a is None or total_spent < max_a):
-            target_cfg = r; break
-    for cfg in buy_roles:
-        role = guild.get_role(cfg.get("role_id", 0))
-        if not role: continue
-        if target_cfg and cfg["role_id"] == target_cfg["role_id"]:
-            if role not in member.roles:
-                try: await member.add_roles(role, reason=f"Auto buyer role — {fmt_amount(total_spent)}")
-                except Exception as e: print(f"[BUY_ROLE] Lỗi give {role.name}: {e}")
-        else:
-            if role in member.roles:
-                try: await member.remove_roles(role, reason=f"Đổi buyer role — {fmt_amount(total_spent)}")
-                except Exception as e: print(f"[BUY_ROLE] Lỗi xoá {role.name}: {e}")
-    return target_cfg
-
-# ══════════════════════════════════════════
-# SV / GIASET
-# ══════════════════════════════════════════
-_DEFAULT_PRICE_SECTIONS = [
-    {"key":"steam","name":"🎮  Steam","content":"**Giá stock:**\n> - **Dota 2 Immortal: 10.000 VNĐ**\n> - **CS:GO Prime: 20.000 VNĐ**"},
-    {"key":"robux","name":"🟡  Roblox Robux","content":"**Giá stock:**\n> - **400 Robux: 25.000 VNĐ**\n> - **800 Robux: 45.000 VNĐ**"},
-    {"key":"nitro","name":"💎  Discord Nitro","content":"**Giá stock:**\n> - **1 tháng: 35.000 VNĐ**\n> - **3 tháng: 90.000 VNĐ**"},
-    {"key":"chatgpt","name":"🤖  ChatGPT Plus","content":"**Giá stock:**\n> - **1 tháng: 150.000 VNĐ**"},
-    {"key":"capcut","name":"✂️  CapCut Pro","content":"**Giá stock:**\n> - **1 tháng: 15.000 VNĐ**"},
-    {"key":"canva","name":"🎨  Canva","content":"**Giá stock:**\n> - **2 tháng pro: 15.000 VNĐ**"},
-    {"key":"youtube","name":"▶️  YouTube Premium","content":"**Giá stock:**\n> - **15.000 VNĐ/Tháng**"},
-]
-
-def build_sv_embed() -> discord.Embed:
-    sections = get_price_sections()
-    if not sections: sections = _DEFAULT_PRICE_SECTIONS
-    embed = discord.Embed(title="🏪  TuyTam Store — Bảng Giá", color=0x5865F2, timestamp=datetime.now(timezone.utc))
-    for sec in sections:
-        embed.add_field(name=sec["name"], value=sec["content"], inline=False)
-    embed.set_footer(text="TuyTam Store  •  .sv để xem lại bất cứ lúc nào")
-    return embed
 from cogs.admin_views import (
     SettingsView, SetupMainView, PriceManagerView, BuyRolesView,
     build_sv_embed, _build_ticket_roles_embed, FONT_LABELS,
+    _apply_font, _detect_channel_parts, _rebuild_name,
+    auto_give_buy_roles, _DEFAULT_PRICE_SECTIONS,
     TicketRoleConfigView,
 )
+
+BOT_VERSION = "4.0.0"
+BOT_UPDATED = "2026-05-30"
 
 class AdminCog(commands.Cog):
     def __init__(self, bot):

@@ -1,6 +1,7 @@
 """
 cogs/invite.py — Invite tracking: đếm invite, fake detect, leaderboard.
 Lệnh: .invite, .invitetop, .resetinvite
+v4.0.1 — persist _member_inviters và _pending_joins vào MongoDB
 """
 
 import asyncio
@@ -11,12 +12,18 @@ import discord
 from cogs.logger import send_log
 from discord.ext import commands
 
-from core.data import ADMIN_IDS, load_data, save_data, _uname, _uname_plain
+from core.data import (
+    ADMIN_IDS, load_data, save_data, _uname, _uname_plain,
+    get_member_inviters, save_member_inviters,
+    get_pending_joins, save_pending_joins,
+)
 
 
 _invite_cache: dict[int, dict[str, int]] = {}
-_pending_joins: dict[int, dict] = {}
-_member_inviters: dict[int, dict] = {}   # member_id → {inviter_id, guild_id} — lưu sau cửa sổ fake
+
+# In-memory mirrors — load từ MongoDB khi cog_load, sync mỗi khi thay đổi
+_pending_joins:   dict[int, dict] = {}
+_member_inviters: dict[int, dict] = {}
 
 
 def _get_invite_counts() -> dict:
@@ -56,6 +63,14 @@ async def cache_invites(guild: discord.Guild):
 class InviteCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    async def cog_load(self):
+        """Load invite state từ MongoDB vào in-memory khi bot khởi động."""
+        global _pending_joins, _member_inviters
+        raw_pending  = get_pending_joins()
+        raw_inviters = get_member_inviters()
+        _pending_joins   = {int(k): v for k, v in raw_pending.items()}
+        _member_inviters = {int(k): v for k, v in raw_inviters.items()}
 
     @commands.command(name="invite", aliases=["inv", "invites", "i"])
     async def invite_cmd(self, ctx, member: discord.Member = None):
@@ -124,7 +139,7 @@ class InviteCog(commands.Cog):
     }
 
     @commands.Cog.listener()
-    async def on_member_join(self, member: discord.Member):
+    async def on_member_join(self, member: discord.Guild):
         ch_id = self.WELCOME_GUILDS.get(member.guild.id)
         if ch_id:
             channel = member.guild.get_channel(ch_id)
@@ -150,6 +165,7 @@ class InviteCog(commands.Cog):
 
             if inviter_id and inviter_id != member.id:
                 _pending_joins[member.id] = {"inviter_id": inviter_id, "guild_id": member.guild.id, "joined_at": _time.time()}
+                save_pending_joins(_pending_joins)  # persist
                 _add_invite(inviter_id, "total", 1)
 
                 async def _check_fake():
@@ -159,9 +175,10 @@ class InviteCog(commands.Cog):
                         _add_invite(inviter_id, "fake", 1)
                         print(f"[INVITE] ⚠️ Fake invite: {member} invited by {inviter_id}")
                     else:
-                        # Thành viên ở lại → lưu để tính left sau này nếu rời
                         _member_inviters[member.id] = {"inviter_id": inviter_id, "guild_id": member.guild.id}
+                        save_member_inviters(_member_inviters)  # persist
                     _pending_joins.pop(member.id, None)
+                    save_pending_joins(_pending_joins)  # persist
                 asyncio.create_task(_check_fake())
 
         except (discord.Forbidden, discord.HTTPException):
@@ -170,14 +187,14 @@ class InviteCog(commands.Cog):
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         await cache_invites(member.guild)
-        # Nếu rời trong cửa sổ 10 phút → đang chờ check fake, không tính left
         if member.id in _pending_joins:
             _pending_joins.pop(member.id, None)
+            save_pending_joins(_pending_joins)  # persist
             return
-        # Đã qua cửa sổ fake → tính left cho inviter nếu còn lưu
         inv_info = _member_inviters.pop(member.id, None)
         if inv_info:
             _add_invite(inv_info["inviter_id"], "left", 1)
+            save_member_inviters(_member_inviters)  # persist
 
     # ── SLASH COMMANDS ──
     @discord.app_commands.command(name="invite", description="Xem thống kê invite của thành viên")

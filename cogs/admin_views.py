@@ -28,8 +28,8 @@ from core.data import (
     BUILDER_BASE_ROLE_ID,
 )
 
-BOT_VERSION = "3.9.4"
-BOT_UPDATED = "2026-05-23"
+BOT_VERSION = "4.0.0"
+BOT_UPDATED = "2026-05-30"
 
 # ══════════════════════════════════════════
 # FONT UTILS
