@@ -487,9 +487,13 @@ class GiveawayCog(commands.Cog):
 
             if gw.get("ended"):
                 winner_ids = gw.get("winner_ids", [])
-                winner_str = ", ".join(f"<@{uid}>" for uid in winner_ids) if winner_ids else "Không có"
+                def _resolve(uid):
+                    m = ctx.guild.get_member(uid)
+                    return _uname_plain(m) if m else str(uid)
+                winner_str = ", ".join(_resolve(uid) for uid in winner_ids) if winner_ids else "Không có"
+                gw_label = f"#{gw_id}" if gw_id != "?" else f"? (msg:{str(mid)[-6:]})"
                 ended.append(
-                    f"**GW #{gw_id}** — {prize}\n"
+                    f"**GW {gw_label}** — {prize}\n"
                     f"  🏆 Winner: {winner_str}  •  👥 {entries} người  •  {ch_mention}\n"
                     f"  🆔 msg: `{mid}`"
                 )
