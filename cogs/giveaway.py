@@ -615,6 +615,29 @@ class GiveawayCog(commands.Cog):
             _giveaway_timer_task(self.bot, found_gw["channel_id"], found_mid, found_gw["winners"], remaining)
         )
 
+        # Edit embed: xoá field Winner nếu có
+        try:
+            channel = await get_or_fetch_channel(self.bot, found_gw["channel_id"])
+            if channel:
+                msg = await channel.fetch_message(found_mid)
+                if msg.embeds:
+                    embed = msg.embeds[0].copy()
+                    new_fields = [f for f in embed.fields if "winner" not in f.name.lower() and "kết quả" not in f.name.lower()]
+                    embed.clear_fields()
+                    for f in new_fields:
+                        embed.add_field(name=f.name, value=f.value, inline=f.inline)
+                    # Cập nhật lại field Kết thúc theo end_time gốc
+                    for i, f in enumerate(embed.fields):
+                        if "kết thúc" in f.name.lower():
+                            embed.set_field_at(i, name=f.name, value=f"<t:{int(end_time)}:R>", inline=f.inline)
+                            break
+                    embed.color = 0xF1C40F
+                    view = GiveawayView(found_mid)
+                    await msg.edit(embed=embed, view=view)
+        except Exception as e:
+            await ctx.reply(f"⚠️ Reset data OK nhưng không edit được embed: `{e}`")
+            return
+
         h, r = divmod(remaining, 3600)
         m, s = divmod(r, 60)
         await ctx.reply(f"✅ Đã khôi phục **GW #{ref}**! Còn **{h}h {m}m {s}s** đến khi kết thúc.")
