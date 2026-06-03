@@ -501,9 +501,16 @@ class GiveawayCog(commands.Cog):
                     time_str = f"{h}h {m}m {s}s còn lại"
                 else:
                     time_str = "⏰ Sắp kết thúc"
+                picked = gw.get("picked_winner")
+                if picked:
+                    picked_member = ctx.guild.get_member(picked)
+                    picked_name = _uname_plain(picked_member) if picked_member else str(picked)
+                    picked_str = f"\n  👑 Đã chọn winner: **{picked_name}**"
+                else:
+                    picked_str = ""
                 running.append(
                     f"**GW #{gw_id}** — {prize}\n"
-                    f"  ⏰ {time_str}  •  🎊 {winners} winner  •  👥 {entries} người  •  {ch_mention}\n"
+                    f"  ⏰ {time_str}  •  🎊 {winners} winner  •  👥 {entries} người  •  {ch_mention}{picked_str}\n"
                     f"  🆔 msg: `{mid}`"
                 )
 
