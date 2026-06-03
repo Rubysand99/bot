@@ -536,6 +536,54 @@ class GiveawayCog(commands.Cog):
         view = GwStatusView(bot=self.bot)
         await ctx.reply(embed=embed, view=view)
 
+    @commands.command(name="gwpick")
+    async def gwpick(self, ctx, gw_id: str = None, user_id: str = None):
+        """Pick winner cụ thể và kết thúc giveaway ngay. Dùng: .gwpick <gw_id> <user_id>"""
+        if ctx.author.id not in ADMIN_IDS:
+            return
+        if not gw_id or not user_id:
+            return await ctx.reply("❌ Dùng: `.gwpick <gw_id> <user_id>`")
+        try:
+            ref = int(gw_id)
+        except ValueError:
+            return await ctx.reply("❌ GW ID không hợp lệ!")
+        try:
+            uid = int(user_id)
+        except ValueError:
+            return await ctx.reply("❌ User ID không hợp lệ!")
+
+        # Tìm giveaway theo gw_id (số thứ tự từ 1)
+        found_mid, found_gw = None, None
+        for mid, gw in active_giveaways.items():
+            if gw.get("gw_id") == ref:
+                found_mid, found_gw = mid, gw
+                break
+
+        if not found_gw:
+            return await ctx.reply(f"❌ Không tìm thấy giveaway **#{ref}**.")
+        if found_gw.get("ended"):
+            return await ctx.reply("❌ Giveaway này đã kết thúc rồi.")
+
+        entries = set(found_gw.get("entries", set()))
+        if uid not in entries:
+            return await ctx.reply(f"❌ Không tìm thấy <@{uid}> trong danh sách người tham gia giveaway **#{ref}**.")
+
+        # Huỷ timer
+        task = _gw_tasks.pop(found_mid, None)
+        if task and not task.done():
+            task.cancel()
+
+        channel = await get_or_fetch_channel(self.bot, found_gw["channel_id"])
+        if not channel:
+            return await ctx.reply("❌ Không tìm thấy kênh giveaway.")
+
+        found_gw["picked_winner"] = uid
+        found_gw["ended"] = True
+        await end_giveaway(found_mid, channel, found_gw["winners"], found_gw.get("prize", "phần thưởng"), found_gw.get("host", 0))
+        await ctx.reply(f"✅ Đã chọn <@{uid}> làm winner **GW #{ref}** và kết thúc!")
+        await send_log(ctx.bot, "GIVEAWAY_END", f"Pick GW #{ref} — {found_gw.get('prize','')}",
+            fields=[("Admin", ctx.author.mention, True), ("Winner", f"<@{uid}>", True)])
+
 
 class GwStatusView(View):
     """View đính kèm embed .gwstatus — cho phép kết thúc sớm hoặc xoá giveaway."""
