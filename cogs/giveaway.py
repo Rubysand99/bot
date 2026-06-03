@@ -538,7 +538,7 @@ class GiveawayCog(commands.Cog):
 
     @commands.command(name="gwpick")
     async def gwpick(self, ctx, gw_id: str = None, user_id: str = None):
-        """Pick winner cụ thể và kết thúc giveaway ngay. Dùng: .gwpick <gw_id> <user_id>"""
+        """Chọn winner trước, bot công bố khi hết giờ. Dùng: .gwpick <gw_id> <user_id>"""
         if ctx.author.id not in ADMIN_IDS:
             return
         if not gw_id or not user_id:
@@ -552,7 +552,6 @@ class GiveawayCog(commands.Cog):
         except ValueError:
             return await ctx.reply("❌ User ID không hợp lệ!")
 
-        # Tìm giveaway theo gw_id (số thứ tự từ 1)
         found_mid, found_gw = None, None
         for mid, gw in active_giveaways.items():
             if gw.get("gw_id") == ref:
@@ -568,21 +567,57 @@ class GiveawayCog(commands.Cog):
         if uid not in entries:
             return await ctx.reply(f"❌ Không tìm thấy <@{uid}> trong danh sách người tham gia giveaway **#{ref}**.")
 
-        # Huỷ timer
+        found_gw["picked_winner"] = uid
+        save_giveaways_data(active_giveaways)
+
+        await ctx.reply(f"✅ Đã chọn <@{uid}> làm winner **GW #{ref}**. Bot sẽ công bố khi hết giờ.")
+        await send_log(ctx.bot, "GIVEAWAY_END", f"Pick GW #{ref} — {found_gw.get('prize','')}",
+            fields=[("Admin", ctx.author.mention, True), ("Winner (chờ công bố)", f"<@{uid}>", True)])
+
+    @commands.command(name="gwreset")
+    async def gwreset(self, ctx, gw_id: str = None):
+        """Khôi phục giveaway bị kết thúc nhầm. Dùng: .gwreset <gw_id>"""
+        if ctx.author.id not in ADMIN_IDS:
+            return
+        if not gw_id:
+            return await ctx.reply("❌ Dùng: `.gwreset <gw_id>`")
+        try:
+            ref = int(gw_id)
+        except ValueError:
+            return await ctx.reply("❌ GW ID không hợp lệ!")
+
+        found_mid, found_gw = None, None
+        for mid, gw in active_giveaways.items():
+            if gw.get("gw_id") == ref:
+                found_mid, found_gw = mid, gw
+                break
+
+        if not found_gw:
+            return await ctx.reply(f"❌ Không tìm thấy giveaway **#{ref}**.")
+
+        end_time  = found_gw.get("end_time", 0)
+        now       = datetime.now(timezone.utc).timestamp()
+        remaining = int(end_time - now)
+
+        if remaining <= 0:
+            return await ctx.reply("❌ Giveaway này đã hết giờ rồi, không thể khôi phục.")
+
+        # Reset trạng thái
+        found_gw["ended"]         = False
+        found_gw["picked_winner"] = None
+        save_giveaways_data(active_giveaways)
+
+        # Khởi động lại timer
         task = _gw_tasks.pop(found_mid, None)
         if task and not task.done():
             task.cancel()
+        _gw_tasks[found_mid] = asyncio.create_task(
+            _giveaway_timer_task(self.bot, found_gw["channel_id"], found_mid, found_gw["winners"], remaining)
+        )
 
-        channel = await get_or_fetch_channel(self.bot, found_gw["channel_id"])
-        if not channel:
-            return await ctx.reply("❌ Không tìm thấy kênh giveaway.")
-
-        found_gw["picked_winner"] = uid
-        found_gw["ended"] = True
-        await end_giveaway(found_mid, channel, found_gw["winners"], found_gw.get("prize", "phần thưởng"), found_gw.get("host", 0))
-        await ctx.reply(f"✅ Đã chọn <@{uid}> làm winner **GW #{ref}** và kết thúc!")
-        await send_log(ctx.bot, "GIVEAWAY_END", f"Pick GW #{ref} — {found_gw.get('prize','')}",
-            fields=[("Admin", ctx.author.mention, True), ("Winner", f"<@{uid}>", True)])
+        h, r = divmod(remaining, 3600)
+        m, s = divmod(r, 60)
+        await ctx.reply(f"✅ Đã khôi phục **GW #{ref}**! Còn **{h}h {m}m {s}s** đến khi kết thúc.")
 
 
 class GwStatusView(View):
