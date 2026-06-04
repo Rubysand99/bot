@@ -204,6 +204,7 @@ async def init_data_cache():
         _data_cache["_giveaways"] = giveaways
     except Exception as e:
         log.warning(f"[DATA] ⚠️ Không load được giveaways: {e}")
+        _data_cache.setdefault("_giveaways", {})  # FIX: fallback đúng chỗ
 
     # Load banking_txs từ collection riêng vào cache
     try:
@@ -213,7 +214,6 @@ async def init_data_cache():
     except Exception as e:
         log.warning(f"[DATA] ⚠️ Không load được banking_txs: {e}")
         _data_cache.setdefault("_banking_txs", [])
-        _data_cache.setdefault("_giveaways", {})
     print(f"[DATA] ✅ Đã kết nối MongoDB — ticket#{_data_cache.get('ticket', 0):03d}")
 
 # ══════════════════════════════════════════
@@ -483,8 +483,10 @@ def _uname_plain(user) -> str:
 def parse_amount(raw: str) -> int | None:
     import re as _re
     raw = raw.strip().lower().replace(",", ".").replace(" ", "")
-    m = _re.match(r"^(\d+)tr(\d+)$", raw)
-    if m: return int(m.group(1)) * 1_000_000 + int(m.group(2)) * 100_000
+    m = _re.match(r"^(\d+)tr(\d)$", raw)   # chỉ 1 chữ số sau tr: 1tr5 = 1.500.000
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        return a * 1_000_000 + b * 100_000
     m = _re.match(r"^(\d+(?:\.\d+)?)(k|tr|m|đ)?$", raw)
     if not m: return None
     num  = float(m.group(1))

@@ -37,6 +37,13 @@ from cogs.admin_views import (
 BOT_VERSION = "4.0.0"
 BOT_UPDATED = "2026-05-30"
 
+try:
+    import bot as _bot_module
+    BOT_VERSION = getattr(_bot_module, "BOT_VERSION", BOT_VERSION)
+    BOT_UPDATED = getattr(_bot_module, "BOT_UPDATED", BOT_UPDATED)
+except Exception:
+    pass
+
 class AdminCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -483,8 +490,9 @@ class AdminCog(commands.Cog):
                 await msg.add_reaction("✅")
             except Exception:
                 pass
-            # Đổi tên kênh +1
+            # Đổi tên kênh +1, fetch lại để tránh số đếm sai
             try:
+                channel = await channel.guild.fetch_channel(channel.id)  # refresh
                 name = channel.name
                 match = _re.search(r"-(\d+)$", name)
                 new_num = (int(match.group(1)) + 1) if match else 1
@@ -625,11 +633,6 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📋 Version",  value=f"`v{BOT_VERSION}`",                     inline=True)
         if self.bot.user.avatar: embed.set_thumbnail(url=self.bot.user.avatar.url)
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # ── Stock → Sold auto-move ──
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        await handle_sold(self.bot, message)
 
     # ── Error handler ──
     @commands.Cog.listener()
