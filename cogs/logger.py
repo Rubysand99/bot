@@ -12,6 +12,8 @@ Nhóm kênh:
   ai       → AI_USED
   admin    → CMD_USED, SLASH_USED, SETTINGS
   general  → INFO, ERROR, INVITE, RATING (fallback)
+
+Log format: plain text thay vì embed để không đẩy trôi history.
 """
 
 from datetime import datetime, timezone, timedelta
@@ -77,6 +79,7 @@ LOG_ROUTES: dict[str, str] = {
     "CMD_USED":        "admin",
     "SLASH_USED":      "admin",
     "SETTINGS":        "admin",
+    "BANK_TXNS":       "general",
     "INVITE":          "general",
     "RATING":          "general",
     "ERROR":           "general",
@@ -111,6 +114,58 @@ def get_all_log_channels() -> dict[str, int]:
     return get_log_channels()
 
 # ══════════════════════════════════════════
+# FORMAT PLAIN TEXT LOG
+# ══════════════════════════════════════════
+
+def _fmt_log_text(
+    event_type: str,
+    title: str,
+    fields: list[tuple] = None,
+    description: str = None,
+    user: discord.Member | discord.User = None,
+) -> str:
+    """
+    Chuyển log thành plain text 1 dòng hoặc vài dòng nhỏ gọn.
+    Ví dụ:
+      🎫 [TICKET_CREATE] Ticket Tạo — money-042
+      › 🎫 Kênh: #money-042  › 🏷️ Loại: 🛒 MUA HÀNG  › 👤 Người tạo: @Ruby
+      🕐 05/06/2026 14:32 UTC+7
+    """
+    icon, _ = LOG_ICONS.get(event_type, ("📋", 0))
+    now_vn = datetime.now(timezone(timedelta(hours=7)))
+    time_str = now_vn.strftime("%d/%m/%Y %H:%M")
+
+    lines = []
+
+    # Dòng 1: header
+    header = f"{icon} `[{event_type}]` **{title}**"
+    if user:
+        header += f"  •  _{user}_"
+    lines.append(header)
+
+    # Dòng 2: description (nếu có, cắt ngắn)
+    if description:
+        short_desc = description[:200].replace("\n", " ")
+        lines.append(f"> {short_desc}")
+
+    # Dòng 3+: fields gộp trên cùng 1 dòng (ngắn gọn)
+    if fields:
+        field_parts = []
+        for f in fields:
+            name  = f[0]
+            value = str(f[1])[:80]  # giới hạn độ dài value
+            field_parts.append(f"**{name}:** {value}")
+        # Tối đa 3 field/dòng
+        for i in range(0, len(field_parts), 3):
+            lines.append("› " + "  ·  ".join(field_parts[i:i+3]))
+
+    # Dòng cuối: timestamp
+    lines.append(f"-# 🕐 {time_str} UTC+7")
+
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════
 # SEND LOG
 # ══════════════════════════════════════════
 async def send_log(
@@ -127,31 +182,14 @@ async def send_log(
     Gửi log vào kênh tương ứng với nhóm của event_type.
     Fallback về kênh log_rudy nếu nhóm chưa được cài.
     fields: list of (name, value, inline?)
+
+    Gửi dưới dạng plain text để tránh đẩy trôi history.
+    Báo cáo tổng hợp (daily report) vẫn dùng embed vì cần layout đẹp.
     """
     if bot is None:
         return
 
-    icon, default_color = LOG_ICONS.get(event_type, ("📋", 0x5865F2))
-    embed = discord.Embed(
-        title=f"{icon}  {title}",
-        color=color or default_color,
-        timestamp=datetime.now(timezone.utc),
-    )
-    if description:
-        embed.description = description
-    if user:
-        embed.set_author(
-            name=str(user),
-            icon_url=user.display_avatar.url if hasattr(user, "display_avatar") else None,
-        )
-    if fields:
-        for f in fields:
-            name   = f[0]
-            value  = f[1]
-            inline = f[2] if len(f) > 2 else True
-            embed.add_field(name=name, value=value, inline=inline)
-    embed.add_field(name="🕐 Thời gian", value=f"<t:{int(datetime.now(timezone.utc).timestamp())}:F>", inline=False)
-    embed.set_footer(text=footer or f"TuyTam Store  •  {event_type}")
+    text = _fmt_log_text(event_type, title, fields, description, user)
 
     # Xác định kênh đích
     group   = LOG_ROUTES.get(event_type, "general")
@@ -164,7 +202,7 @@ async def send_log(
         print(f"[LOG] ⚠️ Không tìm được kênh {ch_id} cho '{group}' ({event_type}), bỏ qua.")
         return
     try:
-        await channel.send(embed=embed)
+        await channel.send(text)
     except Exception as e:
         print(f"[LOG] ❌ Không gửi được log {event_type} → #{channel.name}: {e}")
 
@@ -202,7 +240,8 @@ class LoggerCog(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def _send_daily_report(self):
-        """Build và gửi embed báo cáo 24h qua vào kênh general log."""
+        """Build và gửi embed báo cáo 24h qua vào kênh general log.
+        Báo cáo này vẫn dùng embed vì cần layout đẹp để đọc tổng kết."""
         now       = datetime.now(timezone.utc)
         since     = now - timedelta(hours=24)
         date_label = now.strftime("%d/%m/%Y")
@@ -223,9 +262,6 @@ class LoggerCog(commands.Cog):
         ticket_count  = len(day_recs)
         ticket_amount = sum(t.get("amount", 0) for t in day_recs)
 
-
-
-
         # ── Banking (Casso): giao dịch ngân hàng 24h qua ──
         from core.data import _data_cache
         banking_txs = list((_data_cache or {}).get("_banking_txs", []))
@@ -244,7 +280,7 @@ class LoggerCog(commands.Cog):
             except Exception:
                 pass
 
-                # ── Giveaway: kết thúc trong 24h qua ──
+        # ── Giveaway: kết thúc trong 24h qua ──
         gw_data    = load_giveaways_data()
         gw_running = sum(1 for gw in gw_data.values() if not gw.get("ended"))
         gw_ended   = 0
@@ -258,9 +294,6 @@ class LoggerCog(commands.Cog):
                 except Exception:
                     pass
 
-        # ── Member: join/leave 24h qua (từ audit log nếu có quyền) ──
-        # Không dùng audit log để tránh phức tạp — bỏ qua phần này
-
         # ── Top buyer 24h qua ──
         buyer_totals: dict = {}
         for t in day_recs:
@@ -269,7 +302,7 @@ class LoggerCog(commands.Cog):
                 buyer_totals[uid] = buyer_totals.get(uid, 0) + t.get("amount", 0)
         top3 = sorted(buyer_totals.items(), key=lambda x: x[1], reverse=True)[:3]
 
-        # ── Build embed ──
+        # ── Build embed (báo cáo tổng hợp dùng embed) ──
         embed = discord.Embed(
             title=f"📊  Báo Cáo 24h — {date_label}",
             color=0x5865F2,
@@ -285,8 +318,6 @@ class LoggerCog(commands.Cog):
             ),
             inline=True,
         )
-
-
 
         # Banking Casso
         embed.add_field(
@@ -512,12 +543,10 @@ class LoggerCog(commands.Cog):
                         ("📌 Kênh test",   channel.mention,           True),
                     ],
                     description=(
-                        f"Đây là log **test** từ lệnh `.testlog`.\n"
-                        f"Nếu bạn thấy tin này → kênh `{channel.name}` hoạt động bình thường ✅"
-                        + (f"\n⚠️ *Dùng kênh fallback vì nhóm `{grp}` chưa được cài riêng.*" if using_fallback else "")
+                        f"Log test từ `.testlog` — kênh `{channel.name}` hoạt động bình thường ✅"
+                        + (f" ⚠️ Dùng fallback vì `{grp}` chưa cài riêng." if using_fallback else "")
                     ),
                     user=ctx.author,
-                    footer=f"testlog • {grp} • {event_type}",
                 )
                 tag = " *(fallback)*" if using_fallback else ""
                 status_lines.append(f"✅ **{label}** → {channel.mention}{tag}")
