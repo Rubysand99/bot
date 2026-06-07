@@ -213,14 +213,24 @@ def _html_error(msg: str) -> str:
 async def start_verify_server(host: str = "0.0.0.0", port: int = 8080):
     """Chạy FastAPI server trong event loop của bot."""
     import uvicorn
+    import socket
+
+    # Kiểm tra port trước khi bind — tránh uvicorn gọi sys.exit
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, port))
+        sock.close()
+    except OSError as e:
+        log.warning(f"[VERIFY] Port {port} đang bị chiếm: {e}. Verify server không khởi động.")
+        return  # Thoát nhẹ nhàng, không crash
+
     config = uvicorn.Config(
         app,
         host=host,
         port=port,
         log_level="warning",
-        # Cho phép reuse port nếu process cũ chưa giải phóng
     )
     server = uvicorn.Server(config)
-    # Tắt signal handler mặc định của uvicorn để không conflict với bot
     server.install_signal_handlers = lambda: None
     await server.serve()

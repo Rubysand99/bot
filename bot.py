@@ -291,10 +291,10 @@ async def main():
     async def _run_verify():
         try:
             await start_verify_server(host="0.0.0.0", port=port)
-        except OSError as e:
-            print(f"[VERIFY] ⚠️ Không thể bind port {port}: {e} — verify server tắt")
+        except (OSError, SystemExit) as e:
+            print(f"[VERIFY] ⚠️ Không thể bind port {port}: {e} — verify server tắt, bot vẫn chạy")
         except Exception as e:
-            print(f"[VERIFY] ❌ Lỗi: {e}")
+            print(f"[VERIFY] ❌ Lỗi không mong muốn: {e}")
 
     async with bot:
         await load_cogs()
