@@ -182,6 +182,8 @@ class CassoWebhookServer:
         self.app  = web.Application()
         self.app.router.add_post(WEBHOOK_PATH, self.handle)
         self._runner = None
+        self._bad_token_count = 0   # đếm số lần sai token kể từ lần cuối reset
+        self._bad_token_ips: dict[str, int] = {}  # ip → số lần sai
 
     async def start(self):
         self._runner = web.AppRunner(self.app)
@@ -198,9 +200,21 @@ class CassoWebhookServer:
         if not CASSO_SECRET:
             log.warning("[BANKING] ⚠️ CASSO_SECRET chưa cài — từ chối mọi webhook request")
             return web.Response(status=503, text="Webhook disabled: CASSO_SECRET not configured")
-        token = request.headers.get("Secure-Token", "")
+        token   = request.headers.get("Secure-Token", "")
+        peer_ip = request.headers.get("X-Forwarded-For", request.remote or "unknown").split(",")[0].strip()
         if token != CASSO_SECRET:
-            log.warning("[BANKING] ⚠️ Webhook nhận request sai secret token")
+            self._bad_token_count += 1
+            self._bad_token_ips[peer_ip] = self._bad_token_ips.get(peer_ip, 0) + 1
+            ip_count = self._bad_token_ips[peer_ip]
+            log.error(
+                f"[BANKING] ⚠️ Webhook sai token — IP: {peer_ip} "
+                f"(lần {ip_count} từ IP này, tổng {self._bad_token_count} lần)"
+            )
+            # Thông báo lên Discord nếu sai >= 3 lần liên tiếp từ cùng 1 IP
+            if ip_count >= 3:
+                asyncio.get_event_loop().create_task(
+                    self.cog._alert_bad_token(peer_ip, ip_count)
+                )
             return web.Response(status=401, text="Unauthorized")
         try:
             payload = await request.json()
@@ -235,6 +249,38 @@ class BankingCog(commands.Cog):
         await self.server.stop()
         if self._task:
             self._task.cancel()
+
+    # ──────────────────────────────────────
+    # CẢNH BÁO WEBHOOK BỊ TẤN CÔNG
+    # ──────────────────────────────────────
+
+    async def _alert_bad_token(self, ip: str, count: int):
+        """Gửi cảnh báo lên Discord khi webhook bị gọi sai token nhiều lần."""
+        try:
+            cfg   = get_banking_cfg()
+            ch_id = cfg.get("log_channel", 0)
+            if not ch_id:
+                return
+            ch = await get_or_fetch_channel(self.bot, ch_id)
+            if not ch:
+                return
+            embed = discord.Embed(
+                title="🚨 Cảnh Báo Bảo Mật — Banking Webhook",
+                color=0xFF0000,
+                timestamp=datetime.now(timezone.utc),
+            )
+            embed.add_field(name="⚠️ Vấn đề", value="Webhook nhận request với **sai secret token**", inline=False)
+            embed.add_field(name="🌐 IP nguồn", value=f"`{ip}`", inline=True)
+            embed.add_field(name="🔢 Số lần từ IP này", value=str(count), inline=True)
+            embed.add_field(
+                name="💡 Khuyến nghị",
+                value="Kiểm tra lại `CASSO_SECRET` trên dashboard Casso và env bot.\nNếu không phải bạn gọi → có thể đang bị probe.",
+                inline=False,
+            )
+            embed.set_footer(text="TuyTam Store  •  Banking Security")
+            await ch.send(embed=embed)
+        except Exception as e:
+            log.error(f"[BANKING] ❌ Không gửi được cảnh báo bad token: {e}")
 
     # ──────────────────────────────────────
     # XỬ LÝ GIAO DỊCH TỪ CASSO

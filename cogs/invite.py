@@ -113,15 +113,30 @@ class InviteCog(commands.Cog):
         await ctx.reply(embed=embed)
 
     @commands.command(name="resetinvite", aliases=["resetinv"])
-    async def resetinvite_cmd(self, ctx, member: discord.Member = None):
+    async def resetinvite_cmd(self, ctx, *, arg: str = None):
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin.")
-        raw    = ctx.message.content.split()
-        is_all = len(raw) > 1 and raw[-1].lower() == "all" and not ctx.message.mentions
-        if is_all:
+
+        # Trường hợp 1: .resetinvite all
+        if arg and arg.strip().lower() == "all" and not ctx.message.mentions:
             _save_invite_counts({})
             await ctx.reply("✅ Đã reset toàn bộ invite của server.")
-        elif member:
+            await send_log(self.bot, "INVITE", "Reset toàn bộ invite server",
+                fields=[("Admin", ctx.author.mention, True)])
+            return
+
+        # Trường hợp 2: .resetinvite @user — convert mention sang Member
+        member = None
+        if ctx.message.mentions:
+            member = ctx.message.mentions[0]
+        elif arg:
+            # Thử resolve bằng ID hoặc tên
+            try:
+                member = await commands.MemberConverter().convert(ctx, arg.strip())
+            except commands.BadArgument:
+                return await ctx.reply(f"❌ Không tìm thấy thành viên `{arg.strip()}`.\nDùng: `.resetinvite @user` hoặc `.resetinvite all`")
+
+        if member:
             counts = _get_invite_counts()
             uid    = str(member.id)
             if uid in counts:
@@ -174,6 +189,28 @@ class InviteCog(commands.Cog):
                     if not still_here:
                         _add_invite(inviter_id, "fake", 1)
                         print(f"[INVITE] ⚠️ Fake invite: {member} invited by {inviter_id}")
+
+                        # === AUTO-PUNISH: kick nếu fake >= 3 lần ===
+                        counts  = _get_invite_counts()
+                        uid_str = str(inviter_id)
+                        fake_count = counts.get(uid_str, {}).get("fake", 0)
+                        if fake_count >= 3:
+                            inviter_member = member.guild.get_member(inviter_id)
+                            if inviter_member:
+                                try:
+                                    await inviter_member.kick(reason=f"[Auto] Fake invite {fake_count} lần")
+                                    print(f"[INVITE] 🔨 Đã kick {inviter_member} vì fake invite {fake_count} lần")
+                                    await send_log(
+                                        self.bot, "MOD",
+                                        f"Auto-Kick: Fake Invite × {fake_count}",
+                                        fields=[
+                                            ("👤 User bị kick", f"{inviter_member.mention} (`{inviter_id}`)", True),
+                                            ("⚠️ Số lần fake", str(fake_count), True),
+                                            ("🤖 Bởi", "Hệ thống auto-mod", True),
+                                        ],
+                                    )
+                                except (discord.Forbidden, discord.HTTPException) as e:
+                                    print(f"[INVITE] ❌ Không kick được {inviter_id}: {e}")
                     else:
                         _member_inviters[member.id] = {"inviter_id": inviter_id, "guild_id": member.guild.id}
                         save_member_inviters(_member_inviters)  # persist
