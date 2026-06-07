@@ -344,7 +344,7 @@ class LoggerCog(commands.Cog):
         if top3:
             medals    = ["🥇", "🥈", "🥉"]
             top_lines = [
-                f"{medals[i]} <@{uid}> — **{fmt_amount(amt)}**"
+                f"{medals[i]} ID:{uid} — **{fmt_amount(amt)}**"
                 for i, (uid, amt) in enumerate(top3)
             ]
             embed.add_field(
@@ -410,7 +410,7 @@ class LoggerCog(commands.Cog):
         await send_log(
             self.bot, "SETTINGS", f"Cài kênh log {label}",
             fields=[
-                ("👤 Admin",  f"{ctx.author.mention}", True),
+                ("👤 Admin",  f"{ctx.author}", True),
                 ("📌 Kênh",   channel.mention,         True),
                 ("🗂️ Nhóm",   label,                   True),
             ],
@@ -539,7 +539,7 @@ class LoggerCog(commands.Cog):
                     title,
                     fields=[
                         ("🧪 Loại test",   label,                    True),
-                        ("👤 Bởi",         ctx.author.mention,        True),
+                        ("👤 Bởi",         str(ctx.author),            True),
                         ("📌 Kênh test",   channel.mention,           True),
                     ],
                     description=(
@@ -603,7 +603,7 @@ class LoggerCog(commands.Cog):
         await send_log(
             self.bot, "MEMBER_JOIN", "Thành Viên Tham Gia",
             fields=[
-                ("👤 Thành viên", f"{member.mention} (`{member.id}`)", True),
+                ("👤 Thành viên", f"{member} (`{member.id}`)", True),
                 ("📅 Tạo acc",    f"<t:{int(member.created_at.timestamp())}:D>", True),
                 ("👥 Tổng member", str(member.guild.member_count), True),
             ],
@@ -612,7 +612,7 @@ class LoggerCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
-        roles = [r.mention for r in member.roles if r.name != "@everyone"]
+        roles = [r.name for r in member.roles if r.name != "@everyone"]
         await send_log(
             self.bot, "MEMBER_LEAVE", "Thành Viên Rời Server",
             fields=[
@@ -631,8 +631,8 @@ class LoggerCog(commands.Cog):
             await send_log(
                 self.bot, "ROLE_ADD", "Thêm Role",
                 fields=[
-                    ("👤 Thành viên", f"{after.mention} (`{after.id}`)", True),
-                    ("🏷️ Role",       role.mention,                      True),
+                    ("👤 Thành viên", f"{after} (`{after.id}`)", True),
+                    ("🏷️ Role",       role.name,                         True),
                 ],
                 user=after,
             )
@@ -640,8 +640,8 @@ class LoggerCog(commands.Cog):
             await send_log(
                 self.bot, "ROLE_REMOVE", "Xoá Role",
                 fields=[
-                    ("👤 Thành viên", f"{after.mention} (`{after.id}`)", True),
-                    ("🏷️ Role",       role.mention,                      True),
+                    ("👤 Thành viên", f"{after} (`{after.id}`)", True),
+                    ("🏷️ Role",       role.name,                         True),
                 ],
                 user=after,
             )
@@ -655,7 +655,7 @@ class LoggerCog(commands.Cog):
         await send_log(
             self.bot, "CMD_USED", f"Lệnh: .{ctx.command}",
             fields=[
-                ("👤 Người dùng", f"{ctx.author.mention} (`{ctx.author.id}`)", True),
+                ("👤 Người dùng", f"{ctx.author} (`{ctx.author.id}`)", True),
                 ("📝 Lệnh đầy đủ", f"`{ctx.message.content[:200]}`",           True),
                 ("📌 Kênh",        ctx.channel.mention,                        True),
             ],
@@ -676,7 +676,7 @@ class LoggerCog(commands.Cog):
         await send_log(
             self.bot, "SLASH_USED", f"Slash: /{cmd_name}",
             fields=[
-                ("👤 Người dùng", f"{interaction.user.mention} (`{interaction.user.id}`)", True),
+                ("👤 Người dùng", f"{interaction.user} (`{interaction.user.id}`)", True),
                 ("🔧 Options",    f"`{opts}`" if opts else "*(không có)*",                True),
                 ("📌 Kênh",       getattr(interaction.channel, "mention", "N/A"), True),
             ],
