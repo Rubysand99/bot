@@ -32,7 +32,6 @@ LOG_ICONS = {
     "TICKET_CLOSE":    ("🔒", 0xED4245),
     "TICKET_DONE":     ("✅", 0x57F287),
     "TICKET_CLAIM":    ("🙋", 0x5865F2),
-    "BANK_TXNS":       ("🏦", 0x2ECC71),
     "MOD_BAN":         ("🔨", 0xED4245),
     "MOD_KICK":        ("👢", 0xE67E22),
     "MOD_MUTE":        ("🔇", 0xF0A500),
@@ -83,7 +82,6 @@ LOG_ROUTES: dict[str, str] = {
     "CMD_USED":        "admin",
     "SLASH_USED":      "admin",
     "SETTINGS":        "admin",
-    "BANK_TXNS":       "general",
     "INVITE":          "general",
     "INVITE_JOIN":     "general",
     "INVITE_VERIFY":   "general",
@@ -270,24 +268,6 @@ class LoggerCog(commands.Cog):
         ticket_count  = len(day_recs)
         ticket_amount = sum(t.get("amount", 0) for t in day_recs)
 
-        # ── Banking (Casso): giao dịch ngân hàng 24h qua ──
-        from core.data import _data_cache
-        banking_txs = list((_data_cache or {}).get("_banking_txs", []))
-        bank_in_24h = bank_out_24h = bank_tx_24h = 0
-        for tx in banking_txs:
-            try:
-                tx_dt = datetime.fromisoformat(tx["time"])
-                if tx_dt.tzinfo is None:
-                    tx_dt = tx_dt.replace(tzinfo=timezone.utc)
-                if tx_dt >= since:
-                    if tx["direction"] == "in":
-                        bank_in_24h += tx["amount"]
-                    else:
-                        bank_out_24h += tx["amount"]
-                    bank_tx_24h += 1
-            except Exception:
-                pass
-
         # ── Giveaway: kết thúc trong 24h qua ──
         gw_data    = load_giveaways_data()
         gw_running = sum(1 for gw in gw_data.values() if not gw.get("ended"))
@@ -324,17 +304,6 @@ class LoggerCog(commands.Cog):
                 f"✅ Hoàn thành: **{ticket_count}** đơn\n"
                 f"💰 Doanh thu: **{fmt_amount(ticket_amount)}**"
             ),
-            inline=True,
-        )
-
-        # Banking Casso
-        embed.add_field(
-            name="🏦 Ngân hàng (Casso)",
-            value=(
-                f"📥 Vào: **{fmt_amount(bank_in_24h)}**\n"
-                f"📤 Ra: **{fmt_amount(bank_out_24h)}**\n"
-                f"🔢 GD: **{bank_tx_24h}** lần"
-            ) if bank_tx_24h else "*(không có giao dịch)*",
             inline=True,
         )
 
