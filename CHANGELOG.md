@@ -1,5 +1,15 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.1.0] — 2026-06-08
+
+### 🗑️ Xoá tính năng
+- `cogs/banking.py` — Xoá toàn bộ cog banking (webhook SePay, log GD, `.banktoday`, `.banksearch`, v.v.)
+- `bot.py` — Xoá `"cogs.banking"` khỏi danh sách COGS
+- `core/data.py` — Xoá `_col_banktxs`, `MAX_TX_HISTORY_CACHE`, `banking_cfg` trong `_default_data()`, và block load `banking_txs` trong `init_data_cache()`
+- `cogs/logger.py` — Xoá `BANK_TXNS` khỏi `LOG_ICONS` + `LOG_ROUTES`, xoá field **🏦 Ngân hàng** trong daily report, xoá block thu thập data banking
+
+---
+
 ## [v4.0.0] — 2026-06-02
 
 ### 🔒 Bảo mật
