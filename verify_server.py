@@ -213,6 +213,14 @@ def _html_error(msg: str) -> str:
 async def start_verify_server(host: str = "0.0.0.0", port: int = 8080):
     """Chạy FastAPI server trong event loop của bot."""
     import uvicorn
-    config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="warning",
+        # Cho phép reuse port nếu process cũ chưa giải phóng
+    )
     server = uvicorn.Server(config)
+    # Tắt signal handler mặc định của uvicorn để không conflict với bot
+    server.install_signal_handlers = lambda: None
     await server.serve()

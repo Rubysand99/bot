@@ -286,12 +286,20 @@ async def main():
     from verify_server import start_verify_server
     import os
     port = int(os.getenv("PORT", 8080))
+
+    # Chạy verify server như background task, không block bot nếu port lỗi
+    async def _run_verify():
+        try:
+            await start_verify_server(host="0.0.0.0", port=port)
+        except OSError as e:
+            print(f"[VERIFY] ⚠️ Không thể bind port {port}: {e} — verify server tắt")
+        except Exception as e:
+            print(f"[VERIFY] ❌ Lỗi: {e}")
+
     async with bot:
         await load_cogs()
-        await asyncio.gather(
-            bot.start(TOKEN),
-            start_verify_server(host="0.0.0.0", port=port),
-        )
+        asyncio.create_task(_run_verify())
+        await bot.start(TOKEN)
 
 if __name__ == "__main__":
     asyncio.run(main())
