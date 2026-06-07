@@ -609,3 +609,17 @@ def save_pending_joins(pending: dict) -> None:
     data = load_data()
     data["_pending_joins"] = {str(k): v for k, v in pending.items()}
     save_data(data)
+
+# ══════════════════════════════════════════
+# IP RECORDS PERSISTENCE
+# Lưu {ip: [user_id, ...]} — dùng cho fake detection
+# ══════════════════════════════════════════
+
+def get_ip_records() -> dict:
+    """Trả về {ip: [user_id, ...]}."""
+    return dict(load_data().get("_ip_records", {}))
+
+def save_ip_records(records: dict) -> None:
+    data = load_data()
+    data["_ip_records"] = records
+    save_data(data)

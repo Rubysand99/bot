@@ -283,9 +283,15 @@ async def _backfill_legit():
 # MAIN
 # ══════════════════════════════════════════
 async def main():
+    from verify_server import start_verify_server
+    import os
+    port = int(os.getenv("PORT", 8080))
     async with bot:
         await load_cogs()
-        await bot.start(TOKEN)
+        await asyncio.gather(
+            bot.start(TOKEN),
+            start_verify_server(host="0.0.0.0", port=port),
+        )
 
 if __name__ == "__main__":
     asyncio.run(main())
