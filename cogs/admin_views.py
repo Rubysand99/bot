@@ -1597,26 +1597,104 @@ def _perm_list_embed(title: str, note: str = "") -> discord.Embed:
     return embed
 
 
-def _role_list_embed(guild: discord.Guild) -> discord.Embed:
-    roles = [r for r in sorted(guild.roles, key=lambda r: -r.position) if r.name != "@everyone"][:25]
-    lines = [f"`{i:>2}.` {r.mention}" for i, r in enumerate(roles, 1)]
-    half = (len(lines) + 1) // 2
-    embed = discord.Embed(title="🏷️ Chọn Role", description="Nhập số thứ tự, cách nhau bởi dấu phẩy.\nVí dụ: `1, 3, 5`", color=0x5865F2)
-    embed.add_field(name="\u200b", value="\n".join(lines[:half]) or "—", inline=True)
-    embed.add_field(name="\u200b", value="\n".join(lines[half:]) or "\u200b", inline=True)
-    return embed, roles
+def _build_page_embeds(items: list, title_fn, desc: str, total_label: str) -> list[discord.Embed]:
+    """Tạo list embed phân trang, mỗi trang 20 item."""
+    PAGE = 20
+    total_pages = max(1, (len(items) + PAGE - 1) // PAGE)
+    embeds = []
+    for page in range(total_pages):
+        chunk = items[page * PAGE:(page + 1) * PAGE]
+        start = page * PAGE + 1
+        lines = [f"`{start + j:>3}.` {title_fn(items[page * PAGE + j], page * PAGE + j)}" for j, _ in enumerate(chunk)]
+        half  = (len(lines) + 1) // 2
+        title = title_fn.__doc__ or "Chọn"
+        embed = discord.Embed(
+            title       = f"{title} (trang {page+1}/{total_pages})" if total_pages > 1 else title,
+            description = desc,
+            color       = 0x5865F2,
+        )
+        embed.add_field(name="\u200b", value="\n".join(lines[:half]) or "—",      inline=True)
+        embed.add_field(name="\u200b", value="\n".join(lines[half:]) or "\u200b", inline=True)
+        embed.set_footer(text=f"Trang {page+1}/{total_pages}  •  {total_label}")
+        embeds.append(embed)
+    return embeds
 
 
-def _channel_list_embed(guild: discord.Guild) -> tuple[discord.Embed, list]:
+class _PageView(View):
+    """Embed phân trang với nút ◀ / ▶. Gọi wait() để chờ admin xong."""
+
+    def __init__(self, embeds: list[discord.Embed], author_id: int):
+        super().__init__(timeout=120)
+        self.embeds    = embeds
+        self.author_id = author_id
+        self.page      = 0
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.prev_btn.disabled = self.page == 0
+        self.next_btn.disabled = self.page >= len(self.embeds) - 1
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.author_id
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: discord.Interaction, _):
+        self.page -= 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.page], view=self)
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+    async def next_btn(self, interaction: discord.Interaction, _):
+        self.page += 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.page], view=self)
+
+
+def _role_list_embeds(guild: discord.Guild) -> tuple[list[discord.Embed], list]:
+    roles = [r for r in sorted(guild.roles, key=lambda r: -r.position) if r.name != "@everyone"]
+    def fmt(r, i): return r.mention
+    PAGE = 20
+    total_pages = max(1, (len(roles) + PAGE - 1) // PAGE)
+    embeds = []
+    for page in range(total_pages):
+        chunk = roles[page * PAGE:(page + 1) * PAGE]
+        start = page * PAGE + 1
+        lines = [f"`{start + j:>3}.` {r.mention}" for j, r in enumerate(chunk)]
+        half  = (len(lines) + 1) // 2
+        embed = discord.Embed(
+            title       = f"🏷️ Chọn Role" + (f" (trang {page+1}/{total_pages})" if total_pages > 1 else ""),
+            description = "Nhập số thứ tự, cách nhau bởi dấu phẩy.\nVí dụ: `1, 3, 5`",
+            color       = 0x5865F2,
+        )
+        embed.add_field(name="\u200b", value="\n".join(lines[:half]) or "—",      inline=True)
+        embed.add_field(name="\u200b", value="\n".join(lines[half:]) or "\u200b", inline=True)
+        embed.set_footer(text=f"Tổng {len(roles)} role  •  Trang {page+1}/{total_pages}")
+        embeds.append(embed)
+    return embeds, roles
+
+
+def _channel_list_embeds(guild: discord.Guild) -> tuple[list[discord.Embed], list]:
     channels = [c for c in guild.channels
                 if isinstance(c, (discord.TextChannel, discord.VoiceChannel, discord.ForumChannel, discord.StageChannel))]
-    channels = sorted(channels, key=lambda c: (c.category.position if c.category else -1, c.position))[:25]
-    lines = [f"`{i:>2}.` {c.mention}" for i, c in enumerate(channels, 1)]
-    half = (len(lines) + 1) // 2
-    embed = discord.Embed(title="📋 Chọn Kênh", description="Nhập số thứ tự, cách nhau bởi dấu phẩy.\nVí dụ: `1, 2, 4`\nGõ `all` để chọn tất cả.", color=0x5865F2)
-    embed.add_field(name="\u200b", value="\n".join(lines[:half]) or "—", inline=True)
-    embed.add_field(name="\u200b", value="\n".join(lines[half:]) or "\u200b", inline=True)
-    return embed, channels
+    channels = sorted(channels, key=lambda c: (c.category.position if c.category else -1, c.position))
+    PAGE = 20
+    total_pages = max(1, (len(channels) + PAGE - 1) // PAGE)
+    embeds = []
+    for page in range(total_pages):
+        chunk = channels[page * PAGE:(page + 1) * PAGE]
+        start = page * PAGE + 1
+        lines = [f"`{start + j:>3}.` {c.mention}" for j, c in enumerate(chunk)]
+        half  = (len(lines) + 1) // 2
+        embed = discord.Embed(
+            title       = f"📋 Chọn Kênh" + (f" (trang {page+1}/{total_pages})" if total_pages > 1 else ""),
+            description = "Nhập số thứ tự, cách nhau bởi dấu phẩy.\nVí dụ: `1, 2, 4`\nGõ `all` để chọn tất cả.",
+            color       = 0x5865F2,
+        )
+        embed.add_field(name="\u200b", value="\n".join(lines[:half]) or "—",      inline=True)
+        embed.add_field(name="\u200b", value="\n".join(lines[half:]) or "\u200b", inline=True)
+        embed.set_footer(text=f"Tổng {len(channels)} kênh  •  Trang {page+1}/{total_pages}")
+        embeds.append(embed)
+    return embeds, channels
 
 
 def _parse_indices(text: str, max_len: int) -> list[int] | None:
@@ -1638,8 +1716,8 @@ def _parse_indices(text: str, max_len: int) -> list[int] | None:
 class RolePermFlow:
     """
     Flow nhiều bước qua chat message:
-    1. Gửi list role → admin reply số
-    2. Gửi list kênh → admin reply số / all
+    1. Gửi list role (paginator) → admin reply số
+    2. Gửi list kênh (paginator) → admin reply số / all
     3. Gửi list quyền muốn BẬT → admin reply số / none
     4. Gửi list quyền muốn TẮT → admin reply số / none
     5. Xác nhận → apply
@@ -1647,20 +1725,17 @@ class RolePermFlow:
 
     @staticmethod
     async def start(interaction: discord.Interaction):
-        guild = interaction.guild
-        role_embed, roles = _role_list_embed(guild)
-        role_embed.set_footer(text="Nhập số thứ tự các role, cách nhau bằng dấu phẩy. VD: 1, 3")
-        await interaction.response.send_message(embed=role_embed, ephemeral=False)
+        guild   = interaction.guild
+        channel = interaction.channel
+        bot     = interaction.client
 
         def check_author(m):
             return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id
 
-        channel = interaction.channel
-        bot     = interaction.client
-
-        async def wait_reply(prompt_embed=None):
-            if prompt_embed:
-                await channel.send(embed=prompt_embed)
+        async def wait_reply(send_fn=None):
+            """Gửi embed/view (nếu có) rồi chờ message từ admin."""
+            if send_fn:
+                await send_fn()
             try:
                 msg = await bot.wait_for("message", check=check_author, timeout=120)
                 return msg.content.strip()
@@ -1669,18 +1744,28 @@ class RolePermFlow:
                 return None
 
         # ── Bước 1: chọn role ──
+        role_embeds, roles = _role_list_embeds(guild)
+        pv_role = _PageView(role_embeds, interaction.user.id)
+        await interaction.response.send_message(embed=role_embeds[0], view=pv_role)
+
         raw = await wait_reply()
         if raw is None: return
+        pv_role.stop()
         idxs = _parse_indices(raw, len(roles))
         if not idxs:
             return await channel.send("❌ Số không hợp lệ. Vui lòng chạy lại.")
         selected_roles = [roles[i] for i in idxs]
 
         # ── Bước 2: chọn kênh ──
-        ch_embed, channels = _channel_list_embed(guild)
-        ch_embed.set_footer(text="Nhập số thứ tự các kênh. VD: 1, 2, 4  hoặc  all")
-        raw = await wait_reply(ch_embed)
+        ch_embeds, channels = _channel_list_embeds(guild)
+        pv_ch = _PageView(ch_embeds, interaction.user.id)
+
+        async def send_ch():
+            await channel.send(embed=ch_embeds[0], view=pv_ch)
+
+        raw = await wait_reply(send_ch)
         if raw is None: return
+        pv_ch.stop()
         if raw.lower() == "all":
             selected_channels = channels
         else:
@@ -1694,7 +1779,7 @@ class RolePermFlow:
             "✅ Chọn quyền muốn BẬT",
             "Nhập số thứ tự. VD: 1, 2, 5  hoặc  none để bỏ qua"
         )
-        raw = await wait_reply(allow_embed)
+        raw = await wait_reply(lambda: channel.send(embed=allow_embed))
         if raw is None: return
         if raw.lower() == "none":
             allow_perms = []
@@ -1709,7 +1794,7 @@ class RolePermFlow:
             "❌ Chọn quyền muốn TẮT",
             "Nhập số thứ tự. VD: 3, 4  hoặc  none để bỏ qua"
         )
-        raw = await wait_reply(deny_embed)
+        raw = await wait_reply(lambda: channel.send(embed=deny_embed))
         if raw is None: return
         if raw.lower() == "none":
             deny_perms = []
