@@ -746,6 +746,9 @@ class GwStatusView(View):
         page = max(0, min(page, total_pages - 1))
         self.page = page
 
+        # Items trên trang hiện tại
+        slice_ = all_flat[page * self.PAGE_SIZE: (page + 1) * self.PAGE_SIZE]
+
         # Nút ◀ ▶
         prev_btn = Button(emoji="◀", style=discord.ButtonStyle.secondary,
                           custom_id="gw_prev", disabled=(page == 0), row=0)
@@ -756,14 +759,15 @@ class GwStatusView(View):
         self.add_item(prev_btn)
         self.add_item(next_btn)
 
-        # Select kết thúc sớm (chỉ GW đang chạy, tối đa 25)
+        # Select kết thúc sớm — chỉ GW đang chạy trên trang này
         running_opts = [
             discord.SelectOption(
                 label=f"GW #{gw['gw_id']} — {gw['prize'][:40]}"[:100],
                 value=str(gw["mid"]),
                 description="Đang chạy",
             )
-            for gw in running[:25]
+            for gw in slice_
+            if not active_giveaways.get(gw["mid"], {}).get("ended")
         ]
         if running_opts:
             end_sel = Select(
@@ -775,14 +779,14 @@ class GwStatusView(View):
             end_sel.callback = self._end_early_callback
             self.add_item(end_sel)
 
-        # Select xoá (tất cả, tối đa 25)
+        # Select xoá — tất cả GW trên trang này
         all_opts = [
             discord.SelectOption(
                 label=f"GW #{gw['gw_id']} — {gw['prize'][:40]}"[:100],
                 value=str(gw["mid"]),
                 description="Đã kết thúc" if active_giveaways.get(gw["mid"], {}).get("ended") else "Đang chạy",
             )
-            for gw in all_flat[:25]
+            for gw in slice_
         ]
         if all_opts:
             del_sel = Select(
