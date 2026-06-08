@@ -1732,10 +1732,8 @@ class RolePermFlow:
         def check_author(m):
             return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id
 
-        async def wait_reply(send_fn=None):
-            """Gửi embed/view (nếu có) rồi chờ message từ admin."""
-            if send_fn:
-                await send_fn()
+        async def wait_reply():
+            """Chờ message từ admin."""
             try:
                 msg = await bot.wait_for("message", check=check_author, timeout=120)
                 return msg.content.strip()
@@ -1759,11 +1757,9 @@ class RolePermFlow:
         # ── Bước 2: chọn kênh ──
         ch_embeds, channels = _channel_list_embeds(guild)
         pv_ch = _PageView(ch_embeds, interaction.user.id)
+        await channel.send(embed=ch_embeds[0], view=pv_ch)
 
-        async def send_ch():
-            await channel.send(embed=ch_embeds[0], view=pv_ch)
-
-        raw = await wait_reply(send_ch)
+        raw = await wait_reply()
         if raw is None: return
         pv_ch.stop()
         if raw.lower() == "all":
@@ -1779,7 +1775,8 @@ class RolePermFlow:
             "✅ Chọn quyền muốn BẬT",
             "Nhập số thứ tự. VD: 1, 2, 5  hoặc  none để bỏ qua"
         )
-        raw = await wait_reply(lambda: channel.send(embed=allow_embed))
+        await channel.send(embed=allow_embed)
+        raw = await wait_reply()
         if raw is None: return
         if raw.lower() == "none":
             allow_perms = []
@@ -1794,7 +1791,8 @@ class RolePermFlow:
             "❌ Chọn quyền muốn TẮT",
             "Nhập số thứ tự. VD: 3, 4  hoặc  none để bỏ qua"
         )
-        raw = await wait_reply(lambda: channel.send(embed=deny_embed))
+        await channel.send(embed=deny_embed)
+        raw = await wait_reply()
         if raw is None: return
         if raw.lower() == "none":
             deny_perms = []
@@ -1824,13 +1822,14 @@ class RolePermFlow:
         deny_names  = ", ".join(n for n, _ in deny_perms)  if deny_perms  else "*(không có)*"
 
         confirm_embed = discord.Embed(title="⚠️ Xác nhận áp dụng quyền", color=0xF1C40F)
-        confirm_embed.add_field(name="🏷️ Role",       value=role_mentions,              inline=False)
-        confirm_embed.add_field(name="📋 Kênh",        value=ch_mentions,                inline=False)
-        confirm_embed.add_field(name="✅ Quyền BẬT",  value=allow_names,                inline=False)
-        confirm_embed.add_field(name="❌ Quyền TẮT",  value=deny_names,                 inline=False)
+        confirm_embed.add_field(name="🏷️ Role",       value=role_mentions, inline=False)
+        confirm_embed.add_field(name="📋 Kênh",        value=ch_mentions,   inline=False)
+        confirm_embed.add_field(name="✅ Quyền BẬT",  value=allow_names,   inline=False)
+        confirm_embed.add_field(name="❌ Quyền TẮT",  value=deny_names,    inline=False)
         confirm_embed.set_footer(text="Gõ  confirm  để áp dụng, hoặc  cancel  để huỷ.")
+        await channel.send(embed=confirm_embed)
 
-        raw = await wait_reply(confirm_embed)
+        raw = await wait_reply()
         if raw is None: return
         if raw.lower() != "confirm":
             return await channel.send("🚫 Đã huỷ.")
