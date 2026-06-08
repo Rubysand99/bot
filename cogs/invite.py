@@ -160,6 +160,51 @@ class InviteCog(commands.Cog):
         _pending_joins   = {int(k): v for k, v in get_pending_joins().items()}
         _member_inviters = {int(k): v for k, v in get_member_inviters().items()}
         _ip_records      = get_ip_records()
+        # Đảm bảo role tồn tại trên tất cả guild
+        await self.bot.wait_until_ready()
+        for guild_id in VERIFY_GUILDS:
+            guild = self.bot.get_guild(guild_id)
+            if guild:
+                await self._ensure_roles(guild)
+
+    async def _ensure_roles(self, guild: discord.Guild):
+        """Tự tạo role UNVERIFY / VERIFY nếu chưa có, cập nhật ID vào biến global."""
+        global UNVERIFY_ROLE_ID, VERIFY_ROLE_ID
+
+        # UNVERIFY
+        unverify = guild.get_role(UNVERIFY_ROLE_ID)
+        if not unverify:
+            # Tìm theo tên trước để tránh tạo trùng
+            unverify = discord.utils.get(guild.roles, name="Unverify")
+        if not unverify:
+            try:
+                unverify = await guild.create_role(
+                    name        = "Unverify",
+                    color       = discord.Color.dark_gray(),
+                    reason      = "Auto-create bởi TuyTam Bot — role chờ verify",
+                )
+                print(f"[INVITE] ✅ Đã tạo role Unverify ({unverify.id}) tại {guild.name}")
+            except discord.Forbidden:
+                print(f"[INVITE] ❌ Không có quyền tạo role tại {guild.name}")
+                return
+        UNVERIFY_ROLE_ID = unverify.id
+
+        # VERIFY
+        verify = guild.get_role(VERIFY_ROLE_ID)
+        if not verify:
+            verify = discord.utils.get(guild.roles, name="Verify")
+        if not verify:
+            try:
+                verify = await guild.create_role(
+                    name        = "Verify",
+                    color       = discord.Color.green(),
+                    reason      = "Auto-create bởi TuyTam Bot — role sau khi verify",
+                )
+                print(f"[INVITE] ✅ Đã tạo role Verify ({verify.id}) tại {guild.name}")
+            except discord.Forbidden:
+                print(f"[INVITE] ❌ Không có quyền tạo role tại {guild.name}")
+                return
+        VERIFY_ROLE_ID = verify.id
 
     # ── Lệnh prefix ──
 
