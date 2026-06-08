@@ -140,7 +140,26 @@ class GiveawayView(View):
         if gw.get("ended"):
             return await interaction.response.send_message("❌ Giveaway đã kết thúc rồi!", ephemeral=True)
 
-        uid     = interaction.user.id
+        uid = interaction.user.id
+
+        # Kiểm tra IP — chỉ tài khoản primary (đầu tiên verify trên IP đó) được tham gia
+        try:
+            from cogs.invite import get_primary_user_for_ip, _ip_records
+            user_ips = [ip for ip, users in _ip_records.items() if uid in users]
+            for ip in user_ips:
+                primary = get_primary_user_for_ip(ip)
+                if primary is not None and primary != uid:
+                    return await interaction.response.send_message(
+                        "⚠️ **Bạn không thể tham gia giveaway này.**\n\n"
+                        "Địa chỉ IP của bạn đang được chia sẻ với một tài khoản khác đã xác minh trước. "
+                        "Theo chính sách của server, **mỗi địa chỉ IP chỉ được 1 tài khoản tham gia giveaway**.\n\n"
+                        "Nếu bạn nghĩ đây là nhầm lẫn (ví dụ: dùng chung mạng gia đình), "
+                        "hãy liên hệ admin để được xem xét.",
+                        ephemeral=True,
+                    )
+        except Exception:
+            pass  # Nếu import lỗi thì bỏ qua, không chặn
+
         entries = gw.setdefault("entries", set())
         if not isinstance(entries, set):
             gw["entries"] = set(entries)

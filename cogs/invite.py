@@ -1,11 +1,13 @@
 """
 cogs/invite.py — Invite tracking + IP-based fake detection + verify system.
-v5.0.0:
-  - Xoá auto-kick
-  - Fake = IP trùng inviter hoặc member khác trong server (qua verify web)
-  - Bot DM link verify khi member join, timeout 10 phút
+v6.0.0:
+  - Role UNVERIFY (gán khi join, không xem được kênh nào) + VERIFY (gán sau khi verify xong)
+  - Nếu trùng IP: vẫn cho phép verify + gán VERIFY, nhưng lưu data shared_ip
+    → Chỉ 1 tài khoản trên cùng IP được tham gia giveaway (tài khoản join trước)
+    → Bot gửi ephemeral thông báo khi user bị chặn tham gia giveaway
+  - Auto-kick sau 24h nếu chưa verify
+  - Lệnh .checkip <@user|id> để admin xem tài khoản chung IP
   - Log đầy đủ: INVITE_JOIN, INVITE_VERIFY, INVITE_FAKE, INVITE_LEFT
-  - Giữ toàn bộ lệnh prefix + slash cũ
 """
 
 import asyncio
@@ -26,6 +28,17 @@ from verify_server import (
     create_token, build_verify_url, VERIFY_CALLBACKS,
 )
 
+# ── Role IDs ──
+UNVERIFY_ROLE_ID = 1500512964065755288
+VERIFY_ROLE_ID   = 1464411190808805540
+
+# ── Guild IDs bot hoạt động (dùng để gán role) ──
+# Thêm guild ID vào đây nếu bot phục vụ nhiều server
+VERIFY_GUILDS = {
+    1500513085096726528,
+    1500512893139943455,
+}
+
 
 # ══════════════════════════════════════════
 # IN-MEMORY STATE
@@ -35,6 +48,27 @@ _invite_cache:    dict[int, dict[str, int]] = {}
 _pending_joins:   dict[int, dict]           = {}   # member_id → {inviter_id, guild_id, joined_at}
 _member_inviters: dict[int, dict]           = {}   # member_id → {inviter_id, guild_id}
 _ip_records:      dict[str, list[int]]      = {}   # ip → [user_id, ...]  (persist MongoDB)
+
+# shared_ip: ip → first_verified_user_id (tài khoản đầu tiên verify trên IP đó được ưu tiên giveaway)
+# lưu trong MongoDB qua key "_shared_ip" trong main doc
+def _get_shared_ip() -> dict:
+    return load_data().get("_shared_ip", {})
+
+def _save_shared_ip(data: dict):
+    d = load_data()
+    d["_shared_ip"] = data
+    save_data(d)
+
+def get_primary_user_for_ip(ip: str) -> int | None:
+    """Trả về user_id đầu tiên verify trên IP này (được phép join giveaway)."""
+    return _get_shared_ip().get(ip)
+
+def register_primary_ip(ip: str, user_id: int):
+    """Đăng ký user đầu tiên trên IP — chỉ ghi nếu chưa có."""
+    d = _get_shared_ip()
+    if ip not in d:
+        d[ip] = user_id
+        _save_shared_ip(d)
 
 
 # ══════════════════════════════════════════
@@ -236,6 +270,14 @@ class InviteCog(commands.Cog):
                 except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                     pass
 
+        # Gán role UNVERIFY ngay khi join
+        unverify_role = member.guild.get_role(UNVERIFY_ROLE_ID)
+        if unverify_role:
+            try:
+                await member.add_roles(unverify_role, reason="Chưa verify")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
         # Xác định inviter qua cache
         try:
             old_cache   = _invite_cache.get(member.guild.id, {})
@@ -277,10 +319,34 @@ class InviteCog(commands.Cog):
         )
 
         # Gửi DM link verify
-        if inviter_id and inviter_id != member.id:
-            await self._send_verify_dm(member, inviter_id)
+        await self._send_verify_dm(member, inviter_id)
 
-    async def _send_verify_dm(self, member: discord.Member, inviter_id: int):
+        # Auto-kick sau 24h nếu chưa verify
+        asyncio.create_task(self._auto_kick_unverified(member))
+
+    async def _auto_kick_unverified(self, member: discord.Member):
+        """Kick member sau 24h nếu vẫn còn role UNVERIFY."""
+        await asyncio.sleep(86400)  # 24 giờ
+        try:
+            # Fetch lại member để check role hiện tại
+            guild  = self.bot.get_guild(member.guild.id)
+            if not guild:
+                return
+            m = guild.get_member(member.id)
+            if not m:
+                return  # Đã tự rời
+            if any(r.id == UNVERIFY_ROLE_ID for r in m.roles):
+                await m.kick(reason="Không verify trong 24 giờ")
+                await send_log(self.bot, "INVITE_VERIFY", "⏱️ Auto-kick — không verify trong 24h",
+                    fields=[
+                        ("👤 Thành viên", f"{m} (`{m.id}`)", True),
+                        ("⚠️ Lý do",      "Hết 24h chưa verify", True),
+                    ],
+                )
+        except Exception as e:
+            print(f"[INVITE] ⚠️ Auto-kick lỗi: {e}")
+
+    async def _send_verify_dm(self, member: discord.Member, inviter_id: int | None):
         """Gửi DM link verify, đăng ký callback xử lý kết quả."""
         token = create_token(member.id, member.guild.id, inviter_id, ttl=600)
         url   = build_verify_url(token)
@@ -337,7 +403,7 @@ class InviteCog(commands.Cog):
         country    = result["country"]
         isp        = result["isp"]
 
-        # VPN log (server đã hiển thị warning, chỉ log)
+        # VPN log
         if is_vpn:
             await send_log(self.bot, "INVITE_VERIFY", "Verify — phát hiện VPN/Proxy",
                 fields=[
@@ -348,7 +414,6 @@ class InviteCog(commands.Cog):
                     ("⚠️ VPN",        "✅ Phát hiện",                True),
                 ],
             )
-            # Không tính fake chỉ vì dùng VPN — chờ họ re-verify
 
         # Check IP collision
         is_fake, fake_reason = _check_ip_collision(user_id, ip, inviter_id)
@@ -356,29 +421,79 @@ class InviteCog(commands.Cog):
         # Lưu IP mapping
         _register_ip(user_id, ip)
 
-        # Xác nhận member hợp lệ
+        # Đăng ký primary user cho IP này (user đầu tiên verify = được join giveaway)
+        register_primary_ip(ip, user_id)
+
+        # Xác nhận member hợp lệ — xóa pending
         _pending_joins.pop(user_id, None)
         save_pending_joins(_pending_joins)
         _member_inviters[user_id] = {"inviter_id": inviter_id, "guild_id": result["guild_id"]}
         save_member_inviters(_member_inviters)
 
+        # Gán role VERIFY, xóa UNVERIFY
+        guild = self.bot.get_guild(member.guild.id)
+        if guild:
+            m = guild.get_member(user_id)
+            if m:
+                verify_role   = guild.get_role(VERIFY_ROLE_ID)
+                unverify_role = guild.get_role(UNVERIFY_ROLE_ID)
+                try:
+                    if verify_role:
+                        await m.add_roles(verify_role, reason="Đã verify")
+                    if unverify_role and unverify_role in m.roles:
+                        await m.remove_roles(unverify_role, reason="Đã verify")
+                except (discord.Forbidden, discord.HTTPException) as e:
+                    print(f"[INVITE] ⚠️ Không gán được role verify: {e}")
+
         if is_fake:
-            # Đánh dấu fake
+            # Đánh dấu fake nhưng vẫn cho vào — đã gán VERIFY ở trên
             _add_invite(inviter_id, "fake", 1)
             inviter_member = member.guild.get_member(inviter_id) if member.guild else None
-            await send_log(self.bot, "INVITE_FAKE", "⚠️ Fake invite phát hiện qua IP",
+
+            # Lấy danh sách tài khoản cùng IP
+            shared_users = _ip_records.get(ip, [])
+            primary_id   = get_primary_user_for_ip(ip)
+            is_primary   = (primary_id == user_id)
+
+            # DM thông báo cho user bị ảnh hưởng
+            try:
+                if is_primary:
+                    notice = (
+                        f"⚠️ **Thông báo từ TuyTam Store**\n\n"
+                        f"Tài khoản của bạn đã verify thành công. Tuy nhiên, chúng tôi phát hiện "
+                        f"có **{len(shared_users) - 1}** tài khoản khác đang dùng chung địa chỉ IP với bạn.\n\n"
+                        f"Bạn vẫn có thể tham gia giveaway bình thường vì bạn là tài khoản **đầu tiên** xác minh trên IP này.\n"
+                        f"Các tài khoản còn lại sẽ **không thể** tham gia giveaway."
+                    )
+                else:
+                    primary_m = guild.get_member(primary_id) if guild and primary_id else None
+                    primary_name = str(primary_m) if primary_m else f"ID:{primary_id}"
+                    notice = (
+                        f"⚠️ **Thông báo từ TuyTam Store**\n\n"
+                        f"Tài khoản của bạn đã verify thành công. Tuy nhiên, địa chỉ IP của bạn **trùng** "
+                        f"với tài khoản `{primary_name}` đã xác minh trước đó.\n\n"
+                        f"Do chính sách chống gian lận, **mỗi địa chỉ IP chỉ được phép 1 tài khoản tham gia giveaway**. "
+                        f"Vì vậy, bạn sẽ **không thể bấm tham gia giveaway** trên server này.\n\n"
+                        f"Nếu bạn cho rằng đây là nhầm lẫn (dùng chung mạng gia đình, trường học...), "
+                        f"vui lòng liên hệ admin để được hỗ trợ."
+                    )
+                await member.send(notice)
+            except discord.Forbidden:
+                pass
+
+            await send_log(self.bot, "INVITE_FAKE", "⚠️ IP trùng — đã verify nhưng bị hạn chế giveaway",
                 fields=[
-                    ("👤 Member (fake)",  f"{member} (`{user_id}`)",                                         True),
-                    ("📨 Inviter",        str(inviter_member) if inviter_member else f"ID:{inviter_id}",      True),
-                    ("🌐 IP",             f"||`{ip}`||",                                                      True),
-                    ("🔍 Lý do",          fake_reason,                                                        False),
-                    ("📡 ISP",            isp,                                                                True),
-                    ("🌍 Quốc gia",       country,                                                            True),
+                    ("👤 Member",    f"{member} (`{user_id}`)",                                         True),
+                    ("📨 Inviter",   str(inviter_member) if inviter_member else f"ID:{inviter_id}",      True),
+                    ("🌐 IP",        f"||`{ip}`||",                                                      True),
+                    ("🔍 Lý do",     fake_reason,                                                        False),
+                    ("🎯 Giveaway",  "✅ Được phép" if is_primary else "❌ Bị chặn",                    True),
+                    ("📡 ISP",       isp,                                                                True),
+                    ("🌍 Quốc gia",  country,                                                            True),
                 ],
             )
         else:
-            # Verify sạch
-            await send_log(self.bot, "INVITE_VERIFY", "Verify thành công",
+            await send_log(self.bot, "INVITE_VERIFY", "✅ Verify thành công",
                 fields=[
                     ("👤 Thành viên", f"{member} (`{user_id}`)", True),
                     ("🌐 IP",         f"||`{ip}`||",             True),
@@ -409,6 +524,56 @@ class InviteCog(commands.Cog):
                     ("📨 Được mời bởi", str(inviter_m) if inviter_m else f"ID:{inv_info['inviter_id']}",        True),
                 ],
             )
+
+    @commands.command(name="checkip")
+    async def checkip_cmd(self, ctx, *, arg: str = None):
+        """Admin xem tài khoản chung IP với 1 user."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin.")
+
+        target_id = None
+        if ctx.message.mentions:
+            target_id = ctx.message.mentions[0].id
+        elif arg:
+            try:
+                target_id = int(arg.strip())
+            except ValueError:
+                return await ctx.reply("❌ Dùng: `.checkip @user` hoặc `.checkip <user_id>`")
+
+        if not target_id:
+            return await ctx.reply("❌ Dùng: `.checkip @user` hoặc `.checkip <user_id>`")
+
+        # Tìm IP của target
+        found_ips = [ip for ip, users in _ip_records.items() if target_id in users]
+        if not found_ips:
+            return await ctx.reply(f"❌ Không có dữ liệu IP cho user `{target_id}`. Có thể chưa verify.")
+
+        shared_ip_data = _get_shared_ip()
+        embed = discord.Embed(
+            title     = f"🔍 Kiểm tra IP — ID:{target_id}",
+            color     = 0xE74C3C,
+            timestamp = datetime.now(timezone.utc),
+        )
+        embed.set_footer(text="TuyTam Store  •  Chỉ admin thấy")
+
+        for ip in found_ips:
+            users_on_ip  = _ip_records[ip]
+            primary_id   = shared_ip_data.get(ip)
+            lines = []
+            for uid in users_on_ip:
+                m         = ctx.guild.get_member(uid) if ctx.guild else None
+                name      = str(m) if m else f"ID:{uid}"
+                is_target = "← target" if uid == target_id else ""
+                is_prim   = "✅ giveaway OK" if uid == primary_id else "❌ blocked giveaway"
+                lines.append(f"`{uid}` **{name}** — {is_prim} {is_target}")
+
+            embed.add_field(
+                name   = f"🌐 IP: ||`{ip}`|| ({len(users_on_ip)} tài khoản)",
+                value  = "\n".join(lines) or "*(trống)*",
+                inline = False,
+            )
+
+        await ctx.reply(embed=embed)
 
     # ── Slash commands ──
 

@@ -1,5 +1,25 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.2.0] — 2026-06-08
+
+### ✨ Tính năng mới
+- `cogs/invite.py` — Role `UNVERIFY` gán ngay khi join, không xem được kênh nào
+- `cogs/invite.py` — Sau khi verify: tự động gán role `VERIFY`, xóa `UNVERIFY`
+- `cogs/invite.py` — Trùng IP: vẫn verify được nhưng lưu `_shared_ip` data, tài khoản thứ 2+ bị chặn giveaway
+- `cogs/invite.py` — Bot gửi DM giải thích rõ tình trạng cho cả tài khoản primary lẫn bị chặn
+- `cogs/invite.py` — Auto-kick sau **24h** nếu member vẫn còn role UNVERIFY (chưa verify)
+- `cogs/invite.py` — Lệnh `.checkip @user` (admin): xem toàn bộ tài khoản chung IP, ai được/bị chặn giveaway
+- `cogs/giveaway.py` — Chặn tham gia giveaway nếu IP bị blocked, hiển thị ephemeral giải thích lý do
+
+### 🔧 Cấu hình role (trong `invite.py`)
+```
+UNVERIFY_ROLE_ID = 1500512964065755288
+VERIFY_ROLE_ID   = 1464411190808805540
+VERIFY_GUILDS    = {1500513085096726528, 1500512893139943455}
+```
+
+---
+
 ## [v4.1.0] — 2026-06-08
 
 ### 🗑️ Xoá tính năng
