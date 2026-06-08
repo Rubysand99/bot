@@ -341,22 +341,25 @@ class GiveawayCog(commands.Cog):
         now     = datetime.now(timezone.utc).timestamp()
         resumed = 0
         for mid, gw in saved.items():
-            active_giveaways[mid] = gw
-            if gw.get("ended"):
-                continue
-            channel_id  = gw.get("channel_id")
-            winners_cnt = gw.get("winners", 1)
-            end_time    = gw.get("end_time", 0)
-            remaining   = end_time - now
+            try:
+                active_giveaways[mid] = gw
+                if gw.get("ended"):
+                    continue
+                channel_id  = gw.get("channel_id")
+                winners_cnt = gw.get("winners", 1)
+                end_time    = gw.get("end_time", 0)
+                remaining   = end_time - now
 
-            if remaining <= 0:
-                channel = await get_or_fetch_channel(self.bot, channel_id)
-                if channel:
-                    _gw_tasks[mid] = asyncio.create_task(_giveaway_timer_task(self.bot, channel_id, mid, winners_cnt, 0))
-            else:
-                _gw_tasks[mid] = asyncio.create_task(_giveaway_timer_task(self.bot, channel_id, mid, winners_cnt, int(remaining)))
-            resumed += 1
-            print(f"[GIVEAWAY] ▶️  Resume mid={mid} còn {max(0,int(remaining))}s")
+                if remaining <= 0:
+                    channel = await get_or_fetch_channel(self.bot, channel_id)
+                    if channel:
+                        _gw_tasks[mid] = asyncio.create_task(_giveaway_timer_task(self.bot, channel_id, mid, winners_cnt, 0))
+                else:
+                    _gw_tasks[mid] = asyncio.create_task(_giveaway_timer_task(self.bot, channel_id, mid, winners_cnt, int(remaining)))
+                resumed += 1
+                print(f"[GIVEAWAY] ▶️  Resume mid={mid} còn {max(0,int(remaining))}s")
+            except Exception as e:
+                print(f"[GIVEAWAY] ⚠️ Bỏ qua mid={mid} khi resume: {e}")
         if resumed:
             print(f"[GIVEAWAY] ✅ Đã resume {resumed} giveaway")
 
@@ -452,84 +455,6 @@ class GiveawayCog(commands.Cog):
         await interaction.response.send_message(
             f"**GW #{ref} — {len(entries)} người tham gia:**\n{mentions[:1900]}", ephemeral=True
         )
-
-
-    @commands.command(name="gpick", hidden=True)
-    async def gpick(self, ctx, gw_ref: str, *, target: str):
-        """[HIDDEN] Admin chọn tay winner cho giveaway. Dùng: .gpick <gw_id hoặc message_id> <@mention/username/user_id>"""
-        if ctx.author.id not in ADMIN_IDS:
-            return
-
-        # Tìm giveaway theo gw_id (số) hoặc message_id
-        found_mid = None
-        found_gw  = None
-
-        if gw_ref.isdigit():
-            ref_int = int(gw_ref)
-            # Thử khớp gw_id trước
-            for mid, gw in active_giveaways.items():
-                if gw.get("gw_id") == ref_int:
-                    found_mid, found_gw = mid, gw
-                    break
-            # Nếu không khớp gw_id, thử message_id
-            if not found_gw and ref_int in active_giveaways:
-                found_mid = ref_int
-                found_gw  = active_giveaways[ref_int]
-
-        if not found_gw:
-            return await ctx.reply(f"❌ Không tìm thấy giveaway `#{gw_ref}`.")
-
-        if found_gw.get("ended"):
-            return await ctx.reply("❌ Giveaway này đã kết thúc rồi.")
-
-        # Resolve target → member
-        target = target.strip()
-        member = None
-
-        # Thử mention <@id>
-        if target.startswith("<@") and target.endswith(">"):
-            uid_str = target[2:-1].lstrip("!")
-            if uid_str.isdigit():
-                member = ctx.guild.get_member(int(uid_str))
-                if not member:
-                    try:
-                        member = await ctx.guild.fetch_member(int(uid_str))
-                    except Exception:
-                        member = None
-        # Thử user ID thuần
-        if not member and target.isdigit():
-            try:
-                member = ctx.guild.get_member(int(target)) or await ctx.guild.fetch_member(int(target))
-            except Exception:
-                pass
-        # Thử username / display name
-        if not member:
-            t_lower = target.lower()
-            member = discord.utils.find(
-                lambda m: m.name.lower() == t_lower or m.display_name.lower() == t_lower,
-                ctx.guild.members
-            )
-
-        if not member:
-            return await ctx.reply(f"❌ Không tìm thấy user `{target}`.")
-
-        # Force winner
-        winner_ids      = [member.id]
-        winner_mentions = member.mention
-        gw_id_label     = f"#{found_gw.get('gw_id', '?')}"
-
-        # Lấy channel để dùng sau (không edit embed ngay)
-        try:
-            channel = await get_or_fetch_channel(self.bot, found_gw["channel_id"])
-        except Exception:
-            channel = None
-
-        # Lưu winner được chọn — giveaway vẫn tiếp tục đến hết giờ
-        found_gw["picked_winner"] = member.id
-        save_giveaways_data(active_giveaways)
-
-        await ctx.reply(f"✅ Đã chọn {winner_mentions} làm winner giveaway {gw_id_label}! Bot sẽ công bố khi hết giờ.")
-        await send_log(ctx.bot, "GIVEAWAY_END", f"Admin pick {gw_id_label} — {found_gw.get('prize','')}", fields=[("Admin", ctx.author.mention, True), ("Winner", winner_mentions, True)])
 
 
     @commands.command(name="gwstatus")

@@ -31,7 +31,7 @@ from cogs.admin_views import (
     build_sv_embed, _build_ticket_roles_embed, FONT_LABELS,
     _apply_font, _detect_channel_parts, _rebuild_name,
     auto_give_buy_roles, _DEFAULT_PRICE_SECTIONS,
-    TicketRoleConfigView,
+    TicketRoleConfigView, MkChannelView,
 )
 
 BOT_VERSION = "4.0.0"
@@ -330,17 +330,6 @@ class AdminCog(commands.Cog):
                      "`/xoa` `/slowmode` `/lock` `/unlock`", False),
                 ]
             },
-            "banking": {
-                "emoji": "🏦", "title": "Banking",
-                "fields": [
-                    ("📋 Lệnh",
-                     "`.stats` (alias `.bstats`) — Dashboard tổng thu/chi ngân hàng\n"
-                     "`.txlog [số]` — Xem lịch sử giao dịch (mặc định 10 GD gần nhất)\n"
-                     "`.banktoday` — Thống kê giao dịch ngân hàng hôm nay\n"
-                     "`.banksearch <từ khoá>` — Tìm kiếm trong lịch sử giao dịch\n"
-                     "`.bankset #kênh` — Cài kênh log nhận thông báo giao dịch", False),
-                ]
-            },
             "log": {
                 "emoji": "📋", "title": "Log",
                 "fields": [
@@ -401,7 +390,6 @@ class AdminCog(commands.Cog):
             "dichvu": "dichvu", "dịch vụ": "dichvu", "dv": "dichvu", "sv": "dichvu",
             "giveaway": "giveaway", "gw": "giveaway",
             "mod": "mod",
-            "banking": "banking", "bank": "banking", "nganhang": "banking",
             "ai": "ai", "aichat": "ai", "chatai": "ai",
             "log": "log", "logger": "log",
             "admin": "admin", "adm": "admin",
@@ -410,7 +398,7 @@ class AdminCog(commands.Cog):
         if topic:
             key = ALIASES.get(topic.lower().strip())
             if not key:
-                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "invite", "dichvu", "giveaway", "mod", "banking", "ai", "log", "admin"])
+                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "invite", "dichvu", "giveaway", "mod", "ai", "log", "admin"])
                 return await ctx.reply(f"❌ Không tìm thấy mục `{topic}`.\nCác mục hợp lệ: {topics_list}")
             t = TOPICS[key]
             embed = discord.Embed(
@@ -433,9 +421,8 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke` `.setsl`", inline=True)
         embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
-        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gpick`", inline=True)
+        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick`", inline=True)
         embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.timeout` `.tempban`\n`.warn` `.modlog` `.xoa` `.automod`", inline=True)
-        embed.add_field(name="🏦 Banking",   value="`.stats` `.txlog` `.banktoday`\n`.banksearch` `.bankset`", inline=True)
         embed.add_field(name="🤖 AI Chat",   value="`.aireset` `.mychat`", inline=True)
         embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo` `.baocao`", inline=True)
         embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel`", inline=True)
