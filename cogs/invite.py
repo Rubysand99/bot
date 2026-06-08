@@ -160,8 +160,9 @@ class InviteCog(commands.Cog):
         _pending_joins   = {int(k): v for k, v in get_pending_joins().items()}
         _member_inviters = {int(k): v for k, v in get_member_inviters().items()}
         _ip_records      = get_ip_records()
-        # Đảm bảo role tồn tại trên tất cả guild
-        await self.bot.wait_until_ready()
+
+    @commands.Cog.listener()
+    async def on_ready(self):
         for guild_id in VERIFY_GUILDS:
             guild = self.bot.get_guild(guild_id)
             if guild:
