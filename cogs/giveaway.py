@@ -142,6 +142,19 @@ class GiveawayView(View):
 
         uid = interaction.user.id
 
+        # Kiểm tra role Verify
+        try:
+            from cogs.invite import VERIFY_ROLE_ID
+            member = interaction.guild.get_member(uid) if interaction.guild else None
+            if member and not any(r.id == VERIFY_ROLE_ID for r in member.roles):
+                return await interaction.response.send_message(
+                    "❌ Bạn cần **xác minh tài khoản** trước khi tham gia giveaway.\n"
+                    "Gõ `.verify` để nhận link xác minh.",
+                    ephemeral=True,
+                )
+        except Exception:
+            pass
+
         # Kiểm tra IP — chỉ tài khoản primary (đầu tiên verify trên IP đó) được tham gia
         try:
             from cogs.invite import get_primary_user_for_ip, _ip_records
