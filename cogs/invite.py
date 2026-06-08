@@ -350,9 +350,41 @@ class InviteCog(commands.Cog):
         embed.set_footer(text=f"TuyTam Bot  •  {len(guilds)} servers")
         await ctx.reply(embed=embed)
 
+    @commands.command(name="leaveguild", aliases=["leaveserver"])
+    async def leaveguild_cmd(self, ctx, guild_id: str = None):
+        """Admin kick bot ra khỏi server. Dùng: .leaveguild <guild_id>"""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin.")
+
+        if not guild_id:
+            return await ctx.reply(
+                "❌ Dùng: `.leaveguild <guild_id>`\n"
+                "Xem danh sách server: `.serverlist`"
+            )
+
+        try:
+            gid = int(guild_id.strip())
+        except ValueError:
+            return await ctx.reply("❌ Guild ID không hợp lệ.")
+
+        guild = self.bot.get_guild(gid)
+        if not guild:
+            return await ctx.reply(f"❌ Không tìm thấy server `{gid}`.")
+
+        name = guild.name
+        try:
+            await guild.leave()
+            await ctx.reply(f"✅ Bot đã rời khỏi **{name}** (`{gid}`).")
+            await send_log(self.bot, "INFO", f"Bot rời server: {name}",
+                fields=[
+                    ("🆔 Guild ID", str(gid),         True),
+                    ("⚙️ Admin",    str(ctx.author),   True),
+                ],
+            )
+        except discord.HTTPException as e:
+            await ctx.reply(f"❌ Không rời được: `{e}`")
 
 
-    @commands.command(name="invite", aliases=["inv", "invites", "i"])
     async def invite_cmd(self, ctx, member: discord.Member = None):
         target = member or ctx.author
         total, fake, left, net = _get_net_invites(target.id)
