@@ -144,27 +144,31 @@ class GiveawayView(View):
 
         # Kiểm tra role Verify
         try:
-            from cogs.invite import VERIFY_ROLE_ID
+            from cogs.invite import _get_verify_role_id
             member = interaction.guild.get_member(uid) if interaction.guild else None
-            if member and not any(r.id == VERIFY_ROLE_ID for r in member.roles):
-                return await interaction.response.send_message(
-                    "❌ Bạn cần **xác minh tài khoản** trước khi tham gia giveaway.\n"
-                    "Gõ `.verify` để nhận link xác minh.",
-                    ephemeral=True,
-                )
+            if member:
+                verify_role_id = _get_verify_role_id(interaction.guild.id)
+                if not any(r.id == verify_role_id for r in member.roles):
+                    return await interaction.response.send_message(
+                        "❌ Bạn cần **xác minh tài khoản** trước khi tham gia giveaway.\n"
+                        "Gõ `.verify` để nhận link xác minh.",
+                        ephemeral=True,
+                    )
         except Exception:
             pass
 
-        # Kiểm tra IP — chỉ tài khoản primary (đầu tiên verify trên IP đó) được tham gia
+        # Kiểm tra IP — mỗi IP chỉ 1 tài khoản được tham gia giveaway
         try:
-            from cogs.invite import get_primary_user_for_ip, _ip_records
+            from cogs.invite import _ip_records
+            entries_so_far = gw.get("entries", set())
             user_ips = [ip for ip, users in _ip_records.items() if uid in users]
             for ip in user_ips:
-                primary = get_primary_user_for_ip(ip)
-                if primary is not None and primary != uid:
+                shared_users = _ip_records.get(ip, [])
+                conflict = [u for u in shared_users if u != uid and u in entries_so_far]
+                if conflict:
                     return await interaction.response.send_message(
                         "⚠️ **Bạn không thể tham gia giveaway này.**\n\n"
-                        "Địa chỉ IP của bạn đang được chia sẻ với một tài khoản khác đã xác minh trước. "
+                        "Địa chỉ IP của bạn đang được chia sẻ với một tài khoản khác đã tham gia giveaway này. "
                         "Theo chính sách của server, **mỗi địa chỉ IP chỉ được 1 tài khoản tham gia giveaway**.\n\n"
                         "Nếu bạn nghĩ đây là nhầm lẫn (ví dụ: dùng chung mạng gia đình), "
                         "hãy liên hệ admin để được xem xét.",

@@ -29,8 +29,16 @@ from verify_server import (
 )
 
 # ── Role IDs (fallback defaults, sẽ được cập nhật động khi _ensure_roles chạy) ──
-UNVERIFY_ROLE_ID = 1500512964065755288
-VERIFY_ROLE_ID   = 1464411190808805540
+UNVERIFY_ROLE_ID = 0  # sẽ được set động bởi _ensure_roles
+VERIFY_ROLE_ID   = 0  # sẽ được set động bởi _ensure_roles
+
+# ── Các role được gán khi verify thành công (ngoài role Verify tự tạo) ──
+MEMBER_ROLE_IDS = [
+    1500512964065755288,  # ping Stock
+    1500513085096726528,  # ping Notification
+    1464411190808805540,  # Member
+    1500512893139943455,  # ping media
+]
 
 
 # ── Per-guild role ID cache ──
@@ -262,8 +270,15 @@ class InviteCog(commands.Cog):
                 return await ctx.reply(f"✅ {member.mention} đã được verify rồi.")
 
             try:
+                roles_to_add = []
                 if verify_role:
-                    await member.add_roles(verify_role, reason=f"Force verify bởi {ctx.author}")
+                    roles_to_add.append(verify_role)
+                for rid in MEMBER_ROLE_IDS:
+                    role = guild.get_role(rid)
+                    if role and role not in member.roles:
+                        roles_to_add.append(role)
+                if roles_to_add:
+                    await member.add_roles(*roles_to_add, reason=f"Force verify bởi {ctx.author}")
                 if unverify_role and unverify_role in member.roles:
                     await member.remove_roles(unverify_role, reason=f"Force verify bởi {ctx.author}")
             except (discord.Forbidden, discord.HTTPException) as e:
@@ -492,7 +507,7 @@ class InviteCog(commands.Cog):
                     pass
 
         # Gán role UNVERIFY ngay khi join
-        unverify_role = member.guild.get_role(_get_unverify_role_id(guild.id))
+        unverify_role = member.guild.get_role(_get_unverify_role_id(member.guild.id))
         if unverify_role:
             try:
                 await member.add_roles(unverify_role, reason="Chưa verify")
@@ -651,16 +666,23 @@ class InviteCog(commands.Cog):
         _member_inviters[user_id] = {"inviter_id": inviter_id, "guild_id": result["guild_id"]}
         save_member_inviters(_member_inviters)
 
-        # Gán role VERIFY, xóa UNVERIFY
+        # Gán role VERIFY + các role member, xóa UNVERIFY
         guild = self.bot.get_guild(member.guild.id)
         if guild:
             m = guild.get_member(user_id)
             if m:
                 verify_role   = guild.get_role(_get_verify_role_id(guild.id))
                 unverify_role = guild.get_role(_get_unverify_role_id(guild.id))
+                roles_to_add = []
+                if verify_role and verify_role not in m.roles:
+                    roles_to_add.append(verify_role)
+                for rid in MEMBER_ROLE_IDS:
+                    role = guild.get_role(rid)
+                    if role and role not in m.roles:
+                        roles_to_add.append(role)
                 try:
-                    if verify_role:
-                        await m.add_roles(verify_role, reason="Đã verify")
+                    if roles_to_add:
+                        await m.add_roles(*roles_to_add, reason="Đã verify")
                     if unverify_role and unverify_role in m.roles:
                         await m.remove_roles(unverify_role, reason="Đã verify")
                 except (discord.Forbidden, discord.HTTPException) as e:

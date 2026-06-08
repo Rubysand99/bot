@@ -1024,6 +1024,12 @@ class SetupRoleView(View):
            
         )
 
+    @discord.ui.button(label="🔐 Quyền Role", style=discord.ButtonStyle.secondary, row=2)
+    async def set_perm_btn(self, interaction: discord.Interaction, _):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await RolePermFlow.start(interaction)
+
 
 class CreateRoleModal(discord.ui.Modal, title="➕ Tạo Role Mới"):
     name_input    = TextInput(label="Tên role", max_length=100)
@@ -1541,6 +1547,239 @@ class MkChannelModal(discord.ui.Modal, title="➕ Tạo Kênh Mới"):
             embed.add_field(name="Kênh đã tạo", value=mentions, inline=False)
         embed.set_footer(text=f"Bởi {interaction.user}")
         await interaction.followup.send(embed=embed, ephemeral=False)
+
+
+# ══════════════════════════════════════════
+# ROLE PERM FLOW
+# ══════════════════════════════════════════
+
+# Danh sách các quyền hỗ trợ (tên hiển thị, tên attr trong PermissionOverwrite)
+_PERM_LIST = [
+    ("Xem kênh",            "view_channel"),
+    ("Gửi tin nhắn",        "send_messages"),
+    ("Đọc lịch sử",         "read_message_history"),
+    ("Đính kèm file",       "attach_files"),
+    ("Thêm reaction",       "add_reactions"),
+    ("Dùng slash command",  "use_application_commands"),
+    ("Nhúng link",          "embed_links"),
+    ("Đề cập @everyone",    "mention_everyone"),
+    ("Quản lý tin nhắn",    "manage_messages"),
+    ("Kết nối voice",       "connect"),
+    ("Nói trong voice",     "speak"),
+    ("Dùng VAD",            "use_voice_activation"),
+    ("Stream",              "stream"),
+    ("Ưu tiên phát biểu",   "priority_speaker"),
+    ("Tắt mic người khác",  "mute_members"),
+    ("Tắt tai người khác",  "deafen_members"),
+    ("Di chuyển members",   "move_members"),
+    ("Quản lý kênh",        "manage_channels"),
+    ("Quản lý webhooks",    "manage_webhooks"),
+    ("Quản lý threads",     "manage_threads"),
+    ("Tạo public thread",   "create_public_threads"),
+    ("Tạo private thread",  "create_private_threads"),
+    ("Gửi trong thread",    "send_messages_in_threads"),
+]
+
+
+def _perm_list_embed(title: str, note: str = "") -> discord.Embed:
+    lines = []
+    for i, (name, _) in enumerate(_PERM_LIST, 1):
+        lines.append(f"`{i:>2}.` {name}")
+    # Chia 2 cột
+    half = (len(lines) + 1) // 2
+    col1 = "\n".join(lines[:half])
+    col2 = "\n".join(lines[half:])
+    embed = discord.Embed(title=title, color=0x5865F2)
+    embed.add_field(name="\u200b", value=col1, inline=True)
+    embed.add_field(name="\u200b", value=col2, inline=True)
+    if note:
+        embed.set_footer(text=note)
+    return embed
+
+
+def _role_list_embed(guild: discord.Guild) -> discord.Embed:
+    roles = [r for r in sorted(guild.roles, key=lambda r: -r.position) if r.name != "@everyone"][:25]
+    lines = [f"`{i:>2}.` {r.mention}" for i, r in enumerate(roles, 1)]
+    half = (len(lines) + 1) // 2
+    embed = discord.Embed(title="🏷️ Chọn Role", description="Nhập số thứ tự, cách nhau bởi dấu phẩy.\nVí dụ: `1, 3, 5`", color=0x5865F2)
+    embed.add_field(name="\u200b", value="\n".join(lines[:half]) or "—", inline=True)
+    embed.add_field(name="\u200b", value="\n".join(lines[half:]) or "\u200b", inline=True)
+    return embed, roles
+
+
+def _channel_list_embed(guild: discord.Guild) -> tuple[discord.Embed, list]:
+    channels = [c for c in guild.channels
+                if isinstance(c, (discord.TextChannel, discord.VoiceChannel, discord.ForumChannel, discord.StageChannel))]
+    channels = sorted(channels, key=lambda c: (c.category.position if c.category else -1, c.position))[:25]
+    lines = [f"`{i:>2}.` {c.mention}" for i, c in enumerate(channels, 1)]
+    half = (len(lines) + 1) // 2
+    embed = discord.Embed(title="📋 Chọn Kênh", description="Nhập số thứ tự, cách nhau bởi dấu phẩy.\nVí dụ: `1, 2, 4`\nGõ `all` để chọn tất cả.", color=0x5865F2)
+    embed.add_field(name="\u200b", value="\n".join(lines[:half]) or "—", inline=True)
+    embed.add_field(name="\u200b", value="\n".join(lines[half:]) or "\u200b", inline=True)
+    return embed, channels
+
+
+def _parse_indices(text: str, max_len: int) -> list[int] | None:
+    """Parse '1, 3, 5' → [0, 2, 4]. Trả None nếu lỗi."""
+    indices = []
+    for part in text.replace(" ", "").split(","):
+        if not part:
+            continue
+        try:
+            n = int(part)
+            if not (1 <= n <= max_len):
+                return None
+            indices.append(n - 1)
+        except ValueError:
+            return None
+    return indices
+
+
+class RolePermFlow:
+    """
+    Flow nhiều bước qua chat message:
+    1. Gửi list role → admin reply số
+    2. Gửi list kênh → admin reply số / all
+    3. Gửi list quyền muốn BẬT → admin reply số / none
+    4. Gửi list quyền muốn TẮT → admin reply số / none
+    5. Xác nhận → apply
+    """
+
+    @staticmethod
+    async def start(interaction: discord.Interaction):
+        guild = interaction.guild
+        role_embed, roles = _role_list_embed(guild)
+        role_embed.set_footer(text="Nhập số thứ tự các role, cách nhau bằng dấu phẩy. VD: 1, 3")
+        await interaction.response.send_message(embed=role_embed, ephemeral=False)
+
+        def check_author(m):
+            return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id
+
+        channel = interaction.channel
+        bot     = interaction.client
+
+        async def wait_reply(prompt_embed=None):
+            if prompt_embed:
+                await channel.send(embed=prompt_embed)
+            try:
+                msg = await bot.wait_for("message", check=check_author, timeout=120)
+                return msg.content.strip()
+            except asyncio.TimeoutError:
+                await channel.send("⏱️ Hết thời gian chờ. Vui lòng chạy lại lệnh setup.")
+                return None
+
+        # ── Bước 1: chọn role ──
+        raw = await wait_reply()
+        if raw is None: return
+        idxs = _parse_indices(raw, len(roles))
+        if not idxs:
+            return await channel.send("❌ Số không hợp lệ. Vui lòng chạy lại.")
+        selected_roles = [roles[i] for i in idxs]
+
+        # ── Bước 2: chọn kênh ──
+        ch_embed, channels = _channel_list_embed(guild)
+        ch_embed.set_footer(text="Nhập số thứ tự các kênh. VD: 1, 2, 4  hoặc  all")
+        raw = await wait_reply(ch_embed)
+        if raw is None: return
+        if raw.lower() == "all":
+            selected_channels = channels
+        else:
+            idxs = _parse_indices(raw, len(channels))
+            if not idxs:
+                return await channel.send("❌ Số không hợp lệ. Vui lòng chạy lại.")
+            selected_channels = [channels[i] for i in idxs]
+
+        # ── Bước 3: quyền BẬT ──
+        allow_embed = _perm_list_embed(
+            "✅ Chọn quyền muốn BẬT",
+            "Nhập số thứ tự. VD: 1, 2, 5  hoặc  none để bỏ qua"
+        )
+        raw = await wait_reply(allow_embed)
+        if raw is None: return
+        if raw.lower() == "none":
+            allow_perms = []
+        else:
+            idxs = _parse_indices(raw, len(_PERM_LIST))
+            if not idxs:
+                return await channel.send("❌ Số không hợp lệ. Vui lòng chạy lại.")
+            allow_perms = [_PERM_LIST[i] for i in idxs]
+
+        # ── Bước 4: quyền TẮT ──
+        deny_embed = _perm_list_embed(
+            "❌ Chọn quyền muốn TẮT",
+            "Nhập số thứ tự. VD: 3, 4  hoặc  none để bỏ qua"
+        )
+        raw = await wait_reply(deny_embed)
+        if raw is None: return
+        if raw.lower() == "none":
+            deny_perms = []
+        else:
+            idxs = _parse_indices(raw, len(_PERM_LIST))
+            if not idxs:
+                return await channel.send("❌ Số không hợp lệ. Vui lòng chạy lại.")
+            deny_perms = [_PERM_LIST[i] for i in idxs]
+
+        # Kiểm tra conflict
+        allow_attrs = {a for _, a in allow_perms}
+        deny_attrs  = {a for _, a in deny_perms}
+        conflict    = allow_attrs & deny_attrs
+        if conflict:
+            names = ", ".join(n for n, a in _PERM_LIST if a in conflict)
+            return await channel.send(f"❌ Quyền vừa BẬT vừa TẮT: **{names}**. Vui lòng chạy lại.")
+
+        if not allow_perms and not deny_perms:
+            return await channel.send("❌ Bạn chưa chọn quyền nào. Vui lòng chạy lại.")
+
+        # ── Bước 5: xác nhận ──
+        role_mentions  = " ".join(r.mention for r in selected_roles)
+        ch_mentions    = " ".join(c.mention for c in selected_channels[:10])
+        if len(selected_channels) > 10:
+            ch_mentions += f" … (+{len(selected_channels)-10})"
+        allow_names = ", ".join(n for n, _ in allow_perms) if allow_perms else "*(không có)*"
+        deny_names  = ", ".join(n for n, _ in deny_perms)  if deny_perms  else "*(không có)*"
+
+        confirm_embed = discord.Embed(title="⚠️ Xác nhận áp dụng quyền", color=0xF1C40F)
+        confirm_embed.add_field(name="🏷️ Role",       value=role_mentions,              inline=False)
+        confirm_embed.add_field(name="📋 Kênh",        value=ch_mentions,                inline=False)
+        confirm_embed.add_field(name="✅ Quyền BẬT",  value=allow_names,                inline=False)
+        confirm_embed.add_field(name="❌ Quyền TẮT",  value=deny_names,                 inline=False)
+        confirm_embed.set_footer(text="Gõ  confirm  để áp dụng, hoặc  cancel  để huỷ.")
+
+        raw = await wait_reply(confirm_embed)
+        if raw is None: return
+        if raw.lower() != "confirm":
+            return await channel.send("🚫 Đã huỷ.")
+
+        # ── Apply ──
+        progress = await channel.send(f"⏳ Đang áp dụng quyền cho **{len(selected_channels)}** kênh…")
+        success, failed = 0, 0
+        for ch in selected_channels:
+            for role in selected_roles:
+                try:
+                    existing  = ch.overwrites_for(role)
+                    overwrite = discord.PermissionOverwrite.from_pair(
+                        existing.pair()[0], existing.pair()[1]
+                    )
+                    for _, attr in allow_perms:
+                        setattr(overwrite, attr, True)
+                    for _, attr in deny_perms:
+                        setattr(overwrite, attr, False)
+                    await ch.set_permissions(role, overwrite=overwrite,
+                                             reason=f"RolePermFlow bởi {interaction.user}")
+                    success += 1
+                except Exception:
+                    failed += 1
+
+        result_embed = discord.Embed(title="✅ Hoàn tất áp dụng quyền", color=0x57F287)
+        result_embed.add_field(name="🏷️ Role",      value=role_mentions,  inline=False)
+        result_embed.add_field(name="✅ Thành công", value=f"**{success}** lượt", inline=True)
+        if failed:
+            result_embed.add_field(name="❌ Thất bại", value=f"**{failed}** lượt", inline=True)
+        result_embed.add_field(name="✅ Bật",  value=allow_names, inline=False)
+        result_embed.add_field(name="❌ Tắt",  value=deny_names,  inline=False)
+        result_embed.set_footer(text=f"Bởi {interaction.user}")
+        await progress.delete()
+        await channel.send(embed=result_embed)
 
 
 # ══════════════════════════════════════════
