@@ -28,21 +28,22 @@ from verify_server import (
     create_token, build_verify_url, VERIFY_CALLBACKS,
 )
 
-# ── Role IDs ──
+# ── Role IDs (fallback defaults, sẽ được cập nhật động khi _ensure_roles chạy) ──
 UNVERIFY_ROLE_ID = 1500512964065755288
 VERIFY_ROLE_ID   = 1464411190808805540
 
-# ── Guild IDs bot hoạt động (dùng để gán role) ──
-# Thêm guild ID vào đây nếu bot phục vụ nhiều server
-VERIFY_GUILDS = {
-    1500513085096726528,
-    1500512893139943455,
-}
+
+# ── Per-guild role ID cache ──
+# {guild_id: {"verify": role_id, "unverify": role_id}}
+_guild_roles: dict[int, dict[str, int]] = {}
+
+def _get_verify_role_id(guild_id: int) -> int:
+    return _guild_roles.get(guild_id, {}).get("verify", VERIFY_ROLE_ID)
+
+def _get_unverify_role_id(guild_id: int) -> int:
+    return _guild_roles.get(guild_id, {}).get("unverify", UNVERIFY_ROLE_ID)
 
 
-# ══════════════════════════════════════════
-# IN-MEMORY STATE
-# ══════════════════════════════════════════
 
 _invite_cache:    dict[int, dict[str, int]] = {}
 _pending_joins:   dict[int, dict]           = {}   # member_id → {inviter_id, guild_id, joined_at}
@@ -163,17 +164,27 @@ class InviteCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        for guild_id in VERIFY_GUILDS:
-            guild = self.bot.get_guild(guild_id)
-            if guild:
-                await self._ensure_roles(guild)
+        for guild in self.bot.guilds:
+            await self._ensure_roles(guild)
+
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild: discord.Guild):
+        """Khi bot vào server mới → tự tạo role và set permission."""
+        await self._ensure_roles(guild)
+        await send_log(self.bot, "INFO", f"Bot vừa vào server mới: {guild.name}",
+            fields=[
+                ("🆔 ID",      str(guild.id),                                   True),
+                ("👑 Owner",   str(guild.owner) if guild.owner else "?",        True),
+                ("👥 Members", str(guild.member_count),                         True),
+            ],
+        )
 
     async def _ensure_roles(self, guild: discord.Guild):
-        """Tự tạo role UNVERIFY / VERIFY nếu chưa có, set permission Unverify."""
-        global UNVERIFY_ROLE_ID, VERIFY_ROLE_ID
+        """Tự tạo role UNVERIFY / VERIFY nếu chưa có, set permission Unverify.
+        Hoạt động đúng trên đa server — lưu role ID vào _guild_roles."""
 
-        # UNVERIFY
-        unverify = guild.get_role(UNVERIFY_ROLE_ID)
+        # ── UNVERIFY ──
+        unverify = guild.get_role(_get_unverify_role_id(guild.id))
         if not unverify:
             unverify = discord.utils.get(guild.roles, name="Unverify")
         if not unverify:
@@ -187,9 +198,10 @@ class InviteCog(commands.Cog):
             except discord.Forbidden:
                 print(f"[INVITE] ❌ Không có quyền tạo role tại {guild.name}")
                 return
-        UNVERIFY_ROLE_ID = unverify.id
 
-        # Deny View Channels cho Unverify trên tất cả kênh
+        _guild_roles.setdefault(guild.id, {})["unverify"] = unverify.id
+
+        # Deny view_channel cho Unverify trên tất cả kênh (chỉ set những kênh chưa có)
         overwrite = discord.PermissionOverwrite(view_channel=False)
         for channel in guild.channels:
             try:
@@ -200,8 +212,8 @@ class InviteCog(commands.Cog):
             except (discord.Forbidden, discord.HTTPException):
                 pass
 
-        # VERIFY
-        verify = guild.get_role(VERIFY_ROLE_ID)
+        # ── VERIFY ──
+        verify = guild.get_role(_get_verify_role_id(guild.id))
         if not verify:
             verify = discord.utils.get(guild.roles, name="Verify")
         if not verify:
@@ -215,21 +227,73 @@ class InviteCog(commands.Cog):
             except discord.Forbidden:
                 print(f"[INVITE] ❌ Không có quyền tạo role tại {guild.name}")
                 return
-        VERIFY_ROLE_ID = verify.id
+
+        _guild_roles.setdefault(guild.id, {})["verify"] = verify.id
+        print(f"[INVITE] ✅ Roles OK tại {guild.name} — Verify:{verify.id} Unverify:{unverify.id}")
 
     @commands.command(name="verify")
-    async def verify_cmd(self, ctx):
-        """Member tự gõ .verify để nhận link xác minh (dành cho member cũ)."""
-        member = ctx.author
-        guild  = ctx.guild
+    async def verify_cmd(self, ctx, target_id: str = None):
+        """
+        Member tự gõ .verify → nhận link xác minh qua DM.
+        Admin gõ .verify <user_id> → verify cưỡng bức (không cần link), gán role ngay.
+        """
+        guild = ctx.guild
 
-        # Nếu đã có role Verify rồi thì thôi
-        verify_role = guild.get_role(VERIFY_ROLE_ID) if guild else None
+        # ── ADMIN FORCE VERIFY ──
+        if target_id:
+            if ctx.author.id not in ADMIN_IDS:
+                return await ctx.reply("❌ Chỉ admin mới có thể verify cho người khác.")
+
+            # Resolve member
+            member = None
+            try:
+                uid = int(target_id.strip("<@!>"))
+                member = guild.get_member(uid) or await guild.fetch_member(uid)
+            except (ValueError, discord.NotFound, discord.HTTPException):
+                pass
+
+            if not member:
+                return await ctx.reply(f"❌ Không tìm thấy member `{target_id}` trong server.")
+
+            verify_role   = guild.get_role(_get_verify_role_id(guild.id))
+            unverify_role = guild.get_role(_get_unverify_role_id(guild.id))
+
+            if verify_role and verify_role in member.roles:
+                return await ctx.reply(f"✅ {member.mention} đã được verify rồi.")
+
+            try:
+                if verify_role:
+                    await member.add_roles(verify_role, reason=f"Force verify bởi {ctx.author}")
+                if unverify_role and unverify_role in member.roles:
+                    await member.remove_roles(unverify_role, reason=f"Force verify bởi {ctx.author}")
+            except (discord.Forbidden, discord.HTTPException) as e:
+                return await ctx.reply(f"❌ Không gán được role: `{e}`")
+
+            # Lưu vào member_inviters để tracking
+            inv_info = _member_inviters.get(member.id, {})
+            if not inv_info:
+                _member_inviters[member.id] = {"inviter_id": None, "guild_id": guild.id}
+                save_member_inviters(_member_inviters)
+
+            await ctx.reply(f"✅ Đã verify **{member}** thành công.")
+            await send_log(self.bot, "INVITE_VERIFY", f"Force verify bởi admin",
+                fields=[
+                    ("👤 Member",  f"{member} (`{member.id}`)", True),
+                    ("⚙️ Admin",   str(ctx.author),             True),
+                    ("📌 Method",  "Force (không qua link)",    True),
+                ],
+            )
+            return
+
+        # ── MEMBER TỰ VERIFY ──
+        member = ctx.author
+
+        verify_role = guild.get_role(_get_verify_role_id(guild.id)) if guild else None
         if verify_role and verify_role in member.roles:
-            return await ctx.reply("✅ Bạn đã được xác minh rồi!", ephemeral=False)
+            return await ctx.reply("✅ Bạn đã được xác minh rồi!")
 
         # Gán Unverify nếu chưa có (member cũ)
-        unverify_role = guild.get_role(UNVERIFY_ROLE_ID) if guild else None
+        unverify_role = guild.get_role(_get_unverify_role_id(guild.id)) if guild else None
         if unverify_role and unverify_role not in member.roles:
             try:
                 await member.add_roles(unverify_role, reason="Chờ verify")
@@ -251,6 +315,40 @@ class InviteCog(commands.Cog):
             await member.send("📨 Link verify đã được gửi vào DM của bạn!")
         except discord.Forbidden:
             await ctx.send(f"{member.mention} Vui lòng bật DM để nhận link verify.", delete_after=10)
+
+    @commands.command(name="serverlist", aliases=["servers", "guildlist"])
+    async def serverlist_cmd(self, ctx):
+        """Admin xem danh sách server bot đang hoạt động."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin.")
+
+        guilds = self.bot.guilds
+        if not guilds:
+            return await ctx.reply("❌ Bot chưa vào server nào.")
+
+        embed = discord.Embed(
+            title     = f"🌐 Bot đang ở {len(guilds)} server",
+            color     = 0x5865F2,
+            timestamp = datetime.now(timezone.utc),
+        )
+
+        for g in sorted(guilds, key=lambda x: x.member_count, reverse=True):
+            bots    = sum(1 for m in g.members if m.bot)
+            humans  = g.member_count - bots
+            owner   = str(g.owner) if g.owner else f"ID:{g.owner_id}"
+            embed.add_field(
+                name  = f"{g.name}",
+                value = (
+                    f"🆔 `{g.id}`\n"
+                    f"👑 {owner}\n"
+                    f"👥 {humans} người · 🤖 {bots} bot\n"
+                    f"📅 <t:{int(g.created_at.timestamp())}:D>"
+                ),
+                inline = True,
+            )
+
+        embed.set_footer(text=f"TuyTam Bot  •  {len(guilds)} servers")
+        await ctx.reply(embed=embed)
 
 
 
@@ -362,7 +460,7 @@ class InviteCog(commands.Cog):
                     pass
 
         # Gán role UNVERIFY ngay khi join
-        unverify_role = member.guild.get_role(UNVERIFY_ROLE_ID)
+        unverify_role = member.guild.get_role(_get_unverify_role_id(guild.id))
         if unverify_role:
             try:
                 await member.add_roles(unverify_role, reason="Chưa verify")
@@ -426,7 +524,7 @@ class InviteCog(commands.Cog):
             m = guild.get_member(member.id)
             if not m:
                 return  # Đã tự rời
-            if any(r.id == UNVERIFY_ROLE_ID for r in m.roles):
+            if any(r.id == _get_unverify_role_id(m.guild.id) for r in m.roles):
                 await m.kick(reason="Không verify trong 24 giờ")
                 await send_log(self.bot, "INVITE_VERIFY", "⏱️ Auto-kick — không verify trong 24h",
                     fields=[
@@ -526,8 +624,8 @@ class InviteCog(commands.Cog):
         if guild:
             m = guild.get_member(user_id)
             if m:
-                verify_role   = guild.get_role(VERIFY_ROLE_ID)
-                unverify_role = guild.get_role(UNVERIFY_ROLE_ID)
+                verify_role   = guild.get_role(_get_verify_role_id(guild.id))
+                unverify_role = guild.get_role(_get_unverify_role_id(guild.id))
                 try:
                     if verify_role:
                         await m.add_roles(verify_role, reason="Đã verify")
