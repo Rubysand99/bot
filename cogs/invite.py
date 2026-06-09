@@ -5,7 +5,7 @@ v6.0.0:
   - Nếu trùng IP: vẫn cho phép verify + gán VERIFY, nhưng lưu data shared_ip
     → Chỉ 1 tài khoản trên cùng IP được tham gia giveaway (tài khoản join trước)
     → Bot gửi ephemeral thông báo khi user bị chặn tham gia giveaway
-  - Auto-kick sau 24h nếu chưa verify
+  - Member không verify sẽ giữ nguyên role Unverify (không auto-kick)
   - Lệnh .checkip <@user|id> để admin xem tài khoản chung IP
   - Log đầy đủ: INVITE_JOIN, INVITE_VERIFY, INVITE_FAKE, INVITE_LEFT
 """
@@ -557,30 +557,7 @@ class InviteCog(commands.Cog):
         # Gửi DM link verify
         await self._send_verify_dm(member, inviter_id)
 
-        # Auto-kick sau 24h nếu chưa verify
-        asyncio.create_task(self._auto_kick_unverified(member))
-
-    async def _auto_kick_unverified(self, member: discord.Member):
-        """Kick member sau 24h nếu vẫn còn role UNVERIFY."""
-        await asyncio.sleep(86400)  # 24 giờ
-        try:
-            # Fetch lại member để check role hiện tại
-            guild  = self.bot.get_guild(member.guild.id)
-            if not guild:
-                return
-            m = guild.get_member(member.id)
-            if not m:
-                return  # Đã tự rời
-            if any(r.id == _get_unverify_role_id(m.guild.id) for r in m.roles):
-                await m.kick(reason="Không verify trong 24 giờ")
-                await send_log(self.bot, "INVITE_VERIFY", "⏱️ Auto-kick — không verify trong 24h",
-                    fields=[
-                        ("👤 Thành viên", f"{m} (`{m.id}`)", True),
-                        ("⚠️ Lý do",      "Hết 24h chưa verify", True),
-                    ],
-                )
-        except Exception as e:
-            print(f"[INVITE] ⚠️ Auto-kick lỗi: {e}")
+        # Auto-kick sau 24h đã bị tắt — member giữ nguyên role Unverify nếu không verify
 
     async def _send_verify_dm(self, member: discord.Member, inviter_id: int | None):
         """Gửi DM link verify, đăng ký callback xử lý kết quả."""
