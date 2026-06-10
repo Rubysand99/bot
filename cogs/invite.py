@@ -773,9 +773,8 @@ class InviteCog(commands.Cog):
         status_msg = await ctx.reply(f"⏳ Đang quét {limit} message trong {log_channel.mention}...")
 
         # Regex parse user_id và IP từ plain text log
-        # Format: **👤 Thành viên:** Ruby (`123456789`)  ·  **🌐 IP:** ||`1.2.3.4`||
-        re_user = re.compile(r"`\[INVITE_(?:VERIFY|FAKE)\]`.*?\((`?\d+`?)\)", re.DOTALL)
-        re_user2 = re.compile(r"\*\*👤[^*]*\*\*:[^\n]*\(`(\d+)`\)")
+        # Format thực: chip020408 (`1259747159092367364`)  ·  **🌐 IP:** ||`14.228.52.58`||
+        re_user2 = re.compile(r"\(`(\d{10,20})`\)")  # match (`<id>`) bất kỳ chỗ nào
         re_ip    = re.compile(r"\|\|`([\d\.]+)`\|\|")
 
         found   = 0   # message INVITE_VERIFY/FAKE dùng được
