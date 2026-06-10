@@ -606,3 +606,50 @@ def save_ip_records(records: dict) -> None:
     data = load_data()
     data["_ip_records"] = records
     save_data(data)
+
+async def atomic_register_ip(ip: str, user_id: int) -> list[int]:
+    """
+    Atomic: dùng $addToSet để thêm user_id vào list IP trong MongoDB.
+    Tránh race condition khi 2 người verify cùng lúc.
+    Trả về list user_ids hiện tại trên IP đó (SAU khi đã thêm).
+    """
+    col, _ = _get_mongo()
+    key = f"_ip_records.{ip.replace('.', '_')}"
+    try:
+        await col.update_one(
+            {"_id": "main"},
+            {"$addToSet": {key: user_id}},
+            upsert=True,
+        )
+        doc = await col.find_one({"_id": "main"}, {key: 1})
+        users = (doc or {}).get("_ip_records", {}).get(ip.replace(".", "_"), [])
+        # Sync lại cache
+        if _data_cache is not None:
+            _data_cache.setdefault("_ip_records", {})[ip.replace(".", "_")] = users
+        return users
+    except Exception as e:
+        log.error(f"[DATA] ❌ atomic_register_ip lỗi: {e}")
+        # Fallback: in-memory
+        if _data_cache is not None:
+            recs = _data_cache.setdefault("_ip_records", {})
+            ip_key = ip.replace(".", "_")
+            if ip_key not in recs:
+                recs[ip_key] = []
+            if user_id not in recs[ip_key]:
+                recs[ip_key].append(user_id)
+            return recs[ip_key]
+        return [user_id]
+
+async def get_ip_users_mongo(ip: str) -> list[int]:
+    """Đọc trực tiếp từ MongoDB (không qua cache) — dùng khi check collision."""
+    col, _ = _get_mongo()
+    key = f"_ip_records.{ip.replace('.', '_')}"
+    try:
+        doc = await col.find_one({"_id": "main"}, {key: 1})
+        return (doc or {}).get("_ip_records", {}).get(ip.replace(".", "_"), [])
+    except Exception as e:
+        log.error(f"[DATA] ❌ get_ip_users_mongo lỗi: {e}")
+        # Fallback cache
+        if _data_cache is not None:
+            return _data_cache.get("_ip_records", {}).get(ip.replace(".", "_"), [])
+        return []

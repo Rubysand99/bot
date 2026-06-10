@@ -23,6 +23,7 @@ from core.data import (
     get_member_inviters, save_member_inviters,
     get_pending_joins, save_pending_joins,
     get_ip_records, save_ip_records,
+    atomic_register_ip, get_ip_users_mongo,
 )
 from verify_server import (
     create_token, build_verify_url, VERIFY_CALLBACKS,
@@ -127,33 +128,32 @@ async def cache_invites(guild: discord.Guild):
 # IP FAKE CHECK
 # ══════════════════════════════════════════
 
-def _check_ip_collision(user_id: int, ip: str, inviter_id: int | None) -> tuple[bool, str]:
+async def _check_ip_collision(user_id: int, ip: str, inviter_id: int | None) -> tuple[bool, str]:
     """
-    Kiểm tra IP có trùng với:
-      - inviter → fake chắc chắn
-      - member khác trong server đã verify → fake nghi ngờ
+    Đọc trực tiếp từ MongoDB (không qua cache) để tránh race condition.
     Trả về (is_fake: bool, reason: str)
     """
-    users_on_ip = _ip_records.get(ip, [])
+    users_on_ip = await get_ip_users_mongo(ip)
 
-    # Trùng với inviter
     if inviter_id and inviter_id in users_on_ip:
         return True, f"IP trùng với inviter (ID:{inviter_id})"
 
-    # Trùng với member khác đã verify (không tính bản thân)
     others = [uid for uid in users_on_ip if uid != user_id]
     if others:
         return True, f"IP trùng với {len(others)} thành viên khác ({', '.join(f'ID:{u}' for u in others[:3])})"
 
     return False, ""
 
-def _register_ip(user_id: int, ip: str):
-    """Lưu mapping ip → user_id."""
-    if ip not in _ip_records:
-        _ip_records[ip] = []
-    if user_id not in _ip_records[ip]:
-        _ip_records[ip].append(user_id)
-    save_ip_records(_ip_records)
+async def _register_ip(user_id: int, ip: str) -> list[int]:
+    """
+    Atomic $addToSet vào MongoDB — tránh race condition.
+    Trả về list user_ids hiện tại trên IP đó.
+    """
+    users = await atomic_register_ip(ip, user_id)
+    # Sync in-memory cache
+    ip_key = ip.replace(".", "_")
+    _ip_records[ip_key] = users
+    return users
 
 
 # ══════════════════════════════════════════
@@ -629,11 +629,11 @@ class InviteCog(commands.Cog):
                 ],
             )
 
-        # Check IP collision
-        is_fake, fake_reason = _check_ip_collision(user_id, ip, inviter_id)
+        # Check IP collision — đọc thẳng MongoDB trước khi ghi
+        is_fake, fake_reason = await _check_ip_collision(user_id, ip, inviter_id)
 
-        # Lưu IP mapping
-        _register_ip(user_id, ip)
+        # Lưu IP mapping — atomic $addToSet, tránh race condition
+        await _register_ip(user_id, ip)
 
         # Đăng ký primary user cho IP này (user đầu tiên verify = được join giveaway)
         register_primary_ip(ip, user_id)
@@ -746,6 +746,98 @@ class InviteCog(commands.Cog):
                 ],
             )
 
+    @commands.command(name="backfillip")
+    async def backfillip_cmd(self, ctx, limit: int = 2000):
+        """
+        Admin: đọc lại lịch sử kênh log general, parse IP từ INVITE_VERIFY/INVITE_FAKE,
+        rồi backfill vào MongoDB _ip_records.
+        Dùng: .backfillip        → quét 2000 message gần nhất
+              .backfillip 5000   → quét 5000 message
+        """
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin.")
+
+        import re
+        from core.data import _get_mongo
+
+        # Lấy kênh log general
+        from cogs.logger import get_log_channel
+        ch_id = get_log_channel("general")
+        if not ch_id:
+            return await ctx.reply("❌ Chưa cài kênh log `general`. Dùng `.setlog` trước.")
+
+        log_channel = self.bot.get_channel(ch_id) or await self.bot.fetch_channel(ch_id)
+        if not log_channel:
+            return await ctx.reply(f"❌ Không tìm được kênh log `{ch_id}`.")
+
+        status_msg = await ctx.reply(f"⏳ Đang quét {limit} message trong {log_channel.mention}...")
+
+        # Regex parse user_id và IP từ plain text log
+        # Format: **👤 Thành viên:** Ruby (`123456789`)  ·  **🌐 IP:** ||`1.2.3.4`||
+        re_user = re.compile(r"`\[INVITE_(?:VERIFY|FAKE)\]`.*?\((`?\d+`?)\)", re.DOTALL)
+        re_user2 = re.compile(r"\*\*👤[^*]*\*\*:[^\n]*\(`(\d+)`\)")
+        re_ip    = re.compile(r"\|\|`([\d\.]+)`\|\|")
+
+        found   = 0   # message INVITE_VERIFY/FAKE dùng được
+        added   = 0   # cặp (ip, user_id) mới được ghi
+        skipped = 0   # đã có trong records rồi
+
+        col, _ = _get_mongo()
+
+        async for msg in log_channel.history(limit=limit, oldest_first=False):
+            content = msg.content
+            if "[INVITE_VERIFY]" not in content and "[INVITE_FAKE]" not in content:
+                continue
+
+            # Parse user_id
+            m_user = re_user2.search(content)
+            if not m_user:
+                continue
+            try:
+                user_id = int(m_user.group(1))
+            except ValueError:
+                continue
+
+            # Parse IP
+            m_ip = re_ip.search(content)
+            if not m_ip:
+                continue
+            ip = m_ip.group(1)
+
+            found += 1
+            ip_key = ip.replace(".", "_")
+
+            # Kiểm tra đã có chưa — dùng $addToSet (atomic, idempotent)
+            result = await col.update_one(
+                {"_id": "main"},
+                {"$addToSet": {f"_ip_records.{ip_key}": user_id}},
+                upsert=True,
+            )
+            if result.modified_count > 0:
+                added += 1
+            else:
+                skipped += 1
+
+            # Đăng ký primary IP nếu chưa có
+            await col.update_one(
+                {"_id": "main", f"_shared_ip.{ip}": {"$exists": False}},
+                {"$set": {f"_shared_ip.{ip}": user_id}},
+            )
+
+        # Sync lại in-memory cache
+        doc = await col.find_one({"_id": "main"}, {"_ip_records": 1})
+        global _ip_records
+        _ip_records = (doc or {}).get("_ip_records", {})
+
+        await status_msg.edit(content=(
+            f"✅ **Backfill hoàn tất**\n"
+            f"› Quét: **{limit}** message\n"
+            f"› Tìm thấy INVITE_VERIFY/FAKE: **{found}**\n"
+            f"› Ghi mới vào DB: **{added}** cặp (ip, user)\n"
+            f"› Đã có sẵn (bỏ qua): **{skipped}**\n\n"
+            f"Dùng `.ipstats` để xem kết quả."
+        ))
+
     @commands.command(name="checkip")
     async def checkip_cmd(self, ctx, *, arg: str = None):
         """Admin xem tài khoản chung IP với 1 user."""
@@ -764,12 +856,27 @@ class InviteCog(commands.Cog):
         if not target_id:
             return await ctx.reply("❌ Dùng: `.checkip @user` hoặc `.checkip <user_id>`")
 
-        # Tìm IP của target
-        found_ips = [ip for ip, users in _ip_records.items() if target_id in users]
-        if not found_ips:
+        # Đọc thẳng từ MongoDB — tránh cache stale
+        from core.data import _get_mongo
+        col, _ = _get_mongo()
+        try:
+            doc = await col.find_one({"_id": "main"}, {"_ip_records": 1, "_shared_ip": 1})
+        except Exception as e:
+            return await ctx.reply(f"❌ Lỗi đọc MongoDB: `{e}`")
+
+        ip_records_raw  = (doc or {}).get("_ip_records", {})  # key dạng "1_2_3_4"
+        shared_ip_raw   = (doc or {}).get("_shared_ip", {})   # key dạng "1.2.3.4"
+
+        # Tìm tất cả key IP có target_id
+        found = []  # list of (ip_display, users)
+        for key, users in ip_records_raw.items():
+            if target_id in users:
+                ip_display = key.replace("_", ".")
+                found.append((ip_display, users))
+
+        if not found:
             return await ctx.reply(f"❌ Không có dữ liệu IP cho user `{target_id}`. Có thể chưa verify.")
 
-        shared_ip_data = _get_shared_ip()
         embed = discord.Embed(
             title     = f"🔍 Kiểm tra IP — ID:{target_id}",
             color     = 0xE74C3C,
@@ -777,9 +884,8 @@ class InviteCog(commands.Cog):
         )
         embed.set_footer(text="TuyTam Store  •  Chỉ admin thấy")
 
-        for ip in found_ips:
-            users_on_ip  = _ip_records[ip]
-            primary_id   = shared_ip_data.get(ip)
+        for ip_display, users_on_ip in found:
+            primary_id = shared_ip_raw.get(ip_display)
             lines = []
             for uid in users_on_ip:
                 m         = ctx.guild.get_member(uid) if ctx.guild else None
@@ -789,7 +895,7 @@ class InviteCog(commands.Cog):
                 lines.append(f"`{uid}` **{name}** — {is_prim} {is_target}")
 
             embed.add_field(
-                name   = f"🌐 IP: ||`{ip}`|| ({len(users_on_ip)} tài khoản)",
+                name   = f"🌐 IP: ||`{ip_display}`|| ({len(users_on_ip)} tài khoản)",
                 value  = "\n".join(lines) or "*(trống)*",
                 inline = False,
             )
@@ -802,17 +908,28 @@ class InviteCog(commands.Cog):
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin.")
 
-        shared_ip_data = _get_shared_ip()
+        # Đọc thẳng từ MongoDB
+        from core.data import _get_mongo
+        col, _ = _get_mongo()
+        try:
+            doc = await col.find_one({"_id": "main"}, {"_ip_records": 1, "_shared_ip": 1})
+        except Exception as e:
+            return await ctx.reply(f"❌ Lỗi đọc MongoDB: `{e}`")
 
-        # Lọc IP có ≥ 2 acc
-        dupes = {ip: uids for ip, uids in _ip_records.items() if len(uids) >= 2}
+        ip_records_raw = (doc or {}).get("_ip_records", {})  # key dạng "1_2_3_4"
+        shared_ip_raw  = (doc or {}).get("_shared_ip", {})   # key dạng "1.2.3.4"
+
+        # Lọc IP có ≥ 2 acc, convert key về dạng hiển thị
+        dupes = {
+            key.replace("_", "."): uids
+            for key, uids in ip_records_raw.items()
+            if len(uids) >= 2
+        }
         if not dupes:
             return await ctx.reply("✅ Không có IP nào dùng chung từ 2 tài khoản trở lên.")
 
-        # Sắp xếp theo số acc giảm dần
         sorted_dupes = sorted(dupes.items(), key=lambda x: len(x[1]), reverse=True)
 
-        # Phân trang 5 IP/embed để tránh quá dài
         PAGE_SIZE = 5
         pages     = [sorted_dupes[i:i+PAGE_SIZE] for i in range(0, len(sorted_dupes), PAGE_SIZE)]
         total_ips = len(sorted_dupes)
@@ -829,8 +946,8 @@ class InviteCog(commands.Cog):
                 embed.set_author(name=f"Trang {page_idx+1}/{len(pages)}")
             embed.set_footer(text="TuyTam Store  •  Chỉ admin thấy")
 
-            for ip, uids in page:
-                primary_id = shared_ip_data.get(ip)
+            for ip_display, uids in page:
+                primary_id = shared_ip_raw.get(ip_display)
                 lines = []
                 for uid in uids:
                     m        = ctx.guild.get_member(uid) if ctx.guild else None
@@ -838,7 +955,7 @@ class InviteCog(commands.Cog):
                     is_prim  = "✅" if uid == primary_id else "❌"
                     lines.append(f"{is_prim} `{uid}` {name}")
                 embed.add_field(
-                    name   = f"||`{ip}`|| — {len(uids)} acc",
+                    name   = f"||`{ip_display}`|| — {len(uids)} acc",
                     value  = "\n".join(lines),
                     inline = False,
                 )

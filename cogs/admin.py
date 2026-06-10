@@ -263,12 +263,16 @@ class AdminCog(commands.Cog):
                 ]
             },
             "invite": {
-                "emoji": "📨", "title": "Invite",
+                "emoji": "📨", "title": "Invite & Verify",
                 "fields": [
-                    ("📋 Lệnh",
+                    ("📋 Thống kê invite",
                      "`.invite [@user]` — Xem thống kê invite của bản thân / người khác\n"
                      "`.invitetop [n]` — Top người invite nhiều nhất (mặc định top 10)\n"
                      "`.resetinvite [@user|all]` — Reset invite của 1 người hoặc tất cả (admin)", False),
+                    ("🔐 Kiểm tra IP (admin)",
+                     "`.checkip @user` — Xem tất cả tài khoản chung IP với user đó\n"
+                     "`.ipstats` — Danh sách IP có từ 2 tài khoản trở lên\n"
+                     "`.backfillip [số]` — Đọc lại lịch sử kênh log, backfill IP records vào DB (mặc định 2000 message)", False),
                     ("🔷 Slash commands",
                      "`/invite` `/invitetop` `/resetinvite`", False),
                 ]
