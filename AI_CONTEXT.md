@@ -1,25 +1,63 @@
-# AI Context — Bot Deploy Info
+# AI Context — TuyTam Bot
 
-## GitHub
+## Thông tin repo
 - Repo: https://github.com/Rubysand99/bot.git
 - Branch: main
-- Đã cài git credential, không cần nhập token lại
+- Deploy: Railway (auto-deploy khi push GitHub)
+- Runtime: Python, discord.py, MongoDB Atlas
+
+## Cấu trúc thư mục
+```
+~/bot/
+├── bot.py
+├── verify_server.py
+├── CHANGELOG.md
+├── cogs/
+│   ├── invite.py      # Invite tracking, verify, IP check
+│   ├── giveaway.py
+│   ├── ticket.py
+│   ├── admin.py       # Lệnh admin + .help
+│   ├── admin_views.py
+│   ├── mod.py
+│   ├── logger.py      # Hệ thống log đa kênh
+│   └── ai_chat.py
+└── core/
+    └── data.py        # MongoDB helpers, cache, atomic ops
+```
 
 ## Termux workflow
-Khi AI sửa xong và xuất file zip, chạy lệnh sau:
+File AI sửa xong → tải về `/sdcard/Download/` → chạy lệnh sau:
 
 ```bash
-cd ~
-unzip /sdcard/Download/bot-main-fixed.zip -d bot-main-fixed
-cp -r bot-main-fixed/* ~/bot/
 cd ~/bot
-git add .
-git commit -m "fix: mô tả sửa lỗi"
+cp /sdcard/Download/<tên_file> <đường_dẫn_trong_bot>
+git add <đường_dẫn_1> <đường_dẫn_2> ...
+git commit -m "fix/feat: mô tả"
 git push origin main
-rm -rf ~/bot-main-fixed
+```
+
+### Ví dụ 1 file:
+```bash
+cd ~/bot
+cp /sdcard/Download/invite.py cogs/invite.py
+git add cogs/invite.py
+git commit -m "fix: mô tả"
+git push origin main
+```
+
+### Ví dụ nhiều file:
+```bash
+cd ~/bot
+cp /sdcard/Download/invite.py cogs/invite.py
+cp /sdcard/Download/data.py core/data.py
+cp /sdcard/Download/admin.py cogs/admin.py
+cp /sdcard/Download/CHANGELOG.md CHANGELOG.md
+git add cogs/invite.py core/data.py cogs/admin.py CHANGELOG.md
+git commit -m "fix: mô tả"
+git push origin main
 ```
 
 ## Lưu ý
-- File zip AI xuất tên: bot-main-fixed.zip
-- Sau khi copy xong nên xoá thư mục bot-main-fixed để tránh rác
+- Git credential đã lưu sẵn, không cần nhập token
 - Kiểm tra không có file tên "-H" hoặc "-d" bị tạo nhầm sau cp
+- Nếu conflict: `git fetch origin && git reset --hard origin/main` rồi copy lại
