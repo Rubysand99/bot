@@ -209,17 +209,6 @@ class InviteCog(commands.Cog):
 
         _guild_roles.setdefault(guild.id, {})["unverify"] = unverify.id
 
-        # Deny view_channel cho Unverify trên tất cả kênh (chỉ set những kênh chưa có)
-        overwrite = discord.PermissionOverwrite(view_channel=False)
-        for channel in guild.channels:
-            try:
-                existing = channel.overwrites_for(unverify)
-                if existing.view_channel is not False:
-                    await channel.set_permissions(unverify, overwrite=overwrite,
-                                                  reason="Unverify: ẩn kênh")
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-
         # ── VERIFY ──
         verify = guild.get_role(_get_verify_role_id(guild.id))
         if not verify:
@@ -237,6 +226,18 @@ class InviteCog(commands.Cog):
                 return
 
         _guild_roles.setdefault(guild.id, {})["verify"] = verify.id
+
+        # ── Xóa overwrite của Verify / Unverify trên tất cả kênh về mặc định ──
+        for channel in guild.channels:
+            for role in (verify, unverify):
+                try:
+                    ow = channel.overwrites_for(role)
+                    if not ow.is_empty():
+                        await channel.set_permissions(role, overwrite=None,
+                                                      reason="Reset overwrite Verify/Unverify về mặc định")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
         print(f"[INVITE] ✅ Roles OK tại {guild.name} — Verify:{verify.id} Unverify:{unverify.id}")
 
     @commands.command(name="verify")
@@ -794,6 +795,57 @@ class InviteCog(commands.Cog):
             )
 
         await ctx.reply(embed=embed)
+
+    @commands.command(name="ipstats")
+    async def ipstats_cmd(self, ctx):
+        """Admin xem danh sách IP có từ 2 tài khoản trở lên."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin.")
+
+        shared_ip_data = _get_shared_ip()
+
+        # Lọc IP có ≥ 2 acc
+        dupes = {ip: uids for ip, uids in _ip_records.items() if len(uids) >= 2}
+        if not dupes:
+            return await ctx.reply("✅ Không có IP nào dùng chung từ 2 tài khoản trở lên.")
+
+        # Sắp xếp theo số acc giảm dần
+        sorted_dupes = sorted(dupes.items(), key=lambda x: len(x[1]), reverse=True)
+
+        # Phân trang 5 IP/embed để tránh quá dài
+        PAGE_SIZE = 5
+        pages     = [sorted_dupes[i:i+PAGE_SIZE] for i in range(0, len(sorted_dupes), PAGE_SIZE)]
+        total_ips = len(sorted_dupes)
+        total_acc = sum(len(uids) for uids in dupes.values())
+
+        embeds = []
+        for page_idx, page in enumerate(pages):
+            embed = discord.Embed(
+                title     = f"🌐 IP dùng chung — {total_ips} IP · {total_acc} tài khoản",
+                color     = 0xE74C3C,
+                timestamp = datetime.now(timezone.utc),
+            )
+            if len(pages) > 1:
+                embed.set_author(name=f"Trang {page_idx+1}/{len(pages)}")
+            embed.set_footer(text="TuyTam Store  •  Chỉ admin thấy")
+
+            for ip, uids in page:
+                primary_id = shared_ip_data.get(ip)
+                lines = []
+                for uid in uids:
+                    m        = ctx.guild.get_member(uid) if ctx.guild else None
+                    name     = str(m) if m else f"ID:{uid}"
+                    is_prim  = "✅" if uid == primary_id else "❌"
+                    lines.append(f"{is_prim} `{uid}` {name}")
+                embed.add_field(
+                    name   = f"||`{ip}`|| — {len(uids)} acc",
+                    value  = "\n".join(lines),
+                    inline = False,
+                )
+            embeds.append(embed)
+
+        for e in embeds:
+            await ctx.send(embed=e)
 
     # ── Slash commands ──
 
