@@ -432,8 +432,8 @@ class LoggerCog(commands.Cog):
         results = []
 
         for group, ch_name in CHANNEL_NAMES.items():
-            # Kiểm tra kênh đã tồn tại trong category chưa
-            existing = discord.utils.get(category.channels, name=ch_name)
+            # Kiểm tra kênh đã tồn tại trong toàn bộ server (không chỉ category)
+            existing = discord.utils.get(ctx.guild.text_channels, name=ch_name)
             if existing:
                 set_log_channel(group, existing.id)
                 results.append(f"⏭️ {existing.mention} *(đã tồn tại)*")
