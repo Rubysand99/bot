@@ -11,7 +11,8 @@ Nhóm kênh:
   role     → ROLE_ADD, ROLE_REMOVE
   ai       → AI_USED
   admin    → CMD_USED, SLASH_USED, SETTINGS
-  general  → INFO, ERROR, INVITE, RATING (fallback)
+  invite   → INVITE_JOIN, INVITE_VERIFY, INVITE_FAKE, INVITE_LEFT
+  general  → INFO, ERROR, RATING (fallback)
 
 Log format: plain text thay vì embed để không đẩy trôi history.
 """
@@ -82,11 +83,11 @@ LOG_ROUTES: dict[str, str] = {
     "CMD_USED":        "admin",
     "SLASH_USED":      "admin",
     "SETTINGS":        "admin",
-    "INVITE":          "general",
-    "INVITE_JOIN":     "general",
-    "INVITE_VERIFY":   "general",
-    "INVITE_FAKE":     "general",
-    "INVITE_LEFT":     "general",
+    "INVITE":          "invite",
+    "INVITE_JOIN":     "invite",
+    "INVITE_VERIFY":   "invite",
+    "INVITE_FAKE":     "invite",
+    "INVITE_LEFT":     "invite",
     "RATING":          "general",
     "ERROR":           "general",
     "INFO":            "general",
@@ -101,6 +102,7 @@ LOG_GROUP_LABELS: dict[str, str] = {
     "role":     "🏷️ Role",
     "ai":       "🤖 AI",
     "admin":    "⌨️ Admin",
+    "invite":   "📨 Invite",
     "general":  "📋 General",
 }
 
@@ -415,6 +417,7 @@ class LoggerCog(commands.Cog):
             "role":     "log-role",
             "ai":       "log-ai",
             "admin":    "log-admin",
+            "invite":   "log-invite",
             "general":  "log-general",
         }
 
@@ -475,6 +478,7 @@ class LoggerCog(commands.Cog):
             "role":     ("ROLE_ADD",        "Test — Thêm role"),
             "ai":       ("AI_USED",         "Test — AI sử dụng"),
             "admin":    ("CMD_USED",        "Test — Lệnh admin"),
+            "invite":   ("INVITE_VERIFY",   "Test — Verify thành viên"),
             "general":  ("INFO",            "Test — Thông tin chung"),
         }
 
