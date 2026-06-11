@@ -342,9 +342,9 @@ class AdminCog(commands.Cog):
                      "`.setuplog [category_id]` — Tự động tạo toàn bộ kênh log\n"
                      "`.loginfo` — Xem kênh log đang được cài\n"
                      "`.testlog [nhóm]` — Gửi log test để kiểm tra hoạt động\n"
-                     "`.baocao` — Báo cáo tổng hợp 24h (ticket, banking, giveaway)", False),
+                     "`.baocao` — Báo cáo tổng hợp 24h (ticket, giveaway)", False),
                     ("🗂️ Nhóm log",
-                     "`ticket` `mod` `giveaway` `banking`\n"
+                     "`ticket` `mod` `giveaway`\n"
                      "`member` `role` `ai` `admin` `general`", False),
                 ]
             },
