@@ -963,6 +963,74 @@ class InviteCog(commands.Cog):
         for e in embeds:
             await ctx.send(embed=e)
 
+    @commands.command(name="testip")
+    async def testip_cmd(self, ctx):
+        """Admin: thêm data test — 1 IP giả có 2 acc, gửi log INVITE_VERIFY + INVITE_FAKE."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin.")
+
+        from core.data import _get_mongo
+
+        TEST_IP      = "192.168.99.99"
+        TEST_IP_KEY  = TEST_IP.replace(".", "_")
+        ACC1_ID      = 111111111111111111
+        ACC2_ID      = 222222222222222222
+        ACC1_NAME    = "TestAcc1#0001"
+        ACC2_NAME    = "TestAcc2#0002"
+
+        col, _ = _get_mongo()
+        try:
+            # Ghi _ip_records: ip → [acc1, acc2]
+            await col.update_one(
+                {"_id": "main"},
+                {"$set": {f"_ip_records.{TEST_IP_KEY}": [ACC1_ID, ACC2_ID]}},
+                upsert=True,
+            )
+            # Ghi _shared_ip: ip → acc1 (acc đầu tiên verify)
+            await col.update_one(
+                {"_id": "main"},
+                {"$set": {f"_shared_ip.{TEST_IP}": ACC1_ID}},
+                upsert=True,
+            )
+        except Exception as e:
+            return await ctx.reply(f"❌ Lỗi MongoDB: `{e}`")
+
+        # Reload cache
+        global _ip_records
+        _ip_records = get_ip_records()
+
+        # Gửi log INVITE_VERIFY (acc1 — verify thành công bình thường)
+        await send_log(self.bot, "INVITE_VERIFY", "✅ Verify thành công",
+            fields=[
+                ("👤 Thành viên", f"{ACC1_NAME} (`{ACC1_ID}`)", True),
+                ("🌐 IP",         f"||`{TEST_IP}`||",           True),
+                ("📡 ISP",        "Test ISP",                   True),
+                ("🌍 Quốc gia",   "Vietnam",                    True),
+            ],
+        )
+
+        # Gửi log INVITE_FAKE (acc2 — trùng IP, bị chặn giveaway)
+        await send_log(self.bot, "INVITE_FAKE", "⚠️ IP trùng — đã verify nhưng bị hạn chế giveaway",
+            fields=[
+                ("👤 Member",   f"{ACC2_NAME} (`{ACC2_ID}`)",                     True),
+                ("📨 Inviter",  "TestInviter#0000",                                True),
+                ("🌐 IP",       f"||`{TEST_IP}`||",                                True),
+                ("🔍 Lý do",    f"IP trùng với `{ACC1_NAME}` (đã verify trước)",   False),
+                ("🎯 Giveaway", "❌ Bị chặn",                                      True),
+                ("📡 ISP",      "Test ISP",                                        True),
+                ("🌍 Quốc gia", "Vietnam",                                         True),
+            ],
+        )
+
+        await ctx.reply(
+            f"✅ **Test data đã được thêm!**\n"
+            f"• IP: `{TEST_IP}`\n"
+            f"• Acc 1 (✅ giveaway): `{ACC1_ID}` — {ACC1_NAME}\n"
+            f"• Acc 2 (❌ bị chặn): `{ACC2_ID}` — {ACC2_NAME}\n"
+            f"• Log INVITE_VERIFY + INVITE_FAKE đã gửi.\n"
+            f"Gõ `.ipstats` để xem kết quả."
+        )
+
     # ── Slash commands ──
 
     @discord.app_commands.command(name="invite", description="Xem thống kê invite của thành viên")
