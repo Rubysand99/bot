@@ -946,7 +946,13 @@ class InviteCog(commands.Cog):
             embed.set_footer(text="TuyTam Store  •  Chỉ admin thấy")
 
             for ip_display, uids in page:
-                primary_id = shared_ip_raw.get(ip_display)
+                # _shared_ip có thể lưu key dạng "1.2.3.4" hoặc "1_2_3_4" tuỳ chỗ ghi
+                ip_key_dot   = ip_display                        # "1.2.3.4"
+                ip_key_under = ip_display.replace(".", "_")      # "1_2_3_4"
+                primary_id   = shared_ip_raw.get(ip_key_dot) or shared_ip_raw.get(ip_key_under)
+                # Nếu _shared_ip chưa có → mặc định acc đầu tiên trong list là primary
+                if primary_id is None and uids:
+                    primary_id = uids[0]
                 lines = []
                 for uid in uids:
                     m        = ctx.guild.get_member(uid) if ctx.guild else None
