@@ -192,6 +192,7 @@ class InviteCog(commands.Cog):
         Hoạt động đúng trên đa server — lưu role ID vào _guild_roles."""
 
         # ── UNVERIFY ──
+        _unverify_created = False
         unverify = guild.get_role(_get_unverify_role_id(guild.id))
         if not unverify:
             unverify = discord.utils.get(guild.roles, name="Unverify")
@@ -202,6 +203,7 @@ class InviteCog(commands.Cog):
                     color  = discord.Color.dark_gray(),
                     reason = "Auto-create bởi TuyTam Bot — role chờ verify",
                 )
+                _unverify_created = True
                 print(f"[INVITE] ✅ Đã tạo role Unverify ({unverify.id}) tại {guild.name}")
             except discord.Forbidden:
                 print(f"[INVITE] ❌ Không có quyền tạo role tại {guild.name}")
@@ -210,6 +212,7 @@ class InviteCog(commands.Cog):
         _guild_roles.setdefault(guild.id, {})["unverify"] = unverify.id
 
         # ── VERIFY ──
+        _verify_created = False
         verify = guild.get_role(_get_verify_role_id(guild.id))
         if not verify:
             verify = discord.utils.get(guild.roles, name="Verify")
@@ -220,6 +223,7 @@ class InviteCog(commands.Cog):
                     color  = discord.Color.green(),
                     reason = "Auto-create bởi TuyTam Bot — role sau khi verify",
                 )
+                _verify_created = True
                 print(f"[INVITE] ✅ Đã tạo role Verify ({verify.id}) tại {guild.name}")
             except discord.Forbidden:
                 print(f"[INVITE] ❌ Không có quyền tạo role tại {guild.name}")
@@ -228,15 +232,23 @@ class InviteCog(commands.Cog):
         _guild_roles.setdefault(guild.id, {})["verify"] = verify.id
 
         # ── Xóa overwrite của Verify / Unverify trên tất cả kênh về mặc định ──
-        for channel in guild.channels:
-            for role in (verify, unverify):
-                try:
-                    ow = channel.overwrites_for(role)
-                    if not ow.is_empty():
-                        await channel.set_permissions(role, overwrite=None,
-                                                      reason="Reset overwrite Verify/Unverify về mặc định")
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
+        # Chỉ chạy khi role vừa được tạo mới, tránh spam API call mỗi lần on_ready
+        roles_to_reset = []
+        if _unverify_created:
+            roles_to_reset.append(unverify)
+        if _verify_created:
+            roles_to_reset.append(verify)
+
+        if roles_to_reset:
+            for channel in guild.channels:
+                for role in roles_to_reset:
+                    try:
+                        ow = channel.overwrites_for(role)
+                        if not ow.is_empty():
+                            await channel.set_permissions(role, overwrite=None,
+                                                          reason="Reset overwrite Verify/Unverify về mặc định")
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
 
         print(f"[INVITE] ✅ Roles OK tại {guild.name} — Verify:{verify.id} Unverify:{unverify.id}")
 
@@ -401,6 +413,7 @@ class InviteCog(commands.Cog):
             await ctx.reply(f"❌ Không rời được: `{e}`")
 
 
+    @commands.command(name="invite", aliases=["inv"])
     async def invite_cmd(self, ctx, member: discord.Member = None):
         target = member or ctx.author
         total, fake, left, net = _get_net_invites(target.id)
