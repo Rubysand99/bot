@@ -1,5 +1,19 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.4.0] — 2026-06-12
+
+### ✨ Tính năng mới
+- `cogs/admin_views.py` — `.mkchannel` thêm 2 dropdown mới:
+  - **③ Quyền truy cập**: `🌐 Public` (mặc định) / `🔒 Private` — private ẩn kênh với `@everyone`, chỉ bot + admin thấy
+  - **④ Khoá gửi tin**: `🔓 Mở` (mặc định) / `🔐 Khoá (read-only)` — lock chặn `@everyone` gửi tin trong kênh public
+- `cogs/admin_views.py` — Kênh tạo ra áp `overwrites` ngay lúc tạo (bot + admin luôn full quyền)
+- `cogs/admin_views.py` — Embed kết quả hiển thị thêm cột **Quyền** và **Khoá**
+- `cogs/admin_views.py` — Đổi tên kênh / category: thêm ô **Icon mới** (để trống = giữ icon cũ)
+- `cogs/admin.py` — Cập nhật embed hướng dẫn `.mkchannel` (5 bước rõ ràng)
+- `cogs/admin.py` — Cập nhật `.help admin` mô tả `.mkchannel`
+
+---
+
 ## [v4.3.0] — 2026-06-10
 
 ### 🐛 Sửa lỗi nghiêm trọng

@@ -191,8 +191,11 @@ class AdminCog(commands.Cog):
         embed = discord.Embed(
             title="➕  Tạo Kênh Mới",
             description=(
-                "**Bước 1** — Chọn **loại kênh** và **danh mục** bên dưới\n"
-                "**Bước 2** — Nhập tên và số lượng trong form\n\n"
+                "**①** Chọn **loại kênh**\n"
+                "**②** Chọn **danh mục** chứa kênh\n"
+                "**③** Chọn **quyền truy cập** (Public / Private)\n"
+                "**④** Chọn **khoá gửi tin** (Mở / Khoá read-only)\n"
+                "**⑤** Nhấn **Tiếp tục →** → nhập tên và số lượng\n\n"
                 f"Font đang dùng: **{FONT_LABELS.get(get_cfg_font(), get_cfg_font())}**"
             ),
             color=0x5865F2,
@@ -378,7 +381,7 @@ class AdminCog(commands.Cog):
                      "`.delemoji <tên>` — Xóa emoji\n"
                      "`.rename #kênh <tên mới>` — Đổi tên kênh\n"
                      "`.setperm #kênh @role <quyền>` — Cài quyền kênh\n"
-                     "`.mkchannel <text|voice|category> <tên>` — Tạo kênh", False),
+                     "`.mkchannel` — Tạo kênh (chọn loại / danh mục / public-private / khoá)", False),
                     ("🔷 Slash commands",
                      "`/clear` `/addrole` `/removerole` `/ping`\n"
                      "`/userinfo` `/serverinfo` `/botinfo`", False),

@@ -658,11 +658,22 @@ class _RenameChannelModal(discord.ui.Modal):
     def __init__(self, ch):
         super().__init__(title=f"✏️ Đổi tên: #{ch.name[:40]}")
         self.ch = ch
-        self.new_name = TextInput(label="Tên mới", placeholder="Nhập tên mới…", max_length=100)
+        parts = _detect_channel_parts(ch.name)
+        self.new_name  = TextInput(label="Tên mới", placeholder="Nhập tên mới…", max_length=100)
+        self.new_icon  = TextInput(
+            label="Icon mới (để trống = giữ nguyên)",
+            placeholder=f"Icon hiện tại: {parts['icon'] or '(không có)'}",
+            required=False,
+            max_length=10,
+        )
         self.add_item(self.new_name)
+        self.add_item(self.new_icon)
     async def on_submit(self, interaction: discord.Interaction):
-        parts = _detect_channel_parts(self.ch.name)
-        font  = get_cfg_font()
+        parts    = _detect_channel_parts(self.ch.name)
+        font     = get_cfg_font()
+        icon_raw = self.new_icon.value.strip()
+        if icon_raw:
+            parts["icon"] = icon_raw
         final = _rebuild_name(parts, self.new_name.value.strip(), font)
         old   = self.ch.name
         try:
@@ -941,13 +952,23 @@ class _RenameCategoryModal(discord.ui.Modal):
     def __init__(self, cat):
         super().__init__(title=f"✏️ Đổi tên: {cat.name[:40]}")
         self.cat = cat
-        self.new_name = TextInput(label="Tên mới", max_length=100)
+        parts = _detect_channel_parts(cat.name)
+        self.new_name   = TextInput(label="Tên mới", max_length=100)
+        self.new_icon   = TextInput(
+            label="Icon mới (để trống = giữ nguyên)",
+            placeholder=f"Icon hiện tại: {parts['icon'] or '(không có)'}",
+            required=False,
+            max_length=10,
+        )
         self.font_input = TextInput(label="Font (normal/bold/italic/sans_bold/script/double)", default="normal", max_length=20)
-        self.add_item(self.new_name); self.add_item(self.font_input)
+        self.add_item(self.new_name); self.add_item(self.new_icon); self.add_item(self.font_input)
     async def on_submit(self, interaction: discord.Interaction):
         font  = self.font_input.value.strip().lower()
         if font not in _FONT_MAPS: font = "normal"
-        parts = _detect_channel_parts(self.cat.name)
+        parts    = _detect_channel_parts(self.cat.name)
+        icon_raw = self.new_icon.value.strip()
+        if icon_raw:
+            parts["icon"] = icon_raw
         final = _rebuild_name(parts, self.new_name.value.strip(), font)
         old   = self.cat.name
         try:
@@ -1374,68 +1395,134 @@ class SetPrefixModal(discord.ui.Modal, title="🔤 Đặt Prefix Bot"):
 # MKCHANNEL — VIEW + MODAL
 # ══════════════════════════════════════════
 _CH_TYPE_OPTIONS = [
-    discord.SelectOption(label="📝  Text Channel",   value="text",  description="Kênh chat thông thường"),
-    discord.SelectOption(label="🔊  Voice Channel",  value="voice", description="Kênh thoại"),
-    discord.SelectOption(label="🎙️  Stage Channel",  value="stage", description="Kênh sân khấu"),
-    discord.SelectOption(label="💬  Forum Channel",  value="forum", description="Kênh diễn đàn"),
+    discord.SelectOption(label="📝  Text Channel",   value="text",     description="Kênh chat thông thường"),
+    discord.SelectOption(label="🔊  Voice Channel",  value="voice",    description="Kênh thoại"),
+    discord.SelectOption(label="🎙️  Stage Channel",  value="stage",    description="Kênh sân khấu"),
+    discord.SelectOption(label="💬  Forum Channel",  value="forum",    description="Kênh diễn đàn"),
     discord.SelectOption(label="📂  Category",       value="category", description="Tạo danh mục mới"),
 ]
 
+_MK_PRIVACY_OPTIONS = [
+    discord.SelectOption(label="🌐  Public",  value="public",  description="Mọi người đều xem được", default=True),
+    discord.SelectOption(label="🔒  Private", value="private", description="Ẩn với @everyone, chỉ bot + admin thấy"),
+]
+
+_MK_LOCK_OPTIONS = [
+    discord.SelectOption(label="🔓  Mở (không khoá)",  value="off", description="@everyone gửi tin nhắn bình thường", default=True),
+    discord.SelectOption(label="🔐  Khoá (read-only)", value="on",  description="@everyone chỉ xem, không gửi được"),
+]
+
+
+def _build_mk_overwrites(
+    guild: discord.Guild,
+    privacy: str,
+    lock: str,
+) -> dict:
+    """
+    Tạo overwrites dựa trên privacy + lock:
+      privacy=public  → @everyone xem được
+      privacy=private → @everyone ẩn (view_channel=False)
+      lock=on         → @everyone send_messages=False (chỉ khi public; private đã ẩn hết)
+    Bot + admin luôn có quyền đầy đủ.
+    """
+    from core.data import ADMIN_IDS as _ADMIN_IDS
+    ow: dict = {}
+
+    everyone = guild.default_role
+    if privacy == "private":
+        ow[everyone] = discord.PermissionOverwrite(view_channel=False)
+    elif lock == "on":
+        ow[everyone] = discord.PermissionOverwrite(view_channel=True, send_messages=False)
+    # else: public + unlocked → không cần overwrite @everyone
+
+    # Bot luôn full quyền
+    ow[guild.me] = discord.PermissionOverwrite(
+        view_channel=True, send_messages=True,
+        manage_channels=True, manage_messages=True,
+    )
+    # Admin members
+    for aid in _ADMIN_IDS:
+        m = guild.get_member(aid)
+        if m:
+            ow[m] = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True,
+                manage_channels=True, manage_messages=True,
+            )
+    return ow
+
+
 class MkChannelView(View):
-    """Bước 1: chọn loại kênh + danh mục → mở modal nhập tên."""
+    """
+    Bước 1: chọn loại kênh, danh mục, quyền truy cập, trạng thái khoá.
+    Bước 2: nhấn Tiếp tục → modal nhập tên + số lượng.
+    """
     def __init__(self, ctx, cat_opts: list):
         super().__init__(timeout=120)
-        self.ctx       = ctx
-        self.ch_type   = "text"
-        self.cat_id    = 0
+        self.ctx      = ctx
+        self.ch_type  = "text"
+        self.cat_id   = 0
+        self.privacy  = "public"
+        self.lock     = "off"
 
-        type_select = _MkTypeSelect(_CH_TYPE_OPTIONS)
-        cat_select  = _MkCatSelect(cat_opts)
-        type_select.view_ref = self
-        cat_select.view_ref  = self
-        self.add_item(type_select)
-        self.add_item(cat_select)
+        type_sel    = _MkTypeSelect(_CH_TYPE_OPTIONS)
+        cat_sel     = _MkCatSelect(cat_opts)
+        privacy_sel = _MkPrivacySelect(_MK_PRIVACY_OPTIONS)
+        lock_sel    = _MkLockSelect(_MK_LOCK_OPTIONS)
+
+        for s in (type_sel, cat_sel, privacy_sel, lock_sel):
+            s.view_ref = self
+
+        self.add_item(type_sel)
+        self.add_item(cat_sel)
+        self.add_item(privacy_sel)
+        self.add_item(lock_sel)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.ctx.author.id:
-            await interaction.response.send_message("❌ Chỉ người gõ lệnh mới dùng được.")
+            await interaction.response.send_message("❌ Chỉ người gõ lệnh mới dùng được.", ephemeral=True)
             return False
         return True
 
-    @discord.ui.button(label="Tiếp tục →", style=discord.ButtonStyle.primary, row=2)
+    @discord.ui.button(label="Tiếp tục →", style=discord.ButtonStyle.primary, row=4)
     async def proceed(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(
-            MkChannelModal(self.ch_type, self.cat_id)
+            MkChannelModal(self.ch_type, self.cat_id, self.privacy, self.lock)
         )
 
 
 class _MkTypeSelect(Select):
     def __init__(self, opts):
-        super().__init__(
-            placeholder="① Chọn loại kênh…",
-            options=opts,
-            row=0,
-        )
+        super().__init__(placeholder="① Loại kênh…", options=opts, row=0)
         self.view_ref = None
-
     async def callback(self, interaction: discord.Interaction):
-        if self.view_ref:
-            self.view_ref.ch_type = self.values[0]
+        if self.view_ref: self.view_ref.ch_type = self.values[0]
         await interaction.response.defer()
 
 
 class _MkCatSelect(Select):
     def __init__(self, opts):
-        super().__init__(
-            placeholder="② Chọn danh mục chứa kênh…",
-            options=opts,
-            row=1,
-        )
+        super().__init__(placeholder="② Danh mục chứa kênh…", options=opts, row=1)
         self.view_ref = None
-
     async def callback(self, interaction: discord.Interaction):
-        if self.view_ref:
-            self.view_ref.cat_id = int(self.values[0])
+        if self.view_ref: self.view_ref.cat_id = int(self.values[0])
+        await interaction.response.defer()
+
+
+class _MkPrivacySelect(Select):
+    def __init__(self, opts):
+        super().__init__(placeholder="③ Quyền truy cập…", options=opts, row=2)
+        self.view_ref = None
+    async def callback(self, interaction: discord.Interaction):
+        if self.view_ref: self.view_ref.privacy = self.values[0]
+        await interaction.response.defer()
+
+
+class _MkLockSelect(Select):
+    def __init__(self, opts):
+        super().__init__(placeholder="④ Khoá gửi tin nhắn…", options=opts, row=3)
+        self.view_ref = None
+    async def callback(self, interaction: discord.Interaction):
+        if self.view_ref: self.view_ref.lock = self.values[0]
         await interaction.response.defer()
 
 
@@ -1446,16 +1533,18 @@ class MkChannelModal(discord.ui.Modal, title="➕ Tạo Kênh Mới"):
         max_length=100,
     )
     count_input = TextInput(
-        label="Số lượng kênh cần tạo",
+        label="Số lượng kênh cần tạo (1–20)",
         placeholder="1",
         default="1",
         max_length=2,
     )
 
-    def __init__(self, ch_type: str, cat_id: int):
+    def __init__(self, ch_type: str, cat_id: int, privacy: str = "public", lock: str = "off"):
         super().__init__()
         self.ch_type = ch_type
         self.cat_id  = cat_id
+        self.privacy = privacy
+        self.lock    = lock
 
     async def on_submit(self, interaction: discord.Interaction):
         # Validate số lượng
@@ -1464,9 +1553,7 @@ class MkChannelModal(discord.ui.Modal, title="➕ Tạo Kênh Mới"):
             if count < 1 or count > 20:
                 raise ValueError
         except ValueError:
-            return await interaction.response.send_message(
-                "❌ Số lượng phải từ 1 đến 20."
-            )
+            return await interaction.response.send_message("❌ Số lượng phải từ 1 đến 20.", ephemeral=True)
 
         raw_name = self.name_input.value.strip()
         font     = get_cfg_font()
@@ -1478,43 +1565,45 @@ class MkChannelModal(discord.ui.Modal, title="➕ Tạo Kênh Mới"):
         if category and not isinstance(category, discord.CategoryChannel):
             category = None
 
+        # Overwrites
+        overwrites = _build_mk_overwrites(interaction.guild, self.privacy, self.lock)
+
         _TYPE_ICON = {
             "text": "📝", "voice": "🔊", "stage": "🎙️",
             "forum": "💬", "category": "📂",
         }
-        icon = _TYPE_ICON.get(self.ch_type, "📝")
+        type_icon = _TYPE_ICON.get(self.ch_type, "📝")
 
         await interaction.response.defer(ephemeral=True)
 
         created = []
         failed  = 0
-        for i in range(count):
-            ch_name   = styled
+        for _ in range(count):
             try:
                 if self.ch_type == "text":
                     ch = await interaction.guild.create_text_channel(
-                        name=ch_name, category=category,
-                        reason=f"mkchannel bởi {interaction.user}"
+                        name=styled, category=category, overwrites=overwrites,
+                        reason=f"mkchannel bởi {interaction.user}",
                     )
                 elif self.ch_type == "voice":
                     ch = await interaction.guild.create_voice_channel(
-                        name=ch_name, category=category,
-                        reason=f"mkchannel bởi {interaction.user}"
+                        name=styled, category=category, overwrites=overwrites,
+                        reason=f"mkchannel bởi {interaction.user}",
                     )
                 elif self.ch_type == "stage":
                     ch = await interaction.guild.create_stage_channel(
-                        name=ch_name, category=category,
-                        reason=f"mkchannel bởi {interaction.user}"
+                        name=styled, category=category, overwrites=overwrites,
+                        reason=f"mkchannel bởi {interaction.user}",
                     )
                 elif self.ch_type == "forum":
                     ch = await interaction.guild.create_forum(
-                        name=ch_name, category=category,
-                        reason=f"mkchannel bởi {interaction.user}"
+                        name=styled, category=category, overwrites=overwrites,
+                        reason=f"mkchannel bởi {interaction.user}",
                     )
                 else:  # category
                     ch = await interaction.guild.create_category(
-                        name=ch_name,
-                        reason=f"mkchannel bởi {interaction.user}"
+                        name=styled, overwrites=overwrites,
+                        reason=f"mkchannel bởi {interaction.user}",
                     )
                 created.append(ch)
                 if count > 1:
@@ -1524,18 +1613,24 @@ class MkChannelModal(discord.ui.Modal, title="➕ Tạo Kênh Mới"):
             except Exception:
                 failed += 1
 
+        # Labels hiển thị
+        privacy_lbl = "🔒 Private" if self.privacy == "private" else "🌐 Public"
+        lock_lbl    = "🔐 Khoá (read-only)" if self.lock == "on" else "🔓 Mở"
+
         # Kết quả
         embed = discord.Embed(
-            title=f"{icon} Tạo Kênh Hoàn Tất",
+            title=f"{type_icon} Tạo Kênh Hoàn Tất",
             color=0x57F287 if not failed else 0xFEE75C,
             timestamp=datetime.now(timezone.utc),
         )
-        embed.add_field(name="Loại",       value=self.ch_type,                      inline=True)
-        embed.add_field(name="Font",       value=FONT_LABELS.get(font, font),        inline=True)
-        embed.add_field(name="Danh mục",   value=category.name if category else "—", inline=True)
-        embed.add_field(name="✅ Đã tạo",  value=f"**{len(created)}** kênh",         inline=True)
+        embed.add_field(name="Loại",        value=self.ch_type,                      inline=True)
+        embed.add_field(name="Font",        value=FONT_LABELS.get(font, font),        inline=True)
+        embed.add_field(name="Danh mục",    value=category.name if category else "—", inline=True)
+        embed.add_field(name="Quyền",       value=privacy_lbl,                        inline=True)
+        embed.add_field(name="Khoá",        value=lock_lbl,                           inline=True)
+        embed.add_field(name="✅ Đã tạo",   value=f"**{len(created)}** kênh",         inline=True)
         if failed:
-            embed.add_field(name="❌ Thất bại", value=f"**{failed}** kênh",          inline=True)
+            embed.add_field(name="❌ Thất bại", value=f"**{failed}** kênh",           inline=True)
         if created:
             mentions = "  ".join(
                 ch.mention if hasattr(ch, "mention") and not isinstance(ch, discord.CategoryChannel)
