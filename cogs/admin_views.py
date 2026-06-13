@@ -312,11 +312,14 @@ def _build_ticket_roles_embed() -> discord.Embed:
 
     # Service tickets
     svc_lines = [f"{info['label']} → **{_tag(key)}**" for key, info in SERVICE_TABLE.items()]
-    # Order tickets
+    # Order tickets theo server
     order_lines = [
-        f"💰 Money → **{_tag('order_money')}**",
-        f"💀 Skeleton → **{_tag('order_skeleton')}**",
-        f"📦 Khác → **{_tag('order_other')}**",
+        f"🍩 DonutSMP → **{_tag('order_donut')}**",
+        f"👑 KingMC   → **{_tag('order_kingmc')}**",
+        f"🎮 One MC   → **{_tag('order_onemc')}**",
+        f"🔥 Free Fire → **{_tag('order_ff')}**",
+        f"🏗️ Build     → **{_tag('order_build')}**",
+        f"🎭 Acc Pre   → **{_tag('acc_pre')}**",
     ]
 
     # Admin lines từ ADMIN_IDS
@@ -340,13 +343,18 @@ def _build_ticket_roles_embed() -> discord.Embed:
 # Bảng hiển thị tên đẹp cho cả 6 loại (dùng trong Select)
 _ALL_TICKET_OPTIONS = [
     # service
-    ("orderbase",      "🏯 Order Base",    "Dịch vụ"),
     ("giveaway",       "🎁 Nhận Giveaway", "Dịch vụ"),
     ("support",        "🆘 Hỗ Trợ",        "Dịch vụ"),
-    # order
-    ("order_money",    "💰 Money",          "Mua/Bán"),
-    ("order_skeleton", "💀 Skeleton",       "Mua/Bán"),
-    ("order_other",    "📦 Khác",           "Mua/Bán"),
+    # order — DonutSMP & KingMC (có money/ske)
+    ("order_donut",    "🍩 Mua/Bán DonutSMP", "Mua/Bán"),
+    ("order_kingmc",   "👑 Mua/Bán KingMC",   "Mua/Bán"),
+    # order — OneMC & FreeFire (chỉ Khác)
+    ("order_onemc",    "🎮 Mua/Bán One MC",   "Mua/Bán"),
+    ("order_ff",       "🔥 Mua/Bán Free Fire","Mua/Bán"),
+    # order — Build base
+    ("order_build",    "🏗️ Mua/Bán Base",     "Mua/Bán"),
+    # acc pre
+    ("acc_pre",        "🎭 Acc Pre",           "Mua/Bán"),
 ]
 
 

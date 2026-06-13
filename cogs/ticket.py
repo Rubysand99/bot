@@ -360,12 +360,18 @@ async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
 # ══════════════════════════════════════════
 # ITEM SELECT
 # ══════════════════════════════════════════
+_ITEM_OPTIONS_BASIC = [
+    discord.SelectOption(label="📦 Khác", value="other", description="Item / dịch vụ khác", emoji="📦"),
+]
+_SERVERS_WITH_ITEMS = {SERVER_DONUT, SERVER_KING}  # chỉ DonutSMP & KingMC có money/ske
+
 class ItemSelect(Select):
     def __init__(self, trade_type: str, server_key: str = SERVER_DONUT):
         self.trade_type = trade_type
         self.server_key = server_key
-        action = "mua" if trade_type == "sell" else "bán"
-        super().__init__(placeholder=f"Bạn muốn {action} loại nào?", options=_ITEM_OPTIONS, custom_id=f"item_select_{trade_type}_{server_key}")
+        action  = "mua" if trade_type == "sell" else "bán"
+        options = _ITEM_OPTIONS if server_key in _SERVERS_WITH_ITEMS else _ITEM_OPTIONS_BASIC
+        super().__init__(placeholder=f"Bạn muốn {action} loại nào?", options=options, custom_id=f"item_select_{trade_type}_{server_key}")
 
     async def callback(self, interaction: discord.Interaction):
         try:
@@ -651,9 +657,95 @@ async def create_accpre_ticket(interaction: discord.Interaction, trade_type: str
         except Exception:
             pass
 
+
+async def create_build_ticket(interaction: discord.Interaction, trade_type: str):
+    """Tạo ticket mua/bán base Minecraft."""
+    guild = interaction.guild
+    try:
+        if await has_ticket(guild, interaction.user):
+            return await interaction.followup.send("❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.", ephemeral=True)
+
+        bot        = interaction.client
+        number     = await get_next_ticket_number(bot)
+        created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+
+        color, type_label = (0x1ABC9C, "🏗️ MUA BASE") if trade_type == "buy" else (0xF39C12, "🏗️ BÁN BASE")
+        channel_name = f"build-{number}"
+
+        role_id    = get_ticket_role_id("order_build")
+        role_group = get_ticket_type_role("order_build") if not role_id else None
+
+        overwrites = _build_ticket_overwrites(guild, interaction.user, role_group=role_group, role_id=role_id)
+        category   = discord.utils.get(guild.categories, id=get_cfg_category())
+        channel    = await guild.create_text_channel(
+            name=channel_name, overwrites=overwrites, category=category,
+            topic=f"{interaction.user.id}||{trade_type}|build|open|build"
+        )
+
+        embed = discord.Embed(
+            title=f"{type_label}  •  #{number}",
+            description=f"Xin chào {interaction.user.mention}! 👋\nStaff sẽ xử lý sớm nhất có thể.\n🟡 **Trạng thái:** Đang chờ staff nhận",
+            color=color, timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="👤  Người dùng", value=interaction.user.mention, inline=True)
+        embed.add_field(name="🕐  Thời gian",  value=created_at,               inline=True)
+        embed.add_field(name="🏗️  Loại",       value=type_label,               inline=True)
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
+
+        if role_id:
+            ping_str = f"<@&{role_id}>"
+        elif role_group == "admin":
+            ping_str = " ".join(f"<@{aid}>" for aid in ADMIN_IDS)
+        else:
+            ping_str = f"<@&{get_cfg_support_role()}>"
+
+        await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
+        _register_ticket(interaction.user.id, channel.id)
+        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
+
+        await send_log(
+            interaction.client, "TICKET_CREATE", f"Ticket Tạo — {channel_name}",
+            fields=[
+                ("🎫 Kênh",       channel.mention,               True),
+                ("🏷️ Loại",      type_label,                    True),
+                ("👤 Người tạo", interaction.user.mention,       True),
+                ("🕐 Thời gian", created_at,                    True),
+            ],
+            user=interaction.user,
+        )
+    except Exception as e:
+        try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`")
+        except Exception:
+            pass
+
 # ══════════════════════════════════════════
 # PANEL VIEW
 # ══════════════════════════════════════════
+class BuildView(View):
+    """Popup chọn Mua Base / Bán Base sau khi nhấn nút Build."""
+    def __init__(self):
+        super().__init__(timeout=60)
+
+    @discord.ui.button(label="🛒 Mua Base", style=discord.ButtonStyle.green,  custom_id="build_buy")
+    async def buy_build(self, interaction: discord.Interaction, button: Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            await create_build_ticket(interaction, trade_type="buy")
+        except Exception as e:
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+    @discord.ui.button(label="💸 Bán Base", style=discord.ButtonStyle.blurple, custom_id="build_sell")
+    async def sell_build(self, interaction: discord.Interaction, button: Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            await create_build_ticket(interaction, trade_type="sell")
+        except Exception as e:
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+
 class AccPreView(View):
     """Hiện sau khi nhấn nút Acc Pre — chọn Mua hoặc Bán."""
     def __init__(self):
@@ -710,6 +802,14 @@ class TicketPanel(View):
     async def accpre(self, interaction: discord.Interaction, button: Button):
         try:
             await interaction.response.send_message("🎭 **Bạn muốn mua hay bán Acc Pre?**", view=AccPreView(), ephemeral=True)
+        except Exception as e:
+            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+    @discord.ui.button(label="🏗️ Build", style=discord.ButtonStyle.grey, custom_id="panel_build")
+    async def build(self, interaction: discord.Interaction, button: Button):
+        try:
+            await interaction.response.send_message("🏗️ **Bạn muốn mua hay bán Base?**", view=BuildView(), ephemeral=True)
         except Exception as e:
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
@@ -1060,7 +1160,7 @@ class TicketCog(commands.Cog):
         Dùng group  → gán group string cũ: seller / builder / admin / none
         Dùng reset  → xóa cả role ID lẫn group.
 
-        Keys hợp lệ: order_donut, order_kingmc, order_onemc, order_ff, acc_pre, giveaway, support
+        Keys hợp lệ: order_donut, order_kingmc, order_onemc, order_ff, order_build, acc_pre, giveaway, support
 
         Ví dụ:
           .setrole order_donut @DonutStaff
@@ -1070,13 +1170,14 @@ class TicketCog(commands.Cog):
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
 
-        VALID_KEYS = ["order_donut", "order_kingmc", "order_onemc", "order_ff", "acc_pre", "giveaway", "support"]
+        VALID_KEYS = ["order_donut", "order_kingmc", "order_onemc", "order_ff", "order_build", "acc_pre", "giveaway", "support"]
         VALID_GROUPS = ["seller", "builder", "admin", "none"]
         KEY_LABELS = {
             "order_donut":  "🍩 Mua/Bán DonutSMP",
             "order_kingmc": "👑 Mua/Bán KingMC",
             "order_onemc":  "🎮 Mua/Bán One MC",
             "order_ff":     "🔥 Mua/Bán Free Fire",
+            "order_build":  "🏗️ Mua/Bán Base",
             "acc_pre":      "🎭 Acc Pre",
             "giveaway":     "🎁 Nhận Giveaway",
             "support":      "🆘 Hỗ Trợ",
@@ -1160,6 +1261,7 @@ class TicketCog(commands.Cog):
             "order_kingmc": "👑 Mua/Bán KingMC",
             "order_onemc":  "🎮 Mua/Bán One MC",
             "order_ff":     "🔥 Mua/Bán Free Fire",
+            "order_build":  "🏗️ Mua/Bán Base",
             "acc_pre":      "🎭 Acc Pre",
             "giveaway":     "🎁 Nhận Giveaway",
             "support":      "🆘 Hỗ Trợ",
