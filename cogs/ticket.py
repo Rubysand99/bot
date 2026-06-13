@@ -20,14 +20,17 @@ from core.data import (
     get_cfg_counter_channel, get_cfg_proof_channel,
     get_panel_channel_id, save_panel_channel_id,
     get_buy_roles, get_user_total_spent,
-    add_user_spent,
+    add_user_spent, add_user_spent_server,
+    get_user_spent_by_server, get_user_spent_all_servers,
     save_ticket_record, get_user_ticket_history, get_monthly_stats,
     load_data, save_data, parse_amount, fmt_amount, is_staff_member,
     _uname, _uname_plain, can_use_dangerous_cmd,
     get_seller_category, save_seller_category,
     remove_seller_category, get_all_seller_categories,
     get_or_fetch_channel,
-    get_ticket_type_role, BUILDER_BASE_ROLE_ID as _BUILDER_ROLE_ID,
+    get_ticket_type_role, set_ticket_type_role, get_all_ticket_type_roles,
+    BUILDER_BASE_ROLE_ID as _BUILDER_ROLE_ID,
+    get_ticket_role_id, set_ticket_role_id, get_all_ticket_role_ids,
 )
 from cogs.logger import send_log
 
@@ -35,9 +38,17 @@ from cogs.logger import send_log
 
 BUILDER_BASE_ROLE_ID = _BUILDER_ROLE_ID
 
+# ── Server keys cho mua/bán ──
+SERVER_DONUT = "donut"
+SERVER_KING  = "kingmc"
+
+SERVER_TABLE = {
+    SERVER_DONUT: {"label": "🍩 DonutSMP", "color": 0xFF6B6B, "channel_prefix": "donut"},
+    SERVER_KING:  {"label": "👑 KingMC",   "color": 0xF1C40F, "channel_prefix": "king"},
+}
+
 # ── Bảng SERVICE (không có giá) ──
 SERVICE_TABLE = {
-    "orderbase": {"label": "🏯 Order Base",    "note": "Đặt thiết kế base theo yêu cầu",  "color": 0xE67E22, "type_label": "🏯 ORDER BASE",    "channel_prefix": "base"},
     "giveaway":  {"label": "🎁 Nhận Giveaway", "note": "Xác nhận & nhận thưởng giveaway", "color": 0xF1C40F, "type_label": "🎁 NHẬN GIVEAWAY",  "channel_prefix": "ticket"},
     "support":   {"label": "🆘 Hỗ Trợ",        "note": "Hỗ trợ mọi vấn đề",              "color": 0x3498DB, "type_label": "🆘 HỖ TRỢ",         "channel_prefix": "ticket"},
 }
@@ -124,14 +135,15 @@ async def sync_ticket_counter(bot, guild: discord.Guild):
         asyncio.create_task(write_counter_to_channel(bot, max_num))
         print(f"[SYNC] Ticket counter đồng bộ → {max_num:03d}")
 
-def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None = None):
+def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None = None, role_id: int | None = None):
     """
-    role_group: "seller" | "builder" | "admin" | None
+    Ưu tiên role_id nếu được truyền vào (dùng cho Donut, King, AccPre).
+    role_group: "seller" | "builder" | "admin" | None  — dùng khi không có role_id.
       - "seller"  → chỉ Seller Role vào kênh
       - "builder" → chỉ Builder Base Role vào kênh
       - "admin"   → chỉ Admin trong ADMIN_IDS vào kênh
-      - None      → cả hai (hành vi cũ, dùng cho ticket thương mại)
-    Admin luôn có full quyền bất kể role_group.
+      - None      → cả hai role + support (hành vi cũ)
+    Admin luôn có full quyền bất kể role_group/role_id.
     """
     _staff_perm  = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_messages=True, attach_files=True, embed_links=True, manage_channels=True, manage_permissions=True)
     _member_perm = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
@@ -147,8 +159,12 @@ def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None
         if m:
             overwrites[m] = _staff_perm
 
-    # Role theo nhóm
-    if role_group == "seller":
+    if role_id:
+        # Chế độ mới: dùng role ID cụ thể (Donut, King, AccPre...)
+        r = guild.get_role(role_id)
+        if r:
+            overwrites[r] = _staff_perm
+    elif role_group == "seller":
         seller_role = guild.get_role(get_cfg_seller_role())
         if seller_role:
             overwrites[seller_role] = _staff_perm
@@ -157,9 +173,9 @@ def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None
         if builder_role:
             overwrites[builder_role] = _staff_perm
     elif role_group == "admin":
-        pass  # Chỉ ADMIN_IDS — đã thêm ở trên, không thêm role nào khác
+        pass  # Chỉ ADMIN_IDS — đã thêm ở trên
     else:
-        # Không config / ticket thương mại → cả hai role + support
+        # Fallback: cả hai role + support
         support_role = guild.get_role(get_cfg_support_role())
         if support_role:
             overwrites[support_role] = _staff_perm
@@ -186,7 +202,7 @@ def build_panel_embed(guild: discord.Guild) -> discord.Embed:
         description="Chào mừng đến với **TuyTam Store**!\nNhấn nút bên dưới để tạo ticket giao dịch.",
         color=0x5865F2, timestamp=datetime.now(timezone.utc)
     )
-    embed.add_field(name="🛒  Dịch vụ", value="› Mua / Bán Money, Skeleton, Elytra\n› 🏯 Order Base\n› 🎁 Nhận Giveaway\n› 🆘 Hỗ Trợ", inline=True)
+    embed.add_field(name="🛒  Dịch vụ", value="› Mua / Bán Money, Skeleton, Elytra\n› 🎭 Acc Pre\n› 🎁 Nhận Giveaway\n› 🆘 Hỗ Trợ", inline=True)
     embed.add_field(name="📋  Ticket bao gồm", value="› Tạo kênh riêng tư\n› Staff hỗ trợ 24/7\n› Transcript sau giao dịch", inline=True)
     embed.add_field(name="⚠️  Lưu ý", value="› Không spam ticket\n› Ghi rõ số lượng & item\n› Thanh toán đúng giá niêm yết", inline=False)
     embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
@@ -341,26 +357,56 @@ async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
 # ITEM SELECT
 # ══════════════════════════════════════════
 class ItemSelect(Select):
-    def __init__(self, trade_type: str):
+    def __init__(self, trade_type: str, server_key: str = SERVER_DONUT):
         self.trade_type = trade_type
+        self.server_key = server_key
         action = "mua" if trade_type == "sell" else "bán"
-        super().__init__(placeholder=f"Bạn muốn {action} loại nào?", options=_ITEM_OPTIONS, custom_id=f"item_select_{trade_type}")
+        super().__init__(placeholder=f"Bạn muốn {action} loại nào?", options=_ITEM_OPTIONS, custom_id=f"item_select_{trade_type}_{server_key}")
 
     async def callback(self, interaction: discord.Interaction):
         try:
             item_key   = self.values[0]
             item_label = _ITEM_LABEL.get(item_key, item_key)
             await interaction.response.defer(ephemeral=True)
-            await create_order_ticket(interaction, trade_type=self.trade_type, item_key=item_key, item_label=item_label)
+            await create_order_ticket(interaction, trade_type=self.trade_type, item_key=item_key, item_label=item_label, server_key=self.server_key)
         except Exception as e:
             try: await interaction.followup.send(f"❌ Lỗi: `{e}`")
             except Exception:
                 pass
 
 class ItemSelectView(View):
+    def __init__(self, trade_type: str, server_key: str = SERVER_DONUT):
+        super().__init__(timeout=60)
+        self.add_item(ItemSelect(trade_type, server_key=server_key))
+
+class ServerSelect(Select):
+    """Bước trung gian: chọn server (DonutSMP / KingMC) trước khi chọn item."""
+    def __init__(self, trade_type: str):
+        self.trade_type = trade_type
+        options = [
+            discord.SelectOption(label=info["label"], value=key, description=f"Giao dịch trên {info['label']}")
+            for key, info in SERVER_TABLE.items()
+        ]
+        super().__init__(placeholder="Chọn server...", options=options, custom_id=f"server_select_{trade_type}")
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            server_key = self.values[0]
+            server_label = SERVER_TABLE[server_key]["label"]
+            action = "mua" if self.trade_type == "sell" else "bán"
+            await interaction.response.send_message(
+                f"{server_label} — **Bạn muốn {action} loại nào?**",
+                view=ItemSelectView(trade_type=self.trade_type, server_key=server_key),
+                ephemeral=True,
+            )
+        except Exception as e:
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`")
+            except Exception: pass
+
+class ServerSelectView(View):
     def __init__(self, trade_type: str):
         super().__init__(timeout=60)
-        self.add_item(ItemSelect(trade_type))
+        self.add_item(ServerSelect(trade_type))
 
 class ServiceSelect(Select):
     def __init__(self):
@@ -384,7 +430,7 @@ class ServiceSelectView(View):
 # ══════════════════════════════════════════
 # TICKET CREATION FUNCTIONS
 # ══════════════════════════════════════════
-async def create_order_ticket(interaction: discord.Interaction, trade_type: str, item_key: str = "other", item_label: str = "📦 Khác", seller_id: int | None = None):
+async def create_order_ticket(interaction: discord.Interaction, trade_type: str, item_key: str = "other", item_label: str = "📦 Khác", seller_id: int | None = None, server_key: str = SERVER_DONUT):
     guild = interaction.guild
     try:
         if await has_ticket(guild, interaction.user):
@@ -393,29 +439,46 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
         bot = interaction.client
         number     = await get_next_ticket_number(bot)
         created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
-        _key_slug  = {"money": "money", "skeleton": "skeleton", "other": "khac"}
-        channel_name = f"{_key_slug.get(item_key, 'ticket')}-{number}"
+
+        server_info   = SERVER_TABLE.get(server_key, SERVER_TABLE[SERVER_DONUT])
+        _key_slug     = {"money": "money", "skeleton": "skeleton", "other": "khac"}
+        channel_name  = f"{server_info['channel_prefix']}-{_key_slug.get(item_key, 'ticket')}-{number}"
 
         color, type_label = (0x57F287, "🛒 MUA HÀNG") if trade_type == "sell" else (0xFEE75C, "💸 BÁN HÀNG")
+        server_label = server_info["label"]
 
-        # ticket mua/bán đọc role_group theo item_key
-        _order_cfg_key = {"money": "order_money", "skeleton": "order_skeleton", "other": "order_other"}
-        order_role_group = get_ticket_type_role(_order_cfg_key.get(item_key, "order_other"))
-        overwrites = _build_ticket_overwrites(guild, interaction.user, seller_id, role_group=order_role_group)
-        category   = discord.utils.get(guild.categories, id=get_cfg_category())
-        channel    = await guild.create_text_channel(name=channel_name, overwrites=overwrites, category=category, topic=f"{interaction.user.id}||{trade_type}|{item_key}|open")
+        # Đọc role ID theo server_key (ưu tiên), fallback về role_group cũ
+        _order_role_id = get_ticket_role_id(f"order_{server_key}")
+        if _order_role_id:
+            overwrites = _build_ticket_overwrites(guild, interaction.user, seller_id, role_id=_order_role_id)
+            ping_target = f"<@&{_order_role_id}>"
+        else:
+            _order_cfg_key = {"money": "order_money", "skeleton": "order_skeleton", "other": "order_other"}
+            order_role_group = get_ticket_type_role(_order_cfg_key.get(item_key, "order_other"))
+            overwrites = _build_ticket_overwrites(guild, interaction.user, seller_id, role_group=order_role_group)
+            ping_target = f"<@{seller_id}>" if seller_id else (
+                " ".join(f"<@{aid}>" for aid in ADMIN_IDS) if order_role_group == "admin"
+                else f"<@&{get_cfg_support_role()}>"
+            )
 
-        embed = discord.Embed(title=f"{type_label}  •  {item_label}  •  #{number}", description=f"Xin chào {interaction.user.mention}! 👋\nStaff sẽ xử lý giao dịch sớm nhất có thể.\n🟡 **Trạng thái:** Đang chờ staff nhận", color=color, timestamp=datetime.now(timezone.utc))
+        category = discord.utils.get(guild.categories, id=get_cfg_category())
+        channel  = await guild.create_text_channel(
+            name=channel_name, overwrites=overwrites, category=category,
+            topic=f"{interaction.user.id}||{trade_type}|{item_key}|open|{server_key}"
+        )
+
+        embed = discord.Embed(
+            title=f"{type_label}  •  {server_label}  •  {item_label}  •  #{number}",
+            description=f"Xin chào {interaction.user.mention}! 👋\nStaff sẽ xử lý giao dịch sớm nhất có thể.\n🟡 **Trạng thái:** Đang chờ staff nhận",
+            color=color, timestamp=datetime.now(timezone.utc)
+        )
         embed.add_field(name="👤  Người dùng", value=interaction.user.mention, inline=True)
         embed.add_field(name="🕐  Thời gian",  value=created_at,               inline=True)
+        embed.add_field(name="🌐  Server",     value=server_label,             inline=True)
         embed.add_field(name="📦  Loại hàng",  value=item_label,               inline=True)
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        ping_target = f"<@{seller_id}>" if seller_id else (
-            " ".join(f"<@{aid}>" for aid in ADMIN_IDS) if order_role_group == "admin"
-            else f"<@&{get_cfg_support_role()}>"
-        )
         await channel.send(f"{ping_target} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         _register_ticket(interaction.user.id, channel.id)
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
@@ -425,6 +488,7 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
             fields=[
                 ("🎫 Kênh",       channel.mention,               True),
                 ("🏷️ Loại",      type_label,                    True),
+                ("🌐 Server",     server_label,                  True),
                 ("📦 Item",       item_label,                    True),
                 ("👤 Người tạo", interaction.user.mention,       True),
                 ("🕐 Thời gian", created_at,                    True),
@@ -448,10 +512,11 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         number = await get_next_ticket_number(bot)
         created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
 
-        # Đọc role group từ config
-        role_group = get_ticket_type_role(service_key)  # "seller" | "builder" | None
+        # Ưu tiên role ID cụ thể, fallback sang role_group
+        role_id    = get_ticket_role_id(service_key)
+        role_group = get_ticket_type_role(service_key) if not role_id else None
 
-        overwrites = _build_ticket_overwrites(guild, interaction.user, role_group=role_group)
+        overwrites = _build_ticket_overwrites(guild, interaction.user, role_group=role_group, role_id=role_id)
         category   = discord.utils.get(guild.categories, id=get_cfg_category())
         channel    = await guild.create_text_channel(name=f"ticket-{number}", overwrites=overwrites, category=category, topic=f"{interaction.user.id}||service|{service_key}|open")
 
@@ -462,8 +527,9 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        # Ping đúng role theo config
-        if role_group == "builder":
+        if role_id:
+            ping_str = f"<@&{role_id}>"
+        elif role_group == "builder":
             ping_str = f"<@&{BUILDER_BASE_ROLE_ID}>"
         elif role_group == "seller":
             ping_str = f"<@&{get_cfg_seller_role()}>"
@@ -480,9 +546,95 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         except Exception:
             pass
 
+async def create_accpre_ticket(interaction: discord.Interaction, trade_type: str):
+    """Tạo ticket mua/bán tài khoản Pre."""
+    guild = interaction.guild
+    try:
+        if await has_ticket(guild, interaction.user):
+            return await interaction.followup.send("❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.", ephemeral=True)
+
+        bot        = interaction.client
+        number     = await get_next_ticket_number(bot)
+        created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+
+        color, type_label = (0xE74C3C, "🎭 MUA ACC PRE") if trade_type == "buy" else (0x9B59B6, "🎭 BÁN ACC PRE")
+        channel_name = f"acc-{number}"
+
+        # Đọc role ID cho acc_pre
+        role_id    = get_ticket_role_id("acc_pre")
+        role_group = get_ticket_type_role("acc_pre") if not role_id else None
+
+        overwrites = _build_ticket_overwrites(guild, interaction.user, role_group=role_group, role_id=role_id)
+        category   = discord.utils.get(guild.categories, id=get_cfg_category())
+        channel    = await guild.create_text_channel(
+            name=channel_name, overwrites=overwrites, category=category,
+            topic=f"{interaction.user.id}||{trade_type}|acc_pre|open|accpre"
+        )
+
+        embed = discord.Embed(
+            title=f"{type_label}  •  #{number}",
+            description=f"Xin chào {interaction.user.mention}! 👋\nStaff sẽ xử lý sớm nhất có thể.\n🟡 **Trạng thái:** Đang chờ staff nhận",
+            color=color, timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="👤  Người dùng", value=interaction.user.mention, inline=True)
+        embed.add_field(name="🕐  Thời gian",  value=created_at,               inline=True)
+        embed.add_field(name="🎭  Loại",       value=type_label,               inline=True)
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
+
+        if role_id:
+            ping_str = f"<@&{role_id}>"
+        elif role_group == "admin":
+            ping_str = " ".join(f"<@{aid}>" for aid in ADMIN_IDS)
+        else:
+            ping_str = f"<@&{get_cfg_support_role()}>"
+
+        await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
+        _register_ticket(interaction.user.id, channel.id)
+        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
+
+        await send_log(
+            interaction.client, "TICKET_CREATE", f"Ticket Tạo — {channel_name}",
+            fields=[
+                ("🎫 Kênh",       channel.mention,               True),
+                ("🏷️ Loại",      type_label,                    True),
+                ("👤 Người tạo", interaction.user.mention,       True),
+                ("🕐 Thời gian", created_at,                    True),
+            ],
+            user=interaction.user,
+        )
+    except Exception as e:
+        try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`")
+        except Exception:
+            pass
+
 # ══════════════════════════════════════════
 # PANEL VIEW
 # ══════════════════════════════════════════
+class AccPreView(View):
+    """Hiện sau khi nhấn nút Acc Pre — chọn Mua hoặc Bán."""
+    def __init__(self):
+        super().__init__(timeout=60)
+
+    @discord.ui.button(label="Mua Acc Pre", emoji="🛒", style=discord.ButtonStyle.green, custom_id="accpre_buy")
+    async def buy_acc(self, interaction: discord.Interaction, button: Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            await create_accpre_ticket(interaction, trade_type="buy")
+        except Exception as e:
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+    @discord.ui.button(label="Bán Acc Pre", emoji="💸", style=discord.ButtonStyle.blurple, custom_id="accpre_sell")
+    async def sell_acc(self, interaction: discord.Interaction, button: Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            await create_accpre_ticket(interaction, trade_type="sell")
+        except Exception as e:
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+
 class TicketPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -490,20 +642,18 @@ class TicketPanel(View):
     @discord.ui.button(label="Mua hàng", emoji="🛒", style=discord.ButtonStyle.green, custom_id="panel_buy")
     async def buy(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("🛒 **Bạn muốn mua loại nào?**", view=ItemSelectView(trade_type="sell"), ephemeral=True)
+            await interaction.response.send_message("🛒 **Chọn server bạn muốn mua hàng:**", view=ServerSelectView(trade_type="sell"), ephemeral=True)
         except Exception as e:
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
-            except Exception:
-                pass
+            except Exception: pass
 
     @discord.ui.button(label="Bán hàng", emoji="💸", style=discord.ButtonStyle.blurple, custom_id="panel_sell")
     async def sell(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("💸 **Bạn muốn bán loại nào?**", view=ItemSelectView(trade_type="buy"), ephemeral=True)
+            await interaction.response.send_message("💸 **Chọn server bạn muốn bán hàng:**", view=ServerSelectView(trade_type="buy"), ephemeral=True)
         except Exception as e:
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
-            except Exception:
-                pass
+            except Exception: pass
 
     @discord.ui.button(label="Dịch Vụ", emoji="🎮", style=discord.ButtonStyle.grey, custom_id="panel_service")
     async def service(self, interaction: discord.Interaction, button: Button):
@@ -511,8 +661,15 @@ class TicketPanel(View):
             await interaction.response.send_message("🎮 **Bạn cần dịch vụ nào?**", view=ServiceSelectView(), ephemeral=True)
         except Exception as e:
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
-            except Exception:
-                pass
+            except Exception: pass
+
+    @discord.ui.button(label="Acc Pre", emoji="🎭", style=discord.ButtonStyle.red, custom_id="panel_accpre")
+    async def accpre(self, interaction: discord.Interaction, button: Button):
+        try:
+            await interaction.response.send_message("🎭 **Bạn muốn mua hay bán Acc Pre?**", view=AccPreView(), ephemeral=True)
+        except Exception as e:
+            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
 
 # ══════════════════════════════════════════
 # TICKET BUTTONS
@@ -576,13 +733,18 @@ class TicketCog(commands.Cog):
         if amount is None or amount <= 0:
             return await ctx.reply(f"❌ Số tiền `{amount_str}` không hợp lệ!")
 
+        # Parse topic: user_id||trade_type|item_key|status[|server_key]
         parts = ctx.channel.topic.split("|")
         try: user_id = int(parts[0]) if parts[0].isdigit() else None
         except Exception: user_id = None
         if not user_id: return await ctx.reply("❌ Không đọc được thông tin buyer từ ticket.")
 
         trade_type = parts[2] if len(parts) > 2 else None
-        if trade_type not in ("sell", "buy"): return await ctx.reply("ℹ️ Ticket dịch vụ / hỗ trợ không tính vào đơn mua hàng.")
+        item_key   = parts[3] if len(parts) > 3 else None
+        server_key = parts[5] if len(parts) > 5 else None  # slot 5: donut / kingmc / accpre / None
+
+        if trade_type not in ("sell", "buy"):
+            return await ctx.reply("ℹ️ Ticket dịch vụ / hỗ trợ không tính vào đơn mua hàng.")
 
         buyer = ctx.guild.get_member(user_id)
         if not buyer: return await ctx.reply(f"❌ Không tìm thấy buyer (ID: `{user_id}`).")
@@ -596,21 +758,33 @@ class TicketCog(commands.Cog):
         data[completed_key] = True
         save_data(data)
 
-        new_total = add_user_spent(user_id, amount)
+        # Cộng tiền theo server (nếu có server_key) VÀ vào tổng chung
+        if server_key:
+            totals     = add_user_spent_server(user_id, amount, server_key)
+            new_total  = totals["total"]
+            srv_total  = totals["server_total"]
+        else:
+            new_total = add_user_spent(user_id, amount)
+            srv_total = None
+
+        # Label server để hiển thị
+        SERVER_LABELS = {
+            "donut":   "🍩 DonutSMP",
+            "kingmc":  "👑 KingMC",
+            "accpre":  "🎭 Acc Pre",
+        }
+        server_label = SERVER_LABELS.get(server_key, None)
 
         # Lưu lịch sử đơn
-        opened_at = None
-        try:
-            # topic format: user_id||trade_type|item_key|open
-            # lấy created_at của channel làm opened_at
-            opened_at = ctx.channel.created_at.isoformat()
-        except Exception:
-            opened_at = datetime.now(timezone.utc).isoformat()
+        try:    opened_at = ctx.channel.created_at.isoformat()
+        except: opened_at = datetime.now(timezone.utc).isoformat()
+
         save_ticket_record({
             "ticket_name": ctx.channel.name,
             "user_id":     user_id,
             "username":    _uname_plain(buyer),
             "amount":      amount,
+            "server_key":  server_key or "unknown",
             "opened_at":   opened_at,
             "closed_at":   datetime.now(timezone.utc).isoformat(),
             "staff":       _uname_plain(ctx.author),
@@ -619,43 +793,45 @@ class TicketCog(commands.Cog):
 
         from cogs.admin import auto_give_buy_roles
         role_cfg = await auto_give_buy_roles(ctx.guild, buyer, new_total)
-        buy_roles = get_buy_roles()
 
         embed = discord.Embed(title="✅ Hoàn Thành Đơn", color=0x57F287, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="👤 Buyer",       value=buyer.mention,                  inline=True)
-        embed.add_field(name="💵 Đơn này",     value=f"**{fmt_amount(amount)}**",    inline=True)
-        embed.add_field(name="💰 Tổng đã mua", value=f"**{fmt_amount(new_total)}**", inline=True)
+        embed.add_field(name="👤 Buyer",       value=buyer.mention,               inline=True)
+        embed.add_field(name="💵 Đơn này",     value=f"**{fmt_amount(amount)}**", inline=True)
+        embed.add_field(name="💰 Tổng chung",  value=f"**{fmt_amount(new_total)}**", inline=True)
+
+        if server_label and srv_total is not None:
+            embed.add_field(
+                name=f"📊 Tổng {server_label}",
+                value=f"**{fmt_amount(srv_total)}**",
+                inline=True,
+            )
+
         if role_cfg:
             role_obj = ctx.guild.get_role(role_cfg.get("role_id", 0))
-            embed.add_field(name="🏆 Role hiện tại", value=role_obj.mention if role_obj else f"**{role_cfg.get('label','?')}**", inline=False)
+            embed.add_field(
+                name="🏆 Role hiện tại",
+                value=role_obj.mention if role_obj else f"**{role_cfg.get('label','?')}**",
+                inline=False,
+            )
         embed.set_footer(text=f"Xác nhận bởi {_uname_plain(ctx.author)}")
         await ctx.reply(embed=embed)
 
+        log_fields = [
+            ("👤 Buyer",        buyer.mention,        True),
+            ("💵 Đơn này",      fmt_amount(amount),   True),
+            ("💰 Tổng chung",   fmt_amount(new_total), True),
+        ]
+        if server_label and srv_total is not None:
+            log_fields.append((f"📊 {server_label}", fmt_amount(srv_total), True))
+        log_fields += [
+            ("🎫 Ticket",        ctx.channel.mention, True),
+            ("✍️ Xác nhận bởi", ctx.author.mention,  True),
+        ]
         await send_log(
             ctx.bot, "TICKET_DONE", f"Hoàn Thành Đơn — {ctx.channel.name}",
-            fields=[
-                ("👤 Buyer",        buyer.mention,                  True),
-                ("💵 Đơn này",      fmt_amount(amount),             True),
-                ("💰 Tổng đã mua",  fmt_amount(new_total),          True),
-                ("🎫 Ticket",       ctx.channel.mention,            True),
-                ("✍️ Xác nhận bởi", ctx.author.mention,             True),
-            ],
+            fields=log_fields,
             user=ctx.author,
         )
-
-    @commands.command(name="orderbase")
-    async def orderbase_cmd(self, ctx):
-        if ctx.author.id not in ADMIN_IDS: return
-        try: await ctx.message.delete()
-        except Exception:
-            pass
-        embed = discord.Embed(
-            title="# Nhận Làm Base Village Trong <:emoji_17:1483684359415267449>",
-            description="**Giá Chỉ Từ 20-35m Tùy Theo Base Mà Ae Chọn**\n\n**Cam Kết:**\n<:emoji_17:1483684359415267449> •Tự Tìm Chỗ Xây Base Lun Nhé Ae\n<:emoji_17:1483684359415267449> •Base Có Chỗ Nhân Giống Village\n<:emoji_17:1483684359415267449> •Bảo Hành 8h Kể Từ Khi Mua\n<:emoji_17:1483684359415267449> •Nếu Bị Raid Trong Giờ Bảo Hành Sẽ Đc Hoàn Tiền\n\n**Nên Ae Yên Tâm Mà Thuê** ✅\n\n**Ai Muốn Có 1 Base Village Tuyệt Vời Mà Còn Rẻ Thì Hãy Tạo <#1464415587378659564> Để Có 1 Base Xịn Nhé**",
-            color=0xE67E22, timestamp=datetime.now(timezone.utc)
-        )
-        embed.set_footer(text="💰 DoанBaoNgoc-Stock  •  TuyTam Store")
-        await ctx.send("<@&1464411190808805540> sorry ping", embed=embed)
 
     # ── SLASH COMMANDS ──
     @discord.app_commands.command(name="close", description="Đóng ticket hiện tại")
@@ -827,6 +1003,145 @@ class TicketCog(commands.Cog):
     # ══════════════════════════════════════════
     # ADMIN: GÁN CATEGORY CHO SELLER (.setsl)
     # ══════════════════════════════════════════
+    # ══════════════════════════════════════════
+    # ADMIN: GÁN ROLE CHO TỪNG LOẠI TICKET
+    # ══════════════════════════════════════════
+    @commands.command(name="setrole")
+    async def setrole_cmd(self, ctx, ticket_key: str = None, *, value: str = None):
+        """
+        Gán role (hoặc group cũ) cho từng loại ticket.
+
+        Dùng @role  → gán role ID cụ thể (ưu tiên, ghi đè group cũ).
+        Dùng group  → gán group string cũ: seller / builder / admin / none
+        Dùng reset  → xóa cả role ID lẫn group.
+
+        Keys hợp lệ: order_donut, order_kingmc, acc_pre, giveaway, support
+
+        Ví dụ:
+          .setrole order_donut @DonutStaff
+          .setrole support builder
+          .setrole acc_pre reset
+        """
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền.")
+
+        VALID_KEYS = ["order_donut", "order_kingmc", "acc_pre", "giveaway", "support"]
+        VALID_GROUPS = ["seller", "builder", "admin", "none"]
+        KEY_LABELS = {
+            "order_donut":  "🍩 Mua/Bán DonutSMP",
+            "order_kingmc": "👑 Mua/Bán KingMC",
+            "acc_pre":      "🎭 Acc Pre",
+            "giveaway":     "🎁 Nhận Giveaway",
+            "support":      "🆘 Hỗ Trợ",
+        }
+
+        if not ticket_key:
+            keys_str = "\n".join(f"`{k}` — {KEY_LABELS[k]}" for k in VALID_KEYS)
+            return await ctx.reply(
+                "❌ Thiếu thông tin!\n"
+                "**Cú pháp:**\n"
+                "`.setrole <key> @role` — gán role Discord cụ thể\n"
+                "`.setrole <key> seller|builder|admin` — dùng group cũ\n"
+                "`.setrole <key> reset` — xóa cấu hình\n\n"
+                f"**Keys hợp lệ:**\n{keys_str}"
+            )
+
+        ticket_key = ticket_key.lower()
+        if ticket_key not in VALID_KEYS:
+            return await ctx.reply(f"❌ Key `{ticket_key}` không hợp lệ! Dùng `.setrole` để xem danh sách.")
+
+        if not value:
+            return await ctx.reply("❌ Thiếu giá trị! Ví dụ: `.setrole order_donut @DonutStaff`")
+
+        label = KEY_LABELS.get(ticket_key, ticket_key)
+
+        # Reset cả 2 hệ thống
+        if value.strip().lower() == "reset":
+            set_ticket_role_id(ticket_key, None)
+            set_ticket_type_role(ticket_key, None)
+            return await ctx.reply(f"✅ Đã xóa cấu hình role cho **{label}** (`{ticket_key}`).")
+
+        # Group string cũ (seller / builder / admin / none)
+        if value.strip().lower() in VALID_GROUPS:
+            group = value.strip().lower()
+            g = None if group == "none" else group
+            set_ticket_type_role(ticket_key, g)
+            set_ticket_role_id(ticket_key, None)   # xóa role ID nếu có
+            embed = discord.Embed(title="⚙️ Đã Gán Group Ticket", color=0xF1C40F, timestamp=datetime.now(timezone.utc))
+            embed.add_field(name="🏷️ Loại ticket", value=label,              inline=True)
+            embed.add_field(name="👥 Group",        value=f"`{group}`",       inline=True)
+            embed.add_field(name="🔑 Key",          value=f"`{ticket_key}`",  inline=True)
+            embed.set_footer(text=f"Cài bởi {_uname_plain(ctx.author)}")
+            return await ctx.reply(embed=embed)
+
+        # Role mention / ID
+        role = None
+        if ctx.message.role_mentions:
+            role = ctx.message.role_mentions[0]
+        else:
+            try:
+                rid  = int(value.strip().strip("<@&>"))
+                role = ctx.guild.get_role(rid)
+            except Exception:
+                pass
+
+        if not role:
+            return await ctx.reply(
+                f"❌ Không nhận ra `{value}` là role hay group hợp lệ.\n"
+                f"Group hợp lệ: `seller`, `builder`, `admin`, `none`\n"
+                "Hoặc mention trực tiếp `@Role`."
+            )
+
+        set_ticket_role_id(ticket_key, role.id)
+        set_ticket_type_role(ticket_key, None)   # xóa group cũ nếu có
+
+        embed = discord.Embed(title="⚙️ Đã Gán Role Ticket", color=0x57F287, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="🏷️ Loại ticket", value=label,             inline=True)
+        embed.add_field(name="👥 Role",         value=role.mention,      inline=True)
+        embed.add_field(name="🔑 Key",          value=f"`{ticket_key}`", inline=True)
+        embed.set_footer(text=f"Cài bởi {_uname_plain(ctx.author)}")
+        await ctx.reply(embed=embed)
+
+    @commands.command(name="listroles")
+    async def listroles_cmd(self, ctx):
+        """Xem role / group đang gán cho từng loại ticket."""
+        if not is_staff_member(ctx.author):
+            return await ctx.reply("❌ Bạn không có quyền.")
+
+        KEY_LABELS = {
+            "order_donut":  "🍩 Mua/Bán DonutSMP",
+            "order_kingmc": "👑 Mua/Bán KingMC",
+            "acc_pre":      "🎭 Acc Pre",
+            "giveaway":     "🎁 Nhận Giveaway",
+            "support":      "🆘 Hỗ Trợ",
+        }
+        all_ids    = get_all_ticket_role_ids()
+        all_groups = get_all_ticket_type_roles()
+
+        lines = []
+        for key, label in KEY_LABELS.items():
+            rid   = all_ids.get(key)
+            group = all_groups.get(key)
+            if rid:
+                role = ctx.guild.get_role(int(rid))
+                val  = (role.mention if role else f"`ID:{rid}` *(không tìm thấy)*") + "  *(role ID)*"
+            elif group:
+                val = f"`{group}` *(group)*"
+            else:
+                val = "*(chưa gán — dùng fallback mặc định)*"
+            lines.append(f"{label}\n╰ {val}")
+
+        embed = discord.Embed(
+            title="📋 Role / Group Từng Loại Ticket",
+            description="\n\n".join(lines),
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.set_footer(
+            text="Role ID ưu tiên hơn group  •  Dùng .setrole <key> @role|group|reset để chỉnh"
+        )
+        await ctx.reply(embed=embed)
+
     @commands.command(name="setsl")
     async def setsl_cmd(self, ctx, seller: discord.Member = None, category: discord.CategoryChannel = None):
         """

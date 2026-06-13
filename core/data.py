@@ -315,6 +315,39 @@ def add_user_spent(user_id: int, amount: int) -> int:
     save_data(data)
     return data["user_total_spent"][key]
 
+def get_user_spent_by_server(user_id: int, server_key: str) -> int:
+    """Trả về tổng chi tiêu của user trên 1 server cụ thể (donut / kingmc / accpre)."""
+    return load_data().get("user_spent_by_server", {}).get(str(user_id), {}).get(server_key, 0)
+
+def get_user_spent_all_servers(user_id: int) -> dict:
+    """Trả về dict {server_key: amount} của user."""
+    return load_data().get("user_spent_by_server", {}).get(str(user_id), {})
+
+def add_user_spent_server(user_id: int, amount: int, server_key: str) -> dict:
+    """
+    Cộng tiền vào tổng CHUNG (user_total_spent) VÀ tổng theo server (user_spent_by_server).
+    Trả về dict {"total": int, "server_total": int}.
+    """
+    data = load_data()
+    uid  = str(user_id)
+
+    # Tổng chung
+    data.setdefault("user_total_spent", {})
+    data["user_total_spent"][uid] = data["user_total_spent"].get(uid, 0) + amount
+
+    # Tổng theo server
+    data.setdefault("user_spent_by_server", {})
+    data["user_spent_by_server"].setdefault(uid, {})
+    data["user_spent_by_server"][uid][server_key] = (
+        data["user_spent_by_server"][uid].get(server_key, 0) + amount
+    )
+
+    save_data(data)
+    return {
+        "total":        data["user_total_spent"][uid],
+        "server_total": data["user_spent_by_server"][uid][server_key],
+    }
+
 # ══════════════════════════════════════════
 # RATINGS & NOTES
 # ══════════════════════════════════════════
@@ -544,6 +577,29 @@ def set_ticket_type_role(ticket_key: str, group: str | None) -> None:
 def get_all_ticket_type_roles() -> dict:
     """Trả về toàn bộ map {ticket_key: group}."""
     return load_data().get("ticket_type_roles", {})
+
+# ══════════════════════════════════════════
+# TICKET TYPE → ROLE ID (lưu role ID thực, dùng cho Donut/King/AccPre)
+# ══════════════════════════════════════════
+def get_ticket_role_id(ticket_key: str) -> int | None:
+    """Trả về role ID (int) được gán cho loại ticket, hoặc None nếu chưa set."""
+    val = load_data().get("ticket_role_ids", {}).get(ticket_key)
+    return int(val) if val else None
+
+def set_ticket_role_id(ticket_key: str, role_id: int | None) -> None:
+    """Lưu role ID cho loại ticket. role_id=None để xóa."""
+    data = load_data()
+    cfg = data.setdefault("ticket_role_ids", {})
+    if role_id is None:
+        cfg.pop(ticket_key, None)
+    else:
+        cfg[str(ticket_key)] = role_id
+    data["ticket_role_ids"] = cfg
+    save_data(data)
+
+def get_all_ticket_role_ids() -> dict:
+    """Trả về toàn bộ map {ticket_key: role_id}."""
+    return load_data().get("ticket_role_ids", {})
 
 # ══════════════════════════════════════════
 # TEMPBAN PERSISTENCE
