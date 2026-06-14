@@ -239,7 +239,14 @@ class LoggerCog(commands.Cog):
             return
         today_str = now.strftime("%Y-%m-%d")
         if self._last_report_date == today_str:
-            return  # Đã gửi rồi (tránh gửi 2 lần nếu bot restart trong giờ 01:xx)
+            return
+        self._last_report_date = today_str
+        data = load_data()
+        if data.get("_daily_report_date") == today_str:
+            self._last_report_date = today_str
+            return
+        from core.data import save_cfg
+        save_cfg("_daily_report_date", today_str)
         self._last_report_date = today_str
         await self._send_daily_report()
 
