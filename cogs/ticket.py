@@ -953,11 +953,10 @@ class TicketPanel(View):
     @discord.ui.button(label="🎭 Acc Pre", style=discord.ButtonStyle.blurple, custom_id="panel_accpre", row=2)
     async def btn_accpre(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message(
-                "🎭 **Bạn muốn mua hay bán Acc Pre?**", view=AccPreView(), ephemeral=True,
-            )
+            await interaction.response.defer(ephemeral=True)
+            await create_accpre_ticket(interaction, trade_type="buy")
         except Exception as e:
-            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
     @discord.ui.button(label="🏗️ Build",   style=discord.ButtonStyle.grey,   custom_id="panel_build",  row=2)
