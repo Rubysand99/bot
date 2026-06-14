@@ -240,7 +240,7 @@ class LoggerCog(commands.Cog):
         today_str = now.strftime("%Y-%m-%d")
         if self._last_report_date == today_str:
             return
-        self._last_report_date = today_str
+        # Check MongoDB phòng bot restart trong giờ 01:xx gửi lại
         data = load_data()
         if data.get("_daily_report_date") == today_str:
             self._last_report_date = today_str
@@ -439,8 +439,12 @@ class LoggerCog(commands.Cog):
         results = []
 
         for group, ch_name in CHANNEL_NAMES.items():
-            # Kiểm tra kênh đã tồn tại trong toàn bộ server (không chỉ category)
-            existing = discord.utils.get(ctx.guild.text_channels, name=ch_name)
+            # Kiểm tra kênh đã tồn tại — so sánh sau khi strip font Unicode
+            from cogs.admin_views import _strip_unicode_font
+            existing = discord.utils.find(
+                lambda ch, n=ch_name: _strip_unicode_font(ch.name) == n,
+                ctx.guild.text_channels,
+            )
             if existing:
                 set_log_channel(group, existing.id)
                 results.append(f"⏭️ {existing.mention} *(đã tồn tại)*")

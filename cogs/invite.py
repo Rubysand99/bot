@@ -685,6 +685,7 @@ class InviteCog(commands.Cog):
             inviter_member = member.guild.get_member(inviter_id) if member.guild else None
 
             # Lấy danh sách tài khoản cùng IP
+            # _ip_records dùng key dạng "1_2_3_4" (dấu gạch dưới)
             shared_users = _ip_records.get(ip.replace(".", "_"), [])
             primary_id   = get_primary_user_for_ip(ip)
             is_primary   = (primary_id == user_id)

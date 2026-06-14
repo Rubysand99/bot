@@ -34,8 +34,8 @@ from cogs.admin_views import (
     TicketRoleConfigView, MkChannelView,
 )
 
-BOT_VERSION = "4.0.0"
-BOT_UPDATED = "2026-05-30"
+BOT_VERSION = "4.5.0"
+BOT_UPDATED = "2026-06-14"
 
 try:
     import bot as _bot_module
@@ -348,7 +348,9 @@ class AdminCog(commands.Cog):
                      "`.baocao` — Báo cáo tổng hợp 24h (ticket, giveaway)", False),
                     ("🗂️ Nhóm log",
                      "`ticket` `mod` `giveaway`\n"
-                     "`member` `role` `ai` `admin` `general`", False),
+                     "`member` `role` `ai` `admin` `invite` `general`", False),
+                    ("⚠️ Lưu ý",
+                     "`.setuplog` tự nhận kênh đã đổi font chữ (Unicode) — không cần đặt lại tên kênh", False),
                 ]
             },
             "ai": {
