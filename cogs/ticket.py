@@ -58,10 +58,11 @@ SERVICE_TABLE = {
     "support":   {"label": "🆘 Hỗ Trợ",        "note": "Hỗ trợ mọi vấn đề",              "color": 0x3498DB, "type_label": "🆘 HỖ TRỢ",         "channel_prefix": "ticket"},
 }
 
-_ITEM_LABEL = {"money": "💰 Money", "skeleton": "💀 Skeleton", "other": "📦 Khác"}
+_ITEM_LABEL = {"money": "💰 Money", "skeleton": "💀 Skeleton", "elytra": "🦋 Elytra", "other": "📦 Khác"}
 _ITEM_OPTIONS = [
     discord.SelectOption(label="💰 Money",    value="money",    description="Giao dịch tiền tệ trong game",   emoji="💰"),
     discord.SelectOption(label="💀 Skeleton", value="skeleton", description="Giao dịch skeleton",             emoji="💀"),
+    discord.SelectOption(label="🦋 Elytra",   value="elytra",   description="Giao dịch Elytra",               emoji="🦋"),
     discord.SelectOption(label="📦 Khác",     value="other",    description="Item / dịch vụ khác",           emoji="📦"),
 ]
 
@@ -430,6 +431,69 @@ class ItemSelectView(View):
         super().__init__(timeout=60)
         self.add_item(ItemSelect(trade_type, server_key=server_key))
 
+
+class _ItemPickSelect(Select):
+    """Bước 1 (panel mới): chọn item trước, rồi mới chọn Mua/Bán."""
+    def __init__(self, server_key: str):
+        self.server_key = server_key
+        super().__init__(
+            placeholder="Chọn loại item...",
+            options=_ITEM_OPTIONS,  # Donut/King luôn full
+            custom_id=f"item_pick_{server_key}",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            item_key   = self.values[0]
+            item_label = _ITEM_LABEL.get(item_key, item_key)
+            server_label = SERVER_TABLE[self.server_key]["label"]
+            view = View(timeout=60)
+            view.add_item(_TradeModeSelect(self.server_key, item_key, item_label))
+            await interaction.response.send_message(
+                f"{server_label} — **{item_label}** — Bạn muốn mua hay bán?",
+                view=view, ephemeral=True,
+            )
+        except Exception as e:
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+
+class _TradeModeSelect(Select):
+    """Bước 2: chọn Mua hoặc Bán."""
+    def __init__(self, server_key: str, item_key: str, item_label: str):
+        self.server_key = server_key
+        self.item_key   = item_key
+        self.item_label = item_label
+        super().__init__(
+            placeholder="Mua hay Bán?",
+            options=[
+                discord.SelectOption(label="🛒 Mua", value="sell", description="Tôi muốn MUA item này"),
+                discord.SelectOption(label="💸 Bán", value="buy",  description="Tôi muốn BÁN item này"),
+            ],
+            custom_id=f"trade_mode_{server_key}_{item_key}",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            await create_order_ticket(
+                interaction,
+                trade_type=self.values[0],
+                item_key=self.item_key,
+                item_label=self.item_label,
+                server_key=self.server_key,
+            )
+        except Exception as e:
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+
+class ItemPickView(View):
+    """View bước 1: chọn item (cho Donut/KingMC từ panel mới)."""
+    def __init__(self, server_key: str):
+        super().__init__(timeout=60)
+        self.add_item(_ItemPickSelect(server_key))
+
 class ServerView(View):
     """Chọn server bằng nút thay vì Select menu."""
     def __init__(self, trade_type: str):
@@ -751,6 +815,69 @@ async def create_build_ticket(interaction: discord.Interaction, trade_type: str)
         except Exception:
             pass
 
+async def create_direct_order_ticket(interaction: discord.Interaction, server_key: str):
+    """Tạo ticket mua/bán thẳng không qua chọn item (OneMC, FreeFire)."""
+    guild = interaction.guild
+    try:
+        if await has_ticket(guild, interaction.user):
+            return await interaction.followup.send("❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.", ephemeral=True)
+        bot        = interaction.client
+        number     = await get_next_ticket_number(bot)
+        created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+        server_info  = SERVER_TABLE.get(server_key, {"label": server_key, "color": 0x5865F2, "channel_prefix": server_key})
+        server_label = server_info["label"]
+        prefix       = server_info["channel_prefix"]
+        color        = server_info["color"]
+        channel_name = f"{prefix}-{number}"
+
+        role_ids   = get_ticket_role_ids(f"order_{server_key}")
+        overwrites = _build_ticket_overwrites_multi(guild, interaction.user, role_ids)
+        category   = discord.utils.get(guild.categories, id=get_cfg_category())
+        channel    = await guild.create_text_channel(
+            name=channel_name, overwrites=overwrites, category=category,
+            topic=f"{interaction.user.id}||order|other|open|{server_key}"
+        )
+
+        embed = discord.Embed(
+            title=f"🎫 Ticket {server_label}  •  #{number}",
+            description=f"Xin chào {interaction.user.mention}! 👋\nStaff sẽ xử lý sớm nhất có thể.\n🟡 **Trạng thái:** Đang chờ staff nhận",
+            color=color, timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="👤  Người dùng", value=interaction.user.mention, inline=True)
+        embed.add_field(name="🕐  Thời gian",  value=created_at,               inline=True)
+        embed.add_field(name="🖥️  Server",     value=server_label,             inline=True)
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
+
+        if role_ids:
+            ping = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids)
+        else:
+            ping = f"<@&{get_cfg_support_role()}>"
+
+        await channel.send(f"{ping} | {interaction.user.mention}", embed=embed, view=TicketButtons())
+        _register_ticket(interaction.user.id, channel.id)
+        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
+
+        await send_log(
+            interaction.client, "TICKET_CREATE", f"Ticket Tạo — {channel_name}",
+            fields=[
+                ("🎫 Kênh",       channel.mention,         True),
+                ("🖥️ Server",    server_label,             True),
+                ("👤 Người tạo", interaction.user.mention, True),
+                ("🕐 Thời gian", created_at,               True),
+            ],
+            user=interaction.user,
+        )
+    except Exception as e:
+        try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`")
+        except Exception: pass
+
+
+async def create_direct_service_ticket(interaction: discord.Interaction, service_key: str):
+    """Tạo ticket dịch vụ thẳng (Giveaway, Hỗ Trợ) không qua popup."""
+    await create_service_ticket(interaction, service_key)
+
+
 # ══════════════════════════════════════════
 # PANEL VIEW
 # ══════════════════════════════════════════
@@ -803,47 +930,81 @@ class AccPreView(View):
 
 
 class TicketPanel(View):
+    """Panel chính — tất cả nút trong 1 embed, không timeout (persistent)."""
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🛒 Mua hàng", style=discord.ButtonStyle.green,  custom_id="panel_buy")
-    async def buy(self, interaction: discord.Interaction, button: Button):
+    # ── Hàng 1: Donut & KingMC (chọn item → Mua/Bán) ─────────────────
+    @discord.ui.button(label="🍩 DonutSMP", style=discord.ButtonStyle.green,  custom_id="panel_donut", row=0)
+    async def btn_donut(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("🛒 **Chọn server bạn muốn mua hàng:**", view=ServerView(trade_type="sell"), ephemeral=True)
+            await interaction.response.send_message(
+                "🍩 **DonutSMP — Chọn loại item:**",
+                view=ItemPickView(SERVER_DONUT), ephemeral=True,
+            )
         except Exception as e:
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
-    @discord.ui.button(label="💸 Bán hàng", style=discord.ButtonStyle.blurple, custom_id="panel_sell")
-    async def sell(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="👑 KingMC", style=discord.ButtonStyle.blurple, custom_id="panel_kingmc", row=0)
+    async def btn_kingmc(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("💸 **Chọn server bạn muốn bán hàng:**", view=ServerView(trade_type="buy"), ephemeral=True)
+            await interaction.response.send_message(
+                "👑 **KingMC — Chọn loại item:**",
+                view=ItemPickView(SERVER_KING), ephemeral=True,
+            )
         except Exception as e:
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
-    @discord.ui.button(label="🎮 Dịch Vụ", style=discord.ButtonStyle.grey, custom_id="panel_service")
-    async def service(self, interaction: discord.Interaction, button: Button):
+    # ── Hàng 2: OneMC, FreeFire (tạo ticket thẳng) ────────────────────
+    @discord.ui.button(label="🔥 Free Fire", style=discord.ButtonStyle.red,    custom_id="panel_ff",    row=1)
+    async def btn_ff(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("🎮 **Chọn dịch vụ bạn cần:**", view=ServiceView(), ephemeral=True)
+            await interaction.response.defer(ephemeral=True)
+            await create_direct_order_ticket(interaction, SERVER_FF)
+        except Exception as e:
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+    # ── Hàng 3: AccPre, Build (popup Mua/Bán) ─────────────────────────
+    @discord.ui.button(label="🎭 Acc Pre", style=discord.ButtonStyle.blurple, custom_id="panel_accpre", row=2)
+    async def btn_accpre(self, interaction: discord.Interaction, button: Button):
+        try:
+            await interaction.response.send_message(
+                "🎭 **Bạn muốn mua hay bán Acc Pre?**", view=AccPreView(), ephemeral=True,
+            )
         except Exception as e:
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
-    @discord.ui.button(label="🎭 Acc Pre", style=discord.ButtonStyle.red, custom_id="panel_accpre")
-    async def accpre(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="🏗️ Build",   style=discord.ButtonStyle.grey,   custom_id="panel_build",  row=2)
+    async def btn_build(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("🎭 **Bạn muốn mua hay bán Acc Pre?**", view=AccPreView(), ephemeral=True)
+            await interaction.response.send_message(
+                "🏗️ **Bạn muốn mua hay bán Base?**", view=BuildView(), ephemeral=True,
+            )
         except Exception as e:
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
-    @discord.ui.button(label="🏗️ Build", style=discord.ButtonStyle.grey, custom_id="panel_build")
-    async def build(self, interaction: discord.Interaction, button: Button):
+    # ── Hàng 4: Dịch vụ (Giveaway, Hỗ Trợ — tạo ticket thẳng) ───────
+    @discord.ui.button(label="🎁 Nhận Giveaway", style=discord.ButtonStyle.green,  custom_id="panel_giveaway", row=3)
+    async def btn_giveaway(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message("🏗️ **Bạn muốn mua hay bán Base?**", view=BuildView(), ephemeral=True)
+            await interaction.response.defer(ephemeral=True)
+            await create_direct_service_ticket(interaction, "giveaway")
         except Exception as e:
-            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+    @discord.ui.button(label="🆘 Hỗ Trợ", style=discord.ButtonStyle.blurple, custom_id="panel_support", row=3)
+    async def btn_support(self, interaction: discord.Interaction, button: Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            await create_direct_service_ticket(interaction, "support")
+        except Exception as e:
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
 # ══════════════════════════════════════════
