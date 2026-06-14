@@ -433,7 +433,7 @@ class ItemSelectView(View):
 
 
 class _ItemPickSelect(Select):
-    """Bước 1 (panel mới): chọn item trước, rồi mới chọn Mua/Bán."""
+    """Bước 1 (panel mới): chọn item → tạo ticket thẳng (không hỏi Mua/Bán)."""
     def __init__(self, server_key: str):
         self.server_key = server_key
         super().__init__(
@@ -446,12 +446,13 @@ class _ItemPickSelect(Select):
         try:
             item_key   = self.values[0]
             item_label = _ITEM_LABEL.get(item_key, item_key)
-            server_label = SERVER_TABLE[self.server_key]["label"]
-            view = View(timeout=60)
-            view.add_item(_TradeModeSelect(self.server_key, item_key, item_label))
-            await interaction.response.send_message(
-                f"{server_label} — **{item_label}** — Bạn muốn mua hay bán?",
-                view=view, ephemeral=True,
+            await interaction.response.defer(ephemeral=True)
+            await create_order_ticket(
+                interaction,
+                trade_type="sell",  # mặc định: người dùng mua hàng
+                item_key=item_key,
+                item_label=item_label,
+                server_key=self.server_key,
             )
         except Exception as e:
             try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
@@ -915,7 +916,7 @@ class TicketPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    # ── Hàng 1: Donut & KingMC (chọn item → Mua/Bán) ─────────────────
+    # ── Hàng 1: Donut & KingMC (chọn item → tạo ticket thẳng) ───────
     @discord.ui.button(label="🍩 DonutSMP", style=discord.ButtonStyle.green,  custom_id="panel_donut", row=0)
     async def btn_donut(self, interaction: discord.Interaction, button: Button):
         try:
@@ -962,11 +963,10 @@ class TicketPanel(View):
     @discord.ui.button(label="🏗️ Build",   style=discord.ButtonStyle.grey,   custom_id="panel_build",  row=2)
     async def btn_build(self, interaction: discord.Interaction, button: Button):
         try:
-            await interaction.response.send_message(
-                "🏗️ **Bạn muốn mua hay bán Base?**", view=BuildView(), ephemeral=True,
-            )
+            await interaction.response.defer(ephemeral=True)
+            await create_build_ticket(interaction, trade_type="buy")
         except Exception as e:
-            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
     # ── Hàng 4: Dịch vụ (Giveaway, Hỗ Trợ — tạo ticket thẳng) ───────
