@@ -676,16 +676,7 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        if role_id:
-            ping_str = f"<@&{role_id}>"
-        elif role_group == "builder":
-            ping_str = f"<@&{BUILDER_BASE_ROLE_ID}>"
-        elif role_group == "seller":
-            ping_str = f"<@&{get_cfg_seller_role()}>"
-        elif role_group == "admin":
-            ping_str = " ".join(f"<@{aid}>" for aid in ADMIN_IDS)
-        else:
-            ping_str = f"<@&{get_cfg_support_role()}>"
+        ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         _register_ticket(interaction.user.id, channel.id)
@@ -729,12 +720,7 @@ async def create_accpre_ticket(interaction: discord.Interaction, trade_type: str
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        if role_id:
-            ping_str = f"<@&{role_id}>"
-        elif role_group == "admin":
-            ping_str = " ".join(f"<@{aid}>" for aid in ADMIN_IDS)
-        else:
-            ping_str = f"<@&{get_cfg_support_role()}>"
+        ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         _register_ticket(interaction.user.id, channel.id)
@@ -789,12 +775,7 @@ async def create_build_ticket(interaction: discord.Interaction, trade_type: str)
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        if role_id:
-            ping_str = f"<@&{role_id}>"
-        elif role_group == "admin":
-            ping_str = " ".join(f"<@{aid}>" for aid in ADMIN_IDS)
-        else:
-            ping_str = f"<@&{get_cfg_support_role()}>"
+        ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         _register_ticket(interaction.user.id, channel.id)
