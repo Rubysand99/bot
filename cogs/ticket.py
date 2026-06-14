@@ -31,6 +31,7 @@ from core.data import (
     get_ticket_type_role, set_ticket_type_role, get_all_ticket_type_roles,
     BUILDER_BASE_ROLE_ID as _BUILDER_ROLE_ID,
     get_ticket_role_id, set_ticket_role_id, get_all_ticket_role_ids,
+    get_ticket_role_ids,
 )
 from cogs.logger import send_log
 
@@ -183,6 +184,46 @@ def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None
         support_role = guild.get_role(get_cfg_support_role())
         if support_role:
             overwrites[support_role] = _staff_perm
+        seller_role = guild.get_role(get_cfg_seller_role())
+        if seller_role:
+            overwrites[seller_role] = _staff_perm
+    return overwrites
+
+
+def _build_ticket_overwrites_multi(guild, user, role_ids: list):
+    """Dùng list role IDs từ hệ thống mới (ticket_multi_roles).
+    Nếu role_ids rỗng → fallback cả hai role + support.
+    Admin IDs trong list được gán theo member, không phải role.
+    """
+    _staff_perm  = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_messages=True, attach_files=True, embed_links=True, manage_channels=True, manage_permissions=True)
+    _member_perm = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        user: _member_perm,
+    }
+    # Admin luôn full quyền
+    for aid in ADMIN_IDS:
+        m = guild.get_member(aid)
+        if m:
+            overwrites[m] = _staff_perm
+
+    if role_ids:
+        for rid in role_ids:
+            if rid in ADMIN_IDS:
+                m = guild.get_member(rid)
+                if m:
+                    overwrites[m] = _staff_perm
+            else:
+                r = guild.get_role(rid)
+                if r:
+                    overwrites[r] = _staff_perm
+    else:
+        # Fallback
+        for rid in [get_cfg_support_role(), get_cfg_seller_role()]:
+            r = guild.get_role(rid)
+            if r:
+                overwrites[r] = _staff_perm
         seller_role = guild.get_role(get_cfg_seller_role())
         if seller_role:
             overwrites[seller_role] = _staff_perm
@@ -496,19 +537,16 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
         color, type_label = (0x57F287, "🛒 MUA HÀNG") if trade_type == "sell" else (0xFEE75C, "💸 BÁN HÀNG")
         server_label = server_info["label"]
 
-        # Đọc role ID theo server_key (ưu tiên), fallback về role_group cũ
-        _order_role_id = get_ticket_role_id(f"order_{server_key}")
-        if _order_role_id:
-            overwrites = _build_ticket_overwrites(guild, interaction.user, seller_id, role_id=_order_role_id)
-            ping_target = f"<@&{_order_role_id}>"
-        else:
-            _order_cfg_key = {"money": "order_money", "skeleton": "order_skeleton", "other": "order_other"}
-            order_role_group = get_ticket_type_role(_order_cfg_key.get(item_key, "order_other"))
-            overwrites = _build_ticket_overwrites(guild, interaction.user, seller_id, role_group=order_role_group)
-            ping_target = f"<@{seller_id}>" if seller_id else (
-                " ".join(f"<@{aid}>" for aid in ADMIN_IDS) if order_role_group == "admin"
-                else f"<@&{get_cfg_support_role()}>"
+        # Đọc multi role IDs theo server_key
+        _order_role_ids = get_ticket_role_ids(f"order_{server_key}")
+        overwrites  = _build_ticket_overwrites_multi(guild, interaction.user, _order_role_ids)
+        if _order_role_ids:
+            ping_target = " ".join(
+                f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>"
+                for r in _order_role_ids
             )
+        else:
+            ping_target = f"<@{seller_id}>" if seller_id else f"<@&{get_cfg_support_role()}>"
 
         category = discord.utils.get(guild.categories, id=get_cfg_category())
         channel  = await guild.create_text_channel(
@@ -562,10 +600,8 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
 
         # Ưu tiên role ID cụ thể, fallback sang role_group
-        role_id    = get_ticket_role_id(service_key)
-        role_group = get_ticket_type_role(service_key) if not role_id else None
-
-        overwrites = _build_ticket_overwrites(guild, interaction.user, role_group=role_group, role_id=role_id)
+        role_ids   = get_ticket_role_ids(service_key)
+        overwrites = _build_ticket_overwrites_multi(guild, interaction.user, role_ids)
         category   = discord.utils.get(guild.categories, id=get_cfg_category())
         channel    = await guild.create_text_channel(name=f"ticket-{number}", overwrites=overwrites, category=category, topic=f"{interaction.user.id}||service|{service_key}|open")
 
@@ -610,10 +646,8 @@ async def create_accpre_ticket(interaction: discord.Interaction, trade_type: str
         channel_name = f"acc-{number}"
 
         # Đọc role ID cho acc_pre
-        role_id    = get_ticket_role_id("acc_pre")
-        role_group = get_ticket_type_role("acc_pre") if not role_id else None
-
-        overwrites = _build_ticket_overwrites(guild, interaction.user, role_group=role_group, role_id=role_id)
+        role_ids   = get_ticket_role_ids("acc_pre")
+        overwrites = _build_ticket_overwrites_multi(guild, interaction.user, role_ids)
         category   = discord.utils.get(guild.categories, id=get_cfg_category())
         channel    = await guild.create_text_channel(
             name=channel_name, overwrites=overwrites, category=category,
@@ -672,10 +706,8 @@ async def create_build_ticket(interaction: discord.Interaction, trade_type: str)
         color, type_label = (0x1ABC9C, "🏗️ MUA BASE") if trade_type == "buy" else (0xF39C12, "🏗️ BÁN BASE")
         channel_name = f"build-{number}"
 
-        role_id    = get_ticket_role_id("order_build")
-        role_group = get_ticket_type_role("order_build") if not role_id else None
-
-        overwrites = _build_ticket_overwrites(guild, interaction.user, role_group=role_group, role_id=role_id)
+        role_ids   = get_ticket_role_ids("order_build")
+        overwrites = _build_ticket_overwrites_multi(guild, interaction.user, role_ids)
         category   = discord.utils.get(guild.categories, id=get_cfg_category())
         channel    = await guild.create_text_channel(
             name=channel_name, overwrites=overwrites, category=category,

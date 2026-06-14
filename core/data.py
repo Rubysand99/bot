@@ -602,6 +602,29 @@ def get_all_ticket_role_ids() -> dict:
     return load_data().get("ticket_role_ids", {})
 
 # ══════════════════════════════════════════
+# TICKET TYPE → MULTI ROLE IDS
+# ══════════════════════════════════════════
+def get_ticket_role_ids(ticket_key: str) -> list:
+    """Trả về list role IDs được gán cho loại ticket (có thể rỗng)."""
+    val = load_data().get("ticket_multi_roles", {}).get(ticket_key, [])
+    return [int(r) for r in val if r]
+
+def set_ticket_role_ids(ticket_key: str, role_ids: list) -> None:
+    """Lưu list role IDs cho loại ticket. Truyền [] để xóa."""
+    data = load_data()
+    cfg = data.setdefault("ticket_multi_roles", {})
+    if not role_ids:
+        cfg.pop(ticket_key, None)
+    else:
+        cfg[ticket_key] = [int(r) for r in role_ids]
+    data["ticket_multi_roles"] = cfg
+    save_data(data)
+
+def get_all_ticket_multi_roles() -> dict:
+    """Trả về toàn bộ map {ticket_key: [role_id, ...]}."""
+    return load_data().get("ticket_multi_roles", {})
+
+# ══════════════════════════════════════════
 # TEMPBAN PERSISTENCE
 # Lưu {user_id: {guild_id, unban_at (unix timestamp), reason}} vào MongoDB
 # ══════════════════════════════════════════

@@ -25,6 +25,7 @@ from core.data import (
     can_use_dangerous_cmd, parse_amount, fmt_amount, _uname, _uname_plain,
     get_or_fetch_channel,
     get_ticket_type_role, set_ticket_type_role, get_all_ticket_type_roles,
+    get_ticket_role_ids, set_ticket_role_ids, get_all_ticket_multi_roles,
     BUILDER_BASE_ROLE_ID,
 )
 
@@ -297,42 +298,39 @@ class SettingsView(View):
         )
 
 
-def _build_ticket_roles_embed() -> discord.Embed:
-    """Embed hiển thị config ticket → role hiện tại (6 loại) + danh sách admin."""
-    from cogs.ticket import SERVICE_TABLE  # import lazy tránh circular
-    data = load_data()
-    roles_cfg = data.get("ticket_type_roles", {})
+def _build_ticket_roles_embed(guild: discord.Guild | None = None) -> discord.Embed:
+    """Embed hiển thị config ticket → roles hiện tại."""
+    multi = get_all_ticket_multi_roles()
 
-    def _tag(key):
-        g = roles_cfg.get(key)
-        if g == "seller":  return "🏪 Seller"
-        if g == "builder": return "🏗️ Builder"
-        if g == "admin":   return "👑 Admin"
-        return "*(chưa cài)*"
+    def _tag(key: str) -> str:
+        ids = multi.get(key, [])
+        if not ids:
+            return "*(chưa cài)*"
+        # Admin IDs
+        admin_tags = [f"<@{i}>" for i in ids if i in ADMIN_IDS]
+        role_tags  = [f"<@&{i}>" for i in ids if i not in ADMIN_IDS]
+        parts = admin_tags + role_tags
+        return " ".join(parts) if parts else "*(chưa cài)*"
 
-    # Service tickets
-    svc_lines = [f"{info['label']} → **{_tag(key)}**" for key, info in SERVICE_TABLE.items()]
-    # Order tickets theo server
-    order_lines = [
-        f"🍩 DonutSMP → **{_tag('order_donut')}**",
-        f"👑 KingMC   → **{_tag('order_kingmc')}**",
-        f"🎮 One MC   → **{_tag('order_onemc')}**",
-        f"🔥 Free Fire → **{_tag('order_ff')}**",
-        f"🏗️ Build     → **{_tag('order_build')}**",
-        f"🎭 Acc Pre   → **{_tag('acc_pre')}**",
+    svc_lines = [
+        f"🎁 Nhận Giveaway → {_tag('giveaway')}",
+        f"🆘 Hỗ Trợ        → {_tag('support')}",
     ]
-
-    # Admin lines từ ADMIN_IDS
+    order_lines = [
+        f"🍩 DonutSMP  → {_tag('order_donut')}",
+        f"👑 KingMC    → {_tag('order_kingmc')}",
+        f"🎮 One MC    → {_tag('order_onemc')}",
+        f"🔥 Free Fire → {_tag('order_ff')}",
+        f"🏗️ Build      → {_tag('order_build')}",
+        f"🎭 Acc Pre   → {_tag('acc_pre')}",
+    ]
     admin_lines = [f"<@{aid}> `(ID: {aid})`" for aid in ADMIN_IDS]
 
-    embed = discord.Embed(
-        title="🎫 Cấu Hình Role Theo Loại Ticket",
-        color=0x5865F2,
-    )
+    embed = discord.Embed(title="🎫 Cấu Hình Role Theo Loại Ticket", color=0x5865F2)
     embed.add_field(name="🎮 Dịch Vụ",  value="\n".join(svc_lines),   inline=False)
     embed.add_field(name="🛒 Mua / Bán", value="\n".join(order_lines), inline=False)
     embed.add_field(
-        name="👑 Admin (luôn vào được mọi ticket)",
+        name="👑 Admin IDs (luôn vào được mọi ticket)",
         value="\n".join(admin_lines) if admin_lines else "*(chưa có)*",
         inline=False,
     )
@@ -358,61 +356,251 @@ _ALL_TICKET_OPTIONS = [
 ]
 
 
+# ─── helpers ────────────────────────────────────────────────────────────────
+_TICKET_GROUPS = [
+    ("🎮 Dịch Vụ", [
+        ("giveaway",    "🎁 Nhận Giveaway"),
+        ("support",     "🆘 Hỗ Trợ"),
+    ]),
+    ("🛒 Mua / Bán", [
+        ("order_donut",  "🍩 DonutSMP"),
+        ("order_kingmc", "👑 KingMC"),
+        ("order_onemc",  "🎮 One MC"),
+        ("order_ff",     "🔥 Free Fire"),
+        ("order_build",  "🏗️ Build"),
+        ("acc_pre",      "🎭 Acc Pre"),
+    ]),
+]
+
+_TICKET_KEY_LABEL = {k: lbl for _, items in _TICKET_GROUPS for k, lbl in items}
+
+
 class TicketRoleConfigView(View):
-    """View cho phép admin gán từng loại ticket → seller hoặc builder."""
+    """Bước 1: chọn loại ticket, chia theo nhóm."""
     def __init__(self):
         super().__init__(timeout=120)
-        options = [
-            discord.SelectOption(label=label, value=key, description=category)
-            for key, label, category in _ALL_TICKET_OPTIONS
-        ]
-        self.add_item(_TicketTypeSelect(options))
+        for group_label, items in _TICKET_GROUPS:
+            options = [
+                discord.SelectOption(label=lbl, value=key, description=group_label)
+                for key, lbl in items
+            ]
+            self.add_item(_TicketTypeSelect(options, group_label))
 
 
 class _TicketTypeSelect(Select):
-    """Bước 1: chọn loại ticket."""
-    def __init__(self, options):
-        super().__init__(placeholder="Chọn loại ticket cần cài...", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
-        ticket_key = self.values[0]
-        # Tìm label đẹp
-        label = next((lbl for k, lbl, _ in _ALL_TICKET_OPTIONS if k == ticket_key), ticket_key)
-        view = View(timeout=60)
-        view.add_item(_RoleGroupSelect(ticket_key, label))
-        await interaction.response.send_message(
-            f"🏷️ Loại ticket **{label}** — chọn nhóm role:",
-            view=view,
-            ephemeral=True,
-        )
-
-
-class _RoleGroupSelect(Select):
-    """Bước 2: chọn seller hoặc builder."""
-    def __init__(self, ticket_key: str, label: str):
-        self.ticket_key = ticket_key
-        self.label_name = label
+    """Dropdown chọn loại ticket trong 1 nhóm."""
+    def __init__(self, options: list, group_label: str):
         super().__init__(
-            placeholder="Gán cho nhóm nào?",
-            options=[
-                discord.SelectOption(label="🏪 Seller",              value="seller",  description="Chỉ role Seller vào ticket này"),
-                discord.SelectOption(label="🏗️ Builder",            value="builder", description="Chỉ role Builder Base vào ticket này"),
-                discord.SelectOption(label="👑 Admin (ADMIN_IDS)",   value="admin",   description="Chỉ Admin trong ADMIN_IDS vào ticket này"),
-                discord.SelectOption(label="🔄 Cả hai (mặc định)",  value="none",    description="Không giới hạn, cả seller và builder"),
-            ],
+            placeholder=f"Nhóm: {group_label}",
+            options=options,
+            min_values=1, max_values=1,
         )
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id not in ADMIN_IDS:
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
-        group = None if self.values[0] == "none" else self.values[0]
-        set_ticket_type_role(self.ticket_key, group)
-        label_map = {"seller": "🏪 Seller", "builder": "🏗️ Builder", "admin": "👑 Admin (ADMIN_IDS)", None: "🔄 Cả hai"}
+        ticket_key  = self.values[0]
+        ticket_label = _TICKET_KEY_LABEL.get(ticket_key, ticket_key)
+        current_ids  = get_ticket_role_ids(ticket_key)
+
+        # Lấy danh sách role trong server, phân trang 25 role/trang
+        roles = [r for r in interaction.guild.roles if not r.is_default()]
+        roles.sort(key=lambda r: -r.position)
+
         await interaction.response.send_message(
-            f"✅ **{self.label_name}** → {label_map[group]}",
+            embed=_build_role_picker_embed(ticket_label, current_ids, interaction.guild),
+            view=_RolePickerView(ticket_key, ticket_label, roles, current_ids, page=0),
             ephemeral=True,
+        )
+
+
+def _build_role_picker_embed(
+    ticket_label: str,
+    current_ids: list,
+    guild: discord.Guild,
+) -> discord.Embed:
+    if current_ids:
+        tags = []
+        for rid in current_ids:
+            if rid in ADMIN_IDS:
+                tags.append(f"<@{rid}> *(Admin ID)*")
+            else:
+                tags.append(f"<@&{rid}>")
+        assigned = "\n".join(tags)
+    else:
+        assigned = "*(chưa có)*"
+
+    embed = discord.Embed(
+        title=f"🏷️ Gán role — {ticket_label}",
+        description=(
+            f"**Role hiện tại:**\n{assigned}\n\n"
+            "Chọn **Admin IDs** hoặc role trong server bên dưới.\n"
+            "Có thể chọn **nhiều role** trong 1 trang, bấm nhiều trang để thêm tiếp.\n"
+            "✅ Bấm **Lưu** để xác nhận. ❌ **Xoá hết** để reset."
+        ),
+        color=0x5865F2,
+    )
+    return embed
+
+
+class _RolePickerView(View):
+    """Phân trang role trong server + multi-select + nút lưu/xoá."""
+    PAGE_SIZE = 23  # 23 role/trang + 1 option Admin IDs + còn chỗ cho select
+
+    def __init__(self, ticket_key: str, ticket_label: str, roles: list,
+                 current_ids: list, page: int = 0):
+        super().__init__(timeout=180)
+        self.ticket_key   = ticket_key
+        self.ticket_label = ticket_label
+        self.roles        = roles
+        self.pending_ids  = list(current_ids)  # đang chọn (chưa lưu)
+        self.page         = page
+        self.total_pages  = max(1, -(-len(roles) // self.PAGE_SIZE))  # ceil div
+        self._build_components()
+
+    def _build_components(self):
+        self.clear_items()
+
+        # ── Role Select (trang hiện tại) ──────────────────────────────
+        start = self.page * self.PAGE_SIZE
+        page_roles = self.roles[start : start + self.PAGE_SIZE]
+
+        options = [
+            discord.SelectOption(
+                label="👑 Admin IDs",
+                value="__admin__",
+                description="Thêm tất cả Admin ID vào danh sách",
+                default="__admin__" in [str(i) for i in self.pending_ids],
+            )
+        ]
+        for r in page_roles:
+            options.append(discord.SelectOption(
+                label=r.name[:100],
+                value=str(r.id),
+                description=f"ID: {r.id}",
+                default=r.id in self.pending_ids,
+            ))
+
+        select = Select(
+            placeholder=f"Chọn role — trang {self.page+1}/{self.total_pages}",
+            options=options,
+            min_values=0,
+            max_values=len(options),
+            custom_id="role_picker_select",
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+
+        # ── Nút điều hướng ────────────────────────────────────────────
+        prev_btn = Button(label="◀ Trang trước", style=discord.ButtonStyle.grey,
+                          disabled=self.page == 0, custom_id="role_prev", row=1)
+        prev_btn.callback = self._on_prev
+        self.add_item(prev_btn)
+
+        next_btn = Button(label="Trang sau ▶", style=discord.ButtonStyle.grey,
+                          disabled=self.page >= self.total_pages - 1,
+                          custom_id="role_next", row=1)
+        next_btn.callback = self._on_next
+        self.add_item(next_btn)
+
+        # ── Nút hành động ─────────────────────────────────────────────
+        save_btn = Button(label="✅ Lưu", style=discord.ButtonStyle.green,
+                          custom_id="role_save", row=2)
+        save_btn.callback = self._on_save
+        self.add_item(save_btn)
+
+        clear_btn = Button(label="❌ Xoá hết", style=discord.ButtonStyle.red,
+                           custom_id="role_clear", row=2)
+        clear_btn.callback = self._on_clear
+        self.add_item(clear_btn)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        """Merge lựa chọn trang này vào pending_ids."""
+        selected_vals = self.view_select_values(interaction) if hasattr(self, "view_select_values") else []
+        # lấy values từ component trực tiếp
+        for comp in interaction.data.get("components", [{}])[0].get("components", []):
+            if comp.get("custom_id") == "role_picker_select":
+                selected_vals = comp.get("values", [])
+                break
+        else:
+            # fallback: lấy từ interaction.data trực tiếp (flat structure)
+            selected_vals = interaction.data.get("values", [])
+
+        # Role trên trang này
+        start = self.page * self.PAGE_SIZE
+        page_role_ids = {str(r.id) for r in self.roles[start: start + self.PAGE_SIZE]}
+        page_role_ids.add("__admin__")
+
+        # Bỏ các id của trang hiện tại khỏi pending, rồi thêm lại những cái được chọn
+        if "__admin__" in selected_vals:
+            # thêm tất cả ADMIN_IDS
+            admin_ids_set = set(ADMIN_IDS)
+        else:
+            admin_ids_set = set()
+
+        # Xoá admin ids cũ nếu không chọn __admin__ nữa
+        self.pending_ids = [i for i in self.pending_ids if i not in ADMIN_IDS]
+        self.pending_ids.extend(admin_ids_set)
+
+        # Xoá role trang hiện tại, thêm lại những cái được tick
+        page_int_ids = {int(v) for v in page_role_ids if v != "__admin__" and v.isdigit()}
+        self.pending_ids = [i for i in self.pending_ids if i not in page_int_ids]
+        for v in selected_vals:
+            if v != "__admin__" and v.isdigit():
+                self.pending_ids.append(int(v))
+
+        self._build_components()
+        await interaction.response.edit_message(
+            embed=_build_role_picker_embed(self.ticket_label, self.pending_ids, interaction.guild),
+            view=self,
+        )
+
+    async def _on_prev(self, interaction: discord.Interaction):
+        self.page = max(0, self.page - 1)
+        self._build_components()
+        await interaction.response.edit_message(
+            embed=_build_role_picker_embed(self.ticket_label, self.pending_ids, interaction.guild),
+            view=self,
+        )
+
+    async def _on_next(self, interaction: discord.Interaction):
+        self.page = min(self.total_pages - 1, self.page + 1)
+        self._build_components()
+        await interaction.response.edit_message(
+            embed=_build_role_picker_embed(self.ticket_label, self.pending_ids, interaction.guild),
+            view=self,
+        )
+
+    async def _on_save(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        unique_ids = list(dict.fromkeys(self.pending_ids))  # dedup, giữ thứ tự
+        set_ticket_role_ids(self.ticket_key, unique_ids)
+        if unique_ids:
+            tags = []
+            for rid in unique_ids:
+                tags.append(f"<@{rid}>" if rid in ADMIN_IDS else f"<@&{rid}>")
+            desc = "\n".join(tags)
+        else:
+            desc = "*(trống)*"
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title=f"✅ Đã lưu — {self.ticket_label}",
+                description=desc,
+                color=0x57F287,
+            ),
+            view=None,
+        )
+
+    async def _on_clear(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        self.pending_ids = []
+        set_ticket_role_ids(self.ticket_key, [])
+        self._build_components()
+        await interaction.response.edit_message(
+            embed=_build_role_picker_embed(self.ticket_label, [], interaction.guild),
+            view=self,
         )
 
 class ChannelConfigSelect(Select):
