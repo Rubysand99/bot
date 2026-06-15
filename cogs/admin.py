@@ -269,9 +269,15 @@ class AdminCog(commands.Cog):
                 "emoji": "📨", "title": "Invite & Verify",
                 "fields": [
                     ("📋 Thống kê invite",
-                     "`.invite [@user]` — Xem thống kê invite của bản thân / người khác\n"
-                     "`.invitetop [n]` — Top người invite nhiều nhất (mặc định top 10)\n"
-                     "`.resetinvite [@user|all]` — Reset invite của 1 người hoặc tất cả (admin)", False),
+                     "`.invite [@user]` — Xem invite tháng này + all-time của bản thân / người khác\n"
+                     "`.invitetop [n] [MM/YYYY] [alltime]` — Leaderboard invite\n"
+                     "  • Mặc định: top 10 tháng hiện tại\n"
+                     "  • `.invitetop 20` — top 20 tháng này\n"
+                     "  • `.invitetop 06/2026` — top 10 tháng 6/2026\n"
+                     "  • `.invitetop alltime` — top 10 all-time", False),
+                    ("🔄 Reset invite (admin)",
+                     "`.resetinvite [@user|all]` — Reset invite **tháng hiện tại** (all-time giữ nguyên)\n"
+                     "`.resetinvites [@user]` — Reset invite **all-time** *(hỏi lại trước khi xóa)*", False),
                     ("🔐 Kiểm tra IP (admin)",
                      "`.checkip @user` — Xem tất cả tài khoản chung IP với user đó\n"
                      "`.ipstats` — Danh sách IP có từ 2 tài khoản trở lên\n"
@@ -428,7 +434,7 @@ class AdminCog(commands.Cog):
             timestamp=datetime.now(timezone.utc)
         )
         embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke` `.setsl`", inline=True)
-        embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite`\n`/invite` `/invitetop`", inline=True)
+        embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite` `.resetinvites`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick`", inline=True)
         embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.timeout` `.tempban`\n`.warn` `.modlog` `.xoa` `.automod`", inline=True)

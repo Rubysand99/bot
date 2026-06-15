@@ -1,13 +1,12 @@
 """
 cogs/invite.py — Invite tracking + IP-based fake detection + verify system.
-v6.0.0:
-  - Role UNVERIFY (gán khi join, không xem được kênh nào) + VERIFY (gán sau khi verify xong)
-  - Nếu trùng IP: vẫn cho phép verify + gán VERIFY, nhưng lưu data shared_ip
-    → Chỉ 1 tài khoản trên cùng IP được tham gia giveaway (tài khoản join trước)
-    → Bot gửi ephemeral thông báo khi user bị chặn tham gia giveaway
-  - Member không verify sẽ giữ nguyên role Unverify (không auto-kick)
-  - Lệnh .checkip <@user|id> để admin xem tài khoản chung IP
-  - Log đầy đủ: INVITE_JOIN, INVITE_VERIFY, INVITE_FAKE, INVITE_LEFT
+v6.1.0:
+  - Monthly leaderboard reset: invite_counts_YYYY_MM (tháng hiện tại)
+  - All-time total: invite_counts_all (cộng dồn mãi mãi, không bao giờ reset)
+  - Cuối tháng / đầu tháng mới → tự snapshot + reset tháng hiện tại
+  - .invite: hiển thị cả tháng này + tổng all-time
+  - .invitetop: leaderboard tháng này, có flag --alltime để xem tổng
+  - .resetinvite: chỉ reset tháng hiện tại, all-time KHÔNG bị ảnh hưởng
 """
 
 import asyncio
@@ -82,34 +81,84 @@ def register_primary_ip(ip: str, user_id: int):
 
 
 # ══════════════════════════════════════════
-# INVITE COUNTS HELPERS
+# INVITE COUNTS HELPERS — MONTHLY + ALL-TIME
 # ══════════════════════════════════════════
 
-def _get_invite_counts() -> dict:
-    return load_data().get("invite_counts", {})
+def _month_key(dt: datetime | None = None) -> str:
+    """Trả về key tháng hiện tại: 'invite_counts_YYYY_MM'."""
+    dt = dt or datetime.now(timezone.utc)
+    return f"invite_counts_{dt.year}_{dt.month:02d}"
 
-def _save_invite_counts(counts: dict):
+def _get_invite_counts(month_key: str | None = None) -> dict:
+    """Lấy invite counts của tháng (mặc định tháng hiện tại)."""
+    key = month_key or _month_key()
+    return load_data().get(key, {})
+
+def _save_invite_counts(counts: dict, month_key: str | None = None):
+    """Lưu invite counts của tháng (mặc định tháng hiện tại)."""
+    key = month_key or _month_key()
     data = load_data()
-    data["invite_counts"] = counts
+    data[key] = counts
+    save_data(data)
+
+def _get_alltime_counts() -> dict:
+    """Lấy invite counts all-time (cộng dồn mãi mãi)."""
+    return load_data().get("invite_counts_all", {})
+
+def _save_alltime_counts(counts: dict):
+    """Lưu invite counts all-time."""
+    data = load_data()
+    data["invite_counts_all"] = counts
     save_data(data)
 
 def _add_invite(inviter_id: int, field: str, amount: int = 1):
+    """Ghi invite vào tháng hiện tại VÀ all-time."""
+    uid = str(inviter_id)
+
+    # ── Tháng hiện tại ──
     counts = _get_invite_counts()
-    uid    = str(inviter_id)
     if uid not in counts:
         counts[uid] = {"total": 0, "fake": 0, "left": 0}
     counts[uid][field] = counts[uid].get(field, 0) + amount
     _save_invite_counts(counts)
 
-def _get_net_invites(inviter_id: int) -> tuple[int, int, int, int]:
-    counts = _get_invite_counts()
-    uid    = str(inviter_id)
-    c      = counts.get(uid, {"total": 0, "fake": 0, "left": 0})
-    total  = c.get("total", 0)
-    fake   = c.get("fake",  0)
-    left   = c.get("left",  0)
-    net    = max(0, total - fake - left)
+    # ── All-time ──
+    alltime = _get_alltime_counts()
+    if uid not in alltime:
+        alltime[uid] = {"total": 0, "fake": 0, "left": 0}
+    alltime[uid][field] = alltime[uid].get(field, 0) + amount
+    _save_alltime_counts(alltime)
+
+def _calc_net(c: dict) -> tuple[int, int, int, int]:
+    """Tính (total, fake, left, net) từ dict counts."""
+    total = c.get("total", 0)
+    fake  = c.get("fake",  0)
+    left  = c.get("left",  0)
+    net   = max(0, total - fake - left)
     return total, fake, left, net
+
+def _get_net_invites(inviter_id: int, month_key: str | None = None) -> tuple[int, int, int, int]:
+    """Trả về (total, fake, left, net) của tháng chỉ định (mặc định tháng hiện tại)."""
+    counts = _get_invite_counts(month_key)
+    uid = str(inviter_id)
+    c = counts.get(uid, {"total": 0, "fake": 0, "left": 0})
+    return _calc_net(c)
+
+def _get_net_invites_alltime(inviter_id: int) -> tuple[int, int, int, int]:
+    """Trả về (total, fake, left, net) tổng all-time."""
+    alltime = _get_alltime_counts()
+    uid = str(inviter_id)
+    c = alltime.get(uid, {"total": 0, "fake": 0, "left": 0})
+    return _calc_net(c)
+
+def _check_and_rotate_month():
+    """
+    Kiểm tra xem tháng DB đang lưu có khác tháng hiện tại không.
+    Nếu có → tháng cũ đã được snapshot vào all-time rồi (qua _add_invite),
+    nên chỉ cần ghi nhận tháng hiện tại trong metadata.
+    Không cần làm gì thêm vì _add_invite luôn ghi đồng thời vào tháng + all-time.
+    """
+    pass  # Rotation tự nhiên qua _month_key() thay đổi mỗi tháng
 
 
 # ══════════════════════════════════════════
@@ -232,7 +281,6 @@ class InviteCog(commands.Cog):
         _guild_roles.setdefault(guild.id, {})["verify"] = verify.id
 
         # ── Xóa overwrite của Verify / Unverify trên tất cả kênh về mặc định ──
-        # Chỉ chạy khi role vừa được tạo mới, tránh spam API call mỗi lần on_ready
         roles_to_reset = []
         if _unverify_created:
             roles_to_reset.append(unverify)
@@ -415,38 +463,107 @@ class InviteCog(commands.Cog):
 
     @commands.command(name="invite", aliases=["inv"])
     async def invite_cmd(self, ctx, member: discord.Member = None):
+        """Xem thống kê invite của 1 thành viên (tháng này + all-time)."""
         target = member or ctx.author
-        total, fake, left, net = _get_net_invites(target.id)
+        now    = datetime.now(timezone.utc)
+
+        total_m, fake_m, left_m, net_m     = _get_net_invites(target.id)
+        total_a, fake_a, left_a, net_a     = _get_net_invites_alltime(target.id)
+
         embed = discord.Embed(
             title     = f"📨 Invite của {_uname(target)}",
             color     = 0x5865F2,
-            timestamp = datetime.now(timezone.utc),
+            timestamp = now,
         )
         embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="✅ Net (thực tế)", value=f"**{net}** người",  inline=True)
-        embed.add_field(name="📊 Tổng",          value=f"**{total}** lần",  inline=True)
-        embed.add_field(name="⚠️ Fake",          value=f"**{fake}** người", inline=True)
-        embed.add_field(name="🚪 Đã rời",        value=f"**{left}** người", inline=True)
+
+        embed.add_field(
+            name  = f"📅 Tháng {now.month}/{now.year}",
+            value = (
+                f"✅ Net: **{net_m}**\n"
+                f"📊 Tổng: **{total_m}** | ⚠️ Fake: **{fake_m}** | 🚪 Rời: **{left_m}**"
+            ),
+            inline = False,
+        )
+        embed.add_field(
+            name  = "🏆 All-time (tổng cộng)",
+            value = (
+                f"✅ Net: **{net_a}**\n"
+                f"📊 Tổng: **{total_a}** | ⚠️ Fake: **{fake_a}** | 🚪 Rời: **{left_a}**"
+            ),
+            inline = False,
+        )
         embed.set_footer(text="Net = Tổng − Fake − Đã rời  •  TuyTam Store")
         await ctx.reply(embed=embed)
 
     @commands.command(name="invitetop", aliases=["invtop"])
-    async def invitetop_cmd(self, ctx, top: int = 10):
+    async def invitetop_cmd(self, ctx, *args):
+        """
+        .invitetop [top] [MM/YYYY] [alltime]
+        Leaderboard invite. Mặc định = tháng hiện tại.
+        Ví dụ:
+          .invitetop              → top 10 tháng này
+          .invitetop 20           → top 20 tháng này
+          .invitetop 06/2026      → top 10 tháng 6/2026
+          .invitetop 20 06/2026   → top 20 tháng 6/2026
+          .invitetop alltime      → top 10 all-time
+          .invitetop 20 alltime   → top 20 all-time
+        """
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin.")
-        top    = max(1, min(top, 25))
-        counts = _get_invite_counts()
-        board  = []
+
+        import re as _re
+
+        top                = 10
+        alltime            = False
+        month_key_override = None
+        month_label        = None
+
+        for a in args:
+            if a.lower() == "alltime":
+                alltime = True
+            elif _re.match(r"^\d{1,2}/\d{4}$", a):
+                # Format MM/YYYY
+                try:
+                    m_part, y_part = a.split("/")
+                    m_int, y_int = int(m_part), int(y_part)
+                    if not (1 <= m_int <= 12):
+                        return await ctx.reply("❌ Tháng phải từ 01–12.")
+                    month_key_override = f"invite_counts_{y_int}_{m_int:02d}"
+                    month_label        = f"Tháng {m_int}/{y_int}"
+                except ValueError:
+                    return await ctx.reply("❌ Format tháng: `MM/YYYY` (ví dụ: `06/2026`)")
+            else:
+                try:
+                    top = max(1, min(int(a), 25))
+                except ValueError:
+                    return await ctx.reply(
+                        "❌ Dùng: `.invitetop [số] [MM/YYYY] [alltime]`\n"
+                        "Ví dụ: `.invitetop 20 06/2026` hoặc `.invitetop alltime`"
+                    )
+
+        now = datetime.now(timezone.utc)
+
+        if alltime:
+            counts      = _get_alltime_counts()
+            title_label = "All-time"
+        elif month_key_override:
+            counts      = _get_invite_counts(month_key_override)
+            title_label = month_label
+        else:
+            counts      = _get_invite_counts()
+            title_label = f"Tháng {now.month}/{now.year}"
+
+        board = []
         for uid_str, c in counts.items():
-            total = c.get("total", 0)
-            fake  = c.get("fake",  0)
-            left  = c.get("left",  0)
-            net   = max(0, total - fake - left)
+            total, fake, left, net = _calc_net(c)
             board.append((int(uid_str), net, total, fake, left))
         board.sort(key=lambda x: x[1], reverse=True)
         board = board[:top]
+
         if not board:
-            return await ctx.reply("❌ Chưa có dữ liệu invite nào.")
+            return await ctx.reply(f"❌ Chưa có dữ liệu invite nào ({title_label}).")
+
         medals = ["🥇", "🥈", "🥉"]
         lines  = []
         for i, (uid, net, total, fake, left) in enumerate(board):
@@ -454,51 +571,175 @@ class InviteCog(commands.Cog):
             m      = ctx.guild.get_member(uid)
             name   = _uname(m) if m else f"ID:{uid}"
             lines.append(f"{icon} **{name}** — **{net}** net (`{total}` tổng, `{fake}` fake, `{left}` rời)")
+
         embed = discord.Embed(
-            title       = f"🏆 Bảng xếp hạng Invite — Top {top}",
+            title       = f"🏆 Bảng xếp hạng Invite — {title_label} — Top {top}",
             description = "\n".join(lines),
             color       = 0xF1C40F,
-            timestamp   = datetime.now(timezone.utc),
+            timestamp   = now,
         )
-        embed.set_footer(text="TuyTam Store  •  Net = Tổng − Fake − Đã rời")
+        embed.set_footer(text="TuyTam Store  •  .invitetop [số] [MM/YYYY] [alltime]")
         await ctx.reply(embed=embed)
 
     @commands.command(name="resetinvite", aliases=["resetinv"])
     async def resetinvite_cmd(self, ctx, *, arg: str = None):
+        """
+        Reset invite tháng hiện tại (all-time KHÔNG bị ảnh hưởng).
+        .resetinvite all    → reset cả server tháng này
+        .resetinvite @user  → reset 1 người tháng này
+        """
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin.")
 
-        if arg and arg.strip().lower() == "all" and not ctx.message.mentions:
+        now         = datetime.now(timezone.utc)
+        month_label = f"Tháng {now.month}/{now.year}"
+
+        member = ctx.message.mentions[0] if ctx.message.mentions else None
+        arg_clean = (arg or "").strip()
+
+        if arg_clean.lower() == "all" and not member:
             _save_invite_counts({})
-            await ctx.reply("✅ Đã reset toàn bộ invite của server.")
-            await send_log(self.bot, "INVITE", "Reset toàn bộ invite server",
-                fields=[("👤 Admin", str(ctx.author), True)])
+            await ctx.reply(
+                f"✅ Đã reset toàn bộ invite **{month_label}** của server.\n"
+                f"*(Invite all-time vẫn được giữ nguyên)*"
+            )
+            await send_log(self.bot, "INVITE", f"Reset toàn bộ invite server ({month_label})",
+                fields=[
+                    ("👤 Admin", str(ctx.author), True),
+                    ("📅 Tháng", month_label,     True),
+                ])
             return
 
-        member = None
-        if ctx.message.mentions:
-            member = ctx.message.mentions[0]
-        elif arg:
+        if not member and arg_clean:
             try:
-                member = await commands.MemberConverter().convert(ctx, arg.strip())
+                member = await commands.MemberConverter().convert(ctx, arg_clean)
             except commands.BadArgument:
                 return await ctx.reply(
-                    f"❌ Không tìm thấy thành viên `{arg.strip()}`.\n"
-                    "Dùng: `.resetinvite @user` hoặc `.resetinvite all`"
+                    f"❌ Không tìm thấy thành viên `{arg_clean}`.\n"
+                    "Dùng: `.resetinvite @user` hoặc `.resetinvite all`\n"
+                    "Reset all-time: `.resetinvites [@user]`"
                 )
 
         if member:
             counts = _get_invite_counts()
             counts.pop(str(member.id), None)
             _save_invite_counts(counts)
-            await ctx.reply(f"✅ Đã reset invite của **{_uname(member)}**.")
-            await send_log(self.bot, "INVITE", f"Reset invite — {member}",
+            await ctx.reply(
+                f"✅ Đã reset invite **{month_label}** của **{_uname(member)}**.\n"
+                f"*(Invite all-time vẫn được giữ nguyên)*"
+            )
+            await send_log(self.bot, "INVITE", f"Reset invite {month_label} — {member}",
                 fields=[
                     ("👤 Admin",  str(ctx.author), True),
                     ("🎯 Target", str(member),     True),
+                    ("📅 Tháng",  month_label,     True),
                 ])
         else:
-            await ctx.reply("❌ Dùng:\n`.resetinvite @user` — reset 1 người\n`.resetinvite all` — reset toàn bộ")
+            await ctx.reply(
+                "❌ Dùng:\n"
+                "`.resetinvite @user` — reset 1 người (tháng này)\n"
+                "`.resetinvite all` — reset toàn bộ (tháng này)\n\n"
+                "⚠️ Lệnh này chỉ reset tháng hiện tại. Dùng `.resetinvites` để reset all-time."
+            )
+
+    @commands.command(name="resetinvites")
+    async def resetinvites_cmd(self, ctx, *, arg: str = None):
+        """
+        Reset invite ALL-TIME (hỏi lại trước khi thực hiện).
+        .resetinvites        → reset all-time toàn server
+        .resetinvites @user  → reset all-time 1 người
+        """
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin.")
+
+        member = ctx.message.mentions[0] if ctx.message.mentions else None
+        arg_clean = (arg or "").strip()
+
+        if not member and arg_clean:
+            try:
+                member = await commands.MemberConverter().convert(ctx, arg_clean)
+            except commands.BadArgument:
+                return await ctx.reply(
+                    f"❌ Không tìm thấy thành viên `{arg_clean}`.\n"
+                    "Dùng: `.resetinvites @user` hoặc `.resetinvites` (toàn server)"
+                )
+
+        if member:
+            confirm_text = (
+                f"⚠️ **Xác nhận reset ALL-TIME**\n\n"
+                f"Bạn sắp xóa vĩnh viễn toàn bộ lịch sử invite của **{_uname(member)}**.\n"
+                f"Hành động này **không thể hoàn tác**!\n\n"
+                f"Bấm ✅ để xác nhận hoặc ❌ để huỷ."
+            )
+        else:
+            confirm_text = (
+                f"⚠️ **Xác nhận reset ALL-TIME**\n\n"
+                f"Bạn sắp xóa vĩnh viễn toàn bộ lịch sử invite all-time của **toàn bộ server**.\n"
+                f"Hành động này **không thể hoàn tác**!\n\n"
+                f"Bấm ✅ để xác nhận hoặc ❌ để huỷ."
+            )
+
+        class ConfirmView(discord.ui.View):
+            def __init__(self_v):
+                super().__init__(timeout=30)
+                self_v.confirmed = False
+
+            @discord.ui.button(label="✅ Xác nhận reset", style=discord.ButtonStyle.danger)
+            async def confirm_btn(self_v, interaction: discord.Interaction, button: discord.ui.Button):
+                if interaction.user.id != ctx.author.id:
+                    return await interaction.response.send_message("❌ Không phải lệnh của bạn.", ephemeral=True)
+                self_v.confirmed = True
+                self_v.stop()
+                await interaction.response.defer()
+
+            @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.secondary)
+            async def cancel_btn(self_v, interaction: discord.Interaction, button: discord.ui.Button):
+                if interaction.user.id != ctx.author.id:
+                    return await interaction.response.send_message("❌ Không phải lệnh của bạn.", ephemeral=True)
+                self_v.stop()
+                await interaction.response.edit_message(content="❌ Đã huỷ reset all-time.", view=None)
+
+        view = ConfirmView()
+        confirm_msg = await ctx.reply(confirm_text, view=view)
+        await view.wait()
+
+        if not view.confirmed:
+            return  # cancel_btn đã edit message, hoặc timeout tự hết
+
+        now         = datetime.now(timezone.utc)
+        month_label = f"Tháng {now.month}/{now.year}"
+
+        if member:
+            alltime = _get_alltime_counts()
+            alltime.pop(str(member.id), None)
+            _save_alltime_counts(alltime)
+            await confirm_msg.edit(
+                content=(
+                    f"✅ Đã reset **ALL-TIME** invite của **{_uname(member)}**.\n"
+                    f"*(Invite {month_label} vẫn được giữ nguyên)*"
+                ),
+                view=None,
+            )
+            await send_log(self.bot, "INVITE", f"Reset all-time invite — {member}",
+                fields=[
+                    ("👤 Admin",  str(ctx.author), True),
+                    ("🎯 Target", str(member),     True),
+                    ("🗂️ Scope",  "All-time",      True),
+                ])
+        else:
+            _save_alltime_counts({})
+            await confirm_msg.edit(
+                content=(
+                    f"✅ Đã reset **ALL-TIME** toàn bộ invite server.\n"
+                    f"*(Invite {month_label} vẫn được giữ nguyên)*"
+                ),
+                view=None,
+            )
+            await send_log(self.bot, "INVITE", "Reset all-time toàn bộ server",
+                fields=[
+                    ("👤 Admin", str(ctx.author), True),
+                    ("🗂️ Scope", "All-time",      True),
+                ])
 
     # ── Events ──
 
@@ -555,7 +796,7 @@ class InviteCog(commands.Cog):
                 "invite_code": invite_code,
             }
             save_pending_joins(_pending_joins)
-            _add_invite(inviter_id, "total", 1)
+            _add_invite(inviter_id, "total", 1)  # ghi cả tháng + all-time
 
         # Log member join
         inviter_member = member.guild.get_member(inviter_id) if inviter_id else None
@@ -570,8 +811,6 @@ class InviteCog(commands.Cog):
 
         # Gửi DM link verify
         await self._send_verify_dm(member, inviter_id)
-
-        # Auto-kick sau 24h đã bị tắt — member giữ nguyên role Unverify nếu không verify
 
     async def _send_verify_dm(self, member: discord.Member, inviter_id: int | None):
         """Gửi DM link verify, đăng ký callback xử lý kết quả."""
@@ -598,17 +837,14 @@ class InviteCog(commands.Cog):
             embed.set_footer(text="TuyTam Store  •  Xác minh bảo vệ cộng đồng")
             await member.send(embed=embed)
         except discord.Forbidden:
-            # User tắt DM — log warning
             await send_log(self.bot, "INVITE_VERIFY", "Không thể gửi DM verify",
                 fields=[
                     ("👤 Thành viên", f"{member} (`{member.id}`)", True),
                     ("⚠️ Lý do",      "User đã tắt DM",           True),
                 ],
             )
-            # Xóa callback vì sẽ không bao giờ được gọi
             VERIFY_CALLBACKS.pop(token, None)
 
-        # Timeout 10 phút — nếu không verify thì xóa callback
         async def _timeout():
             await asyncio.sleep(600)
             if VERIFY_CALLBACKS.pop(token, None):
@@ -681,16 +917,13 @@ class InviteCog(commands.Cog):
 
         if is_fake:
             # Đánh dấu fake nhưng vẫn cho vào — đã gán VERIFY ở trên
-            _add_invite(inviter_id, "fake", 1)
+            _add_invite(inviter_id, "fake", 1)  # ghi cả tháng + all-time
             inviter_member = member.guild.get_member(inviter_id) if member.guild else None
 
-            # Lấy danh sách tài khoản cùng IP
-            # _ip_records dùng key dạng "1_2_3_4" (dấu gạch dưới)
             shared_users = _ip_records.get(ip.replace(".", "_"), [])
             primary_id   = get_primary_user_for_ip(ip)
             is_primary   = (primary_id == user_id)
 
-            # DM thông báo cho user bị ảnh hưởng
             try:
                 if is_primary:
                     notice = (
@@ -749,7 +982,7 @@ class InviteCog(commands.Cog):
 
         inv_info = _member_inviters.pop(member.id, None)
         if inv_info:
-            _add_invite(inv_info["inviter_id"], "left", 1)
+            _add_invite(inv_info["inviter_id"], "left", 1)  # ghi cả tháng + all-time
             save_member_inviters(_member_inviters)
 
             inviter_m = member.guild.get_member(inv_info["inviter_id"])
@@ -765,8 +998,6 @@ class InviteCog(commands.Cog):
         """
         Admin: đọc lại lịch sử kênh log general, parse IP từ INVITE_VERIFY/INVITE_FAKE,
         rồi backfill vào MongoDB _ip_records.
-        Dùng: .backfillip        → quét 2000 message gần nhất
-              .backfillip 5000   → quét 5000 message
         """
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin.")
@@ -774,7 +1005,6 @@ class InviteCog(commands.Cog):
         import re
         from core.data import _get_mongo
 
-        # Lấy kênh log general
         from cogs.logger import get_log_channel
         ch_id = get_log_channel("general")
         if not ch_id:
@@ -786,14 +1016,12 @@ class InviteCog(commands.Cog):
 
         status_msg = await ctx.reply(f"⏳ Đang quét {limit} message trong {log_channel.mention}...")
 
-        # Regex parse user_id và IP từ plain text log
-        # Format thực: chip020408 (`1259747159092367364`)  ·  **🌐 IP:** ||`14.228.52.58`||
-        re_user2 = re.compile(r"\(`(\d{10,20})`\)")  # match (`<id>`) bất kỳ chỗ nào
+        re_user2 = re.compile(r"\(`(\d{10,20})`\)")
         re_ip    = re.compile(r"\|\|`([\d\.]+)`\|\|")
 
-        found   = 0   # message INVITE_VERIFY/FAKE dùng được
-        added   = 0   # cặp (ip, user_id) mới được ghi
-        skipped = 0   # đã có trong records rồi
+        found   = 0
+        added   = 0
+        skipped = 0
 
         col, _ = _get_mongo()
 
@@ -802,7 +1030,6 @@ class InviteCog(commands.Cog):
             if "[INVITE_VERIFY]" not in content and "[INVITE_FAKE]" not in content:
                 continue
 
-            # Parse user_id
             m_user = re_user2.search(content)
             if not m_user:
                 continue
@@ -811,7 +1038,6 @@ class InviteCog(commands.Cog):
             except ValueError:
                 continue
 
-            # Parse IP
             m_ip = re_ip.search(content)
             if not m_ip:
                 continue
@@ -820,7 +1046,6 @@ class InviteCog(commands.Cog):
             found += 1
             ip_key = ip.replace(".", "_")
 
-            # Kiểm tra đã có chưa — dùng $addToSet (atomic, idempotent)
             result = await col.update_one(
                 {"_id": "main"},
                 {"$addToSet": {f"_ip_records.{ip_key}": user_id}},
@@ -831,13 +1056,11 @@ class InviteCog(commands.Cog):
             else:
                 skipped += 1
 
-            # Đăng ký primary IP nếu chưa có
             await col.update_one(
                 {"_id": "main", f"_shared_ip.{ip}": {"$exists": False}},
                 {"$set": {f"_shared_ip.{ip}": user_id}},
             )
 
-        # Sync lại in-memory cache
         doc = await col.find_one({"_id": "main"}, {"_ip_records": 1})
         global _ip_records
         _ip_records = (doc or {}).get("_ip_records", {})
@@ -869,7 +1092,6 @@ class InviteCog(commands.Cog):
         if not target_id:
             return await ctx.reply("❌ Dùng: `.checkip @user` hoặc `.checkip <user_id>`")
 
-        # Đọc thẳng từ MongoDB — tránh cache stale
         from core.data import _get_mongo
         col, _ = _get_mongo()
         try:
@@ -877,11 +1099,10 @@ class InviteCog(commands.Cog):
         except Exception as e:
             return await ctx.reply(f"❌ Lỗi đọc MongoDB: `{e}`")
 
-        ip_records_raw  = (doc or {}).get("_ip_records", {})  # key dạng "1_2_3_4"
-        shared_ip_raw   = (doc or {}).get("_shared_ip", {})   # key dạng "1.2.3.4"
+        ip_records_raw  = (doc or {}).get("_ip_records", {})
+        shared_ip_raw   = (doc or {}).get("_shared_ip", {})
 
-        # Tìm tất cả key IP có target_id
-        found = []  # list of (ip_display, users)
+        found = []
         for key, users in ip_records_raw.items():
             if target_id in users:
                 ip_display = key.replace("_", ".")
@@ -921,7 +1142,6 @@ class InviteCog(commands.Cog):
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin.")
 
-        # Đọc thẳng từ MongoDB
         from core.data import _get_mongo
         col, _ = _get_mongo()
         try:
@@ -929,10 +1149,9 @@ class InviteCog(commands.Cog):
         except Exception as e:
             return await ctx.reply(f"❌ Lỗi đọc MongoDB: `{e}`")
 
-        ip_records_raw = (doc or {}).get("_ip_records", {})  # key dạng "1_2_3_4"
-        shared_ip_raw  = (doc or {}).get("_shared_ip", {})   # key dạng "1.2.3.4"
+        ip_records_raw = (doc or {}).get("_ip_records", {})
+        shared_ip_raw  = (doc or {}).get("_shared_ip", {})
 
-        # Lọc IP có ≥ 2 acc, convert key về dạng hiển thị
         dupes = {
             key.replace("_", "."): uids
             for key, uids in ip_records_raw.items()
@@ -960,11 +1179,9 @@ class InviteCog(commands.Cog):
             embed.set_footer(text="TuyTam Store  •  Chỉ admin thấy")
 
             for ip_display, uids in page:
-                # _shared_ip có thể lưu key dạng "1.2.3.4" hoặc "1_2_3_4" tuỳ chỗ ghi
-                ip_key_dot   = ip_display                        # "1.2.3.4"
-                ip_key_under = ip_display.replace(".", "_")      # "1_2_3_4"
+                ip_key_dot   = ip_display
+                ip_key_under = ip_display.replace(".", "_")
                 primary_id   = shared_ip_raw.get(ip_key_dot) or shared_ip_raw.get(ip_key_under)
-                # Nếu _shared_ip chưa có → mặc định acc đầu tiên trong list là primary
                 if primary_id is None and uids:
                     primary_id = uids[0]
                 lines = []
@@ -985,7 +1202,7 @@ class InviteCog(commands.Cog):
 
     @commands.command(name="testip")
     async def testip_cmd(self, ctx):
-        """Admin: thêm data test — 1 IP giả có 2 acc, gửi log INVITE_VERIFY + INVITE_FAKE."""
+        """Admin: thêm data test — 1 IP giả có 2 acc."""
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin.")
 
@@ -1000,13 +1217,11 @@ class InviteCog(commands.Cog):
 
         col, _ = _get_mongo()
         try:
-            # Ghi _ip_records: ip → [acc1, acc2]
             await col.update_one(
                 {"_id": "main"},
                 {"$set": {f"_ip_records.{TEST_IP_KEY}": [ACC1_ID, ACC2_ID]}},
                 upsert=True,
             )
-            # Ghi _shared_ip: ip → acc1 (acc đầu tiên verify)
             await col.update_one(
                 {"_id": "main"},
                 {"$set": {f"_shared_ip.{TEST_IP}": ACC1_ID}},
@@ -1015,11 +1230,9 @@ class InviteCog(commands.Cog):
         except Exception as e:
             return await ctx.reply(f"❌ Lỗi MongoDB: `{e}`")
 
-        # Reload cache
         global _ip_records
         _ip_records = get_ip_records()
 
-        # Gửi log INVITE_VERIFY (acc1 — verify thành công bình thường)
         await send_log(self.bot, "INVITE_VERIFY", "✅ Verify thành công",
             fields=[
                 ("👤 Thành viên", f"{ACC1_NAME} (`{ACC1_ID}`)", True),
@@ -1029,7 +1242,6 @@ class InviteCog(commands.Cog):
             ],
         )
 
-        # Gửi log INVITE_FAKE (acc2 — trùng IP, bị chặn giveaway)
         await send_log(self.bot, "INVITE_FAKE", "⚠️ IP trùng — đã verify nhưng bị hạn chế giveaway",
             fields=[
                 ("👤 Member",   f"{ACC2_NAME} (`{ACC2_ID}`)",                     True),
@@ -1057,31 +1269,42 @@ class InviteCog(commands.Cog):
     @discord.app_commands.describe(member="Thành viên (để trống = bản thân)")
     async def slash_invite(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
-        total, fake, left, net = _get_net_invites(target.id)
+        now    = datetime.now(timezone.utc)
+
+        total_m, fake_m, left_m, net_m = _get_net_invites(target.id)
+        total_a, fake_a, left_a, net_a = _get_net_invites_alltime(target.id)
+
         embed = discord.Embed(
             title     = f"📨 Invite của {_uname(target)}",
             color     = 0x5865F2,
-            timestamp = datetime.now(timezone.utc),
+            timestamp = now,
         )
         embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="✅ Net",     value=f"**{net}**",   inline=True)
-        embed.add_field(name="📊 Tổng",   value=f"**{total}**", inline=True)
-        embed.add_field(name="⚠️ Fake",   value=f"**{fake}**",  inline=True)
-        embed.add_field(name="🚪 Đã rời", value=f"**{left}**",  inline=True)
+        embed.add_field(
+            name  = f"📅 Tháng {now.month}/{now.year}",
+            value = f"✅ Net: **{net_m}** | 📊 Tổng: **{total_m}** | ⚠️ Fake: **{fake_m}** | 🚪 Rời: **{left_m}**",
+            inline = False,
+        )
+        embed.add_field(
+            name  = "🏆 All-time",
+            value = f"✅ Net: **{net_a}** | 📊 Tổng: **{total_a}** | ⚠️ Fake: **{fake_a}** | 🚪 Rời: **{left_a}**",
+            inline = False,
+        )
         embed.set_footer(text="Net = Tổng − Fake − Đã rời")
         await interaction.response.send_message(embed=embed)
 
-    @discord.app_commands.command(name="invitetop", description="Bảng xếp hạng invite (admin)")
+    @discord.app_commands.command(name="invitetop", description="Bảng xếp hạng invite tháng này (admin)")
     @discord.app_commands.describe(top="Số người top (mặc định 10)")
     async def slash_invitetop(self, interaction: discord.Interaction, top: int = 10):
         if interaction.user.id not in ADMIN_IDS:
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         top    = max(1, min(top, 25))
+        now    = datetime.now(timezone.utc)
         counts = _get_invite_counts()
         board  = []
         for uid_str, c in counts.items():
-            net = max(0, c.get("total", 0) - c.get("fake", 0) - c.get("left", 0))
-            board.append((int(uid_str), net, c.get("total", 0), c.get("fake", 0), c.get("left", 0)))
+            total, fake, left, net = _calc_net(c)
+            board.append((int(uid_str), net, total, fake, left))
         board.sort(key=lambda x: x[1], reverse=True)
         board = board[:top]
         if not board:
@@ -1094,25 +1317,33 @@ class InviteCog(commands.Cog):
             name = _uname(m) if m else f"ID:{uid}"
             lines.append(f"{icon} **{name}** — **{net}** net")
         embed = discord.Embed(
-            title       = f"🏆 Top {top} Invite",
+            title       = f"🏆 Top {top} Invite — Tháng {now.month}/{now.year}",
             description = "\n".join(lines),
             color       = 0xF1C40F,
         )
         await interaction.response.send_message(embed=embed)
 
-    @discord.app_commands.command(name="resetinvite", description="Reset invite của thành viên (admin)")
-    @discord.app_commands.describe(member="Thành viên cần reset (để trống = reset tất cả)")
+    @discord.app_commands.command(name="resetinvite", description="Reset invite tháng này của thành viên (admin)")
+    @discord.app_commands.describe(member="Thành viên cần reset (để trống = reset tất cả tháng này)")
     async def slash_resetinvite(self, interaction: discord.Interaction, member: discord.Member = None):
         if interaction.user.id not in ADMIN_IDS:
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        now = datetime.now(timezone.utc)
+        month_label = f"Tháng {now.month}/{now.year}"
         if member:
             counts = _get_invite_counts()
             counts.pop(str(member.id), None)
             _save_invite_counts(counts)
-            await interaction.response.send_message(f"✅ Đã reset invite của {member}.", ephemeral=True)
+            await interaction.response.send_message(
+                f"✅ Đã reset invite {month_label} của {member}.\n*(All-time vẫn giữ nguyên)*",
+                ephemeral=True,
+            )
         else:
             _save_invite_counts({})
-            await interaction.response.send_message("✅ Đã reset toàn bộ invite server.", ephemeral=True)
+            await interaction.response.send_message(
+                f"✅ Đã reset toàn bộ invite {month_label} của server.\n*(All-time vẫn giữ nguyên)*",
+                ephemeral=True,
+            )
 
 
 async def setup(bot: commands.Bot):
