@@ -470,6 +470,23 @@ class InviteCog(commands.Cog):
         total_m, fake_m, left_m, net_m     = _get_net_invites(target.id)
         total_a, fake_a, left_a, net_a     = _get_net_invites_alltime(target.id)
 
+        # ── Kiểm tra trạng thái verify ──
+        verify_role   = ctx.guild.get_role(_get_verify_role_id(ctx.guild.id))   if ctx.guild else None
+        unverify_role = ctx.guild.get_role(_get_unverify_role_id(ctx.guild.id)) if ctx.guild else None
+        is_verified   = verify_role   and verify_role   in target.roles
+        is_unverified = unverify_role and unverify_role in target.roles
+
+        if is_verified:
+            verify_status = "✅ Đã xác minh"
+        elif is_unverified:
+            verify_status = "⏳ Chưa xác minh"
+        else:
+            verify_status = "❓ Không rõ"
+
+        # Tuổi tài khoản
+        acc_age_days = (now - target.created_at).days
+        acc_age_str  = f"{acc_age_days} ngày" if acc_age_days < 30 else f"{acc_age_days // 30} tháng {acc_age_days % 30} ngày"
+
         embed = discord.Embed(
             title     = f"📨 Invite của {_uname(target)}",
             color     = 0x5865F2,
@@ -477,6 +494,14 @@ class InviteCog(commands.Cog):
         )
         embed.set_thumbnail(url=target.display_avatar.url)
 
+        embed.add_field(
+            name  = "👤 Trạng thái",
+            value = (
+                f"{verify_status}\n"
+                f"🗓️ Tài khoản: **{acc_age_str}** tuổi"
+            ),
+            inline = False,
+        )
         embed.add_field(
             name  = f"📅 Tháng {now.month}/{now.year}",
             value = (
@@ -796,7 +821,7 @@ class InviteCog(commands.Cog):
                 "invite_code": invite_code,
             }
             save_pending_joins(_pending_joins)
-            _add_invite(inviter_id, "total", 1)  # ghi cả tháng + all-time
+            # KHÔNG +total ở đây — chỉ +total sau khi verify hợp lệ trong _handle_verify_result
 
         # Log member join
         inviter_member = member.guild.get_member(inviter_id) if inviter_id else None
@@ -878,6 +903,10 @@ class InviteCog(commands.Cog):
                 ],
             )
 
+        # ── Kiểm tra tuổi tài khoản (phải tạo ít nhất 1 ngày trước) ──
+        acc_age_seconds = (datetime.now(timezone.utc) - member.created_at).total_seconds()
+        is_new_account  = acc_age_seconds < 86400  # < 24 giờ
+
         # Check IP collision — đọc thẳng MongoDB trước khi ghi
         is_fake, fake_reason = await _check_ip_collision(user_id, ip, inviter_id)
 
@@ -915,10 +944,42 @@ class InviteCog(commands.Cog):
                 except (discord.Forbidden, discord.HTTPException) as e:
                     print(f"[INVITE] ⚠️ Không gán được role verify: {e}")
 
-        if is_fake:
+        # ── Xác định tính hợp lệ của invite ──
+        # Invite chỉ được đếm khi: verify thành công + không IP trùng + acc >= 1 ngày
+        invite_valid = (not is_fake) and (not is_new_account)
+
+        if is_new_account:
+            # Đánh dấu fake (tài khoản mới < 1 ngày)
+            if inviter_id:
+                _add_invite(inviter_id, "fake", 1)
+            new_acc_reason = f"Tài khoản tạo {int(acc_age_seconds // 3600)} giờ trước (< 24h)"
+            inviter_member = member.guild.get_member(inviter_id) if member.guild and inviter_id else None
+            try:
+                notice = (
+                    f"⚠️ **Thông báo từ TuyTam Store**\n\n"
+                    f"Tài khoản của bạn đã verify thành công. Tuy nhiên, tài khoản của bạn được tạo "
+                    f"**chưa đến 1 ngày** nên bị xem là tài khoản mới và **không được tính vào invite** của người mời.\n\n"
+                    f"Bạn vẫn có thể sử dụng server bình thường."
+                )
+                await member.send(notice)
+            except discord.Forbidden:
+                pass
+            await send_log(self.bot, "INVITE_FAKE", "⚠️ Tài khoản mới < 1 ngày — invite không được tính",
+                fields=[
+                    ("👤 Member",       f"{member} (`{user_id}`)",                                          True),
+                    ("📨 Inviter",       str(inviter_member) if inviter_member else (f"ID:{inviter_id}" if inviter_id else "Không rõ"), True),
+                    ("🌐 IP",            f"||`{ip}`||",                                                     True),
+                    ("🔍 Lý do",         new_acc_reason,                                                    False),
+                    ("🎯 Invite tính?",  "❌ Không tính",                                                   True),
+                    ("📡 ISP",           isp,                                                                True),
+                    ("🌍 Quốc gia",      country,                                                            True),
+                ],
+            )
+        elif is_fake:
             # Đánh dấu fake nhưng vẫn cho vào — đã gán VERIFY ở trên
-            _add_invite(inviter_id, "fake", 1)  # ghi cả tháng + all-time
-            inviter_member = member.guild.get_member(inviter_id) if member.guild else None
+            if inviter_id:
+                _add_invite(inviter_id, "fake", 1)  # ghi cả tháng + all-time
+            inviter_member = member.guild.get_member(inviter_id) if member.guild and inviter_id else None
 
             shared_users = _ip_records.get(ip.replace(".", "_"), [])
             primary_id   = get_primary_user_for_ip(ip)
@@ -934,7 +995,7 @@ class InviteCog(commands.Cog):
                         f"Các tài khoản còn lại sẽ **không thể** tham gia giveaway."
                     )
                 else:
-                    primary_m = guild.get_member(primary_id) if guild and primary_id else None
+                    primary_m    = guild.get_member(primary_id) if guild and primary_id else None
                     primary_name = str(primary_m) if primary_m else f"ID:{primary_id}"
                     notice = (
                         f"⚠️ **Thông báo từ TuyTam Store**\n\n"
@@ -952,7 +1013,7 @@ class InviteCog(commands.Cog):
             await send_log(self.bot, "INVITE_FAKE", "⚠️ IP trùng — đã verify nhưng bị hạn chế giveaway",
                 fields=[
                     ("👤 Member",    f"{member} (`{user_id}`)",                                         True),
-                    ("📨 Inviter",   str(inviter_member) if inviter_member else f"ID:{inviter_id}",      True),
+                    ("📨 Inviter",   str(inviter_member) if inviter_member else (f"ID:{inviter_id}" if inviter_id else "Không rõ"), True),
                     ("🌐 IP",        f"||`{ip}`||",                                                      True),
                     ("🔍 Lý do",     fake_reason,                                                        False),
                     ("🎯 Giveaway",  "✅ Được phép" if is_primary else "❌ Bị chặn",                    True),
@@ -961,6 +1022,9 @@ class InviteCog(commands.Cog):
                 ],
             )
         else:
+            # ── Hợp lệ hoàn toàn → mới +total cho inviter ──
+            if inviter_id:
+                _add_invite(inviter_id, "total", 1)  # ghi cả tháng + all-time
             await send_log(self.bot, "INVITE_VERIFY", "✅ Verify thành công",
                 fields=[
                     ("👤 Thành viên", f"{member} (`{user_id}`)", True),
