@@ -273,10 +273,36 @@ class SettingsView(View):
         view    = View(timeout=60); view.add_item(select)
         await interaction.response.send_message(f"🏷️ **{title}**\nChọn role:", view=view)
 
+    async def _send_category_select(self, interaction, cfg_key, title, description):
+        categories = [ch for ch in interaction.guild.channels if isinstance(ch, discord.CategoryChannel)]
+        categories.sort(key=lambda c: c.position)
+        if not categories:
+            return await interaction.response.send_message("❌ Server không có category nào.", ephemeral=True)
+
+        class _CategorySelect(Select):
+            def __init__(self_inner):
+                opts = [
+                    discord.SelectOption(label=cat.name[:100], value=str(cat.id))
+                    for cat in categories[:25]
+                ]
+                super().__init__(placeholder=f"Chọn category cho {title}…", options=opts)
+            async def callback(self_inner, inter: discord.Interaction):
+                if inter.user.id not in ADMIN_IDS:
+                    return await inter.response.send_message("❌ Chỉ admin.", ephemeral=True)
+                cat_id = int(self_inner.values[0])
+                save_cfg(cfg_key, cat_id)
+                cat = inter.guild.get_channel(cat_id)
+                cat_name = cat.name if cat else f"ID:{cat_id}"
+                await inter.response.send_message(f"✅ Đã cài **{title}** → **{cat_name}**")
+
+        v = View(timeout=60)
+        v.add_item(_CategorySelect())
+        await interaction.response.send_message(f"📁 **{description}**\nChọn category:", view=v)
+
     @discord.ui.button(label="📋 Log Channel",      style=discord.ButtonStyle.primary,   row=0)
     async def log(self,      i, b): await self._send_channel_select(i, "cfg_log_rudy",        "Log Rudy",         "Kênh log rudy — nhận toàn bộ hoạt động bot")
     @discord.ui.button(label="🎫 Ticket Category",  style=discord.ButtonStyle.secondary, row=0)
-    async def cat(self,      i, b): await i.response.send_message("ℹ️ Category được cài qua ID trong code. Dùng `.settings` để xem ID hiện tại.")
+    async def cat(self,      i, b): await self._send_category_select(i, "cfg_ticket_category", "Ticket Category",  "Category chứa các ticket")
     @discord.ui.button(label="🛡️ Support Role",     style=discord.ButtonStyle.secondary, row=0)
     async def support(self,  i, b): await self._send_role_select(i, "cfg_support_role",   "Support Role")
     @discord.ui.button(label="🏪 Seller Role",      style=discord.ButtonStyle.secondary, row=1)
