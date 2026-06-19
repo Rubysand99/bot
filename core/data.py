@@ -28,6 +28,8 @@ LEGIT_CHANNEL_ID      = 0
 PROOF_CHANNEL_ID      = 1469647159560241318
 TRANSCRIPT_CHANNEL_ID = 1464430574524436679
 FEEDBACK_CHANNEL_ID   = 1502464872686948403
+STOCK_CATEGORY_ID     = 1506520186063163423
+SOLD_CATEGORY_ID      = 1506652491779932240
 CHANGELOG_CHANNEL_ID  = 1486967511839801414
 # FIX: ADMIN_IDS đọc từ env, fallback hardcode
 def _load_admin_ids() -> list[int]:
@@ -82,6 +84,8 @@ def _default_data() -> dict:
         "cfg_legit_channel":   LEGIT_CHANNEL_ID,
         "cfg_proof_channel":   PROOF_CHANNEL_ID,
         "cfg_ai_channel":      0,
+        "cfg_stock_category":  STOCK_CATEGORY_ID,
+        "cfg_sold_category":   SOLD_CATEGORY_ID,
         "cfg_font":            "normal",
         "dangerous_cmd_overrides": {},
         "sellers":          [],
@@ -205,6 +209,8 @@ async def init_data_cache():
 def get_cfg_log_rudy()        -> int: return load_data().get("cfg_log_rudy", 0)
 def get_cfg_font()            -> str: return load_data().get("cfg_font", "normal")
 def get_cfg_category()        -> int: return load_data().get("cfg_ticket_category", TICKET_CATEGORY_ID)
+def get_cfg_stock_category()  -> int: return load_data().get("cfg_stock_category",  STOCK_CATEGORY_ID)
+def get_cfg_sold_category()   -> int: return load_data().get("cfg_sold_category",   SOLD_CATEGORY_ID)
 def get_cfg_support_role()    -> int: return load_data().get("cfg_support_role", SUPPORT_ROLE_ID)
 def get_cfg_seller_role()     -> int: return load_data().get("cfg_seller_role", SELLER_ROLE_ID)
 def get_cfg_counter_channel() -> int: return load_data().get("cfg_counter_channel", COUNTER_CHANNEL_ID)

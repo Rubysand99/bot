@@ -16,6 +16,7 @@ from discord.ui import View, Button, Modal, TextInput, Select
 from cogs.logger import send_log
 from core.data import (
     ADMIN_IDS, get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
+    get_cfg_stock_category, get_cfg_sold_category,
     get_cfg_counter_channel, get_cfg_legit_channel,
     get_cfg_proof_channel, get_cfg_ai_channel, get_cfg_font, set_cfg_font,
     save_cfg, load_data, save_data, get_buy_roles, save_buy_roles,
@@ -63,6 +64,8 @@ class AdminCog(commands.Cog):
         embed.add_field(name="✅ Legit Channel",     value=ch("cfg_legit_channel",   0),                   inline=True)
         embed.add_field(name="📸 Proof Channel",    value=ch("cfg_proof_channel",   1469647159560241318), inline=True)
         embed.add_field(name="🤖 AI Channel",        value=ch("cfg_ai_channel",      0),                   inline=True)
+        embed.add_field(name="📦 Stock Category",    value=ch("cfg_stock_category",  0),                   inline=True)
+        embed.add_field(name="✅ Sold Category",     value=ch("cfg_sold_category",   0),                   inline=True)
         embed.add_field(name="🔤 Font server",       value=FONT_LABELS.get(data.get("cfg_font","normal"),"normal"), inline=True)
         embed.set_footer(text=f"Nhấn nút bên dưới để thay đổi  •  Yêu cầu bởi {ctx.author}")
         await ctx.reply(embed=embed, view=SettingsView(ctx.guild))
@@ -654,14 +657,18 @@ async def handle_sold(bot, message: discord.Message):
     channel = message.channel
     if not isinstance(channel, discord.TextChannel):
         return
-    if not channel.category_id or channel.category_id != STOCK_CATEGORY_ID:
+
+    stock_cat_id = get_cfg_stock_category()
+    sold_cat_id  = get_cfg_sold_category()
+
+    if not channel.category_id or channel.category_id != stock_cat_id:
         return
 
     content = message.content.strip().lower()
     if not (content.startswith("sold") or content.startswith("## sold")):
         return
 
-    sold_category = message.guild.get_channel(SOLD_CATEGORY_ID)
+    sold_category = message.guild.get_channel(sold_cat_id)
     if not sold_category or not isinstance(sold_category, discord.CategoryChannel):
         await message.add_reaction("⚠️")
         return

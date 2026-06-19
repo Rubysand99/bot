@@ -18,6 +18,7 @@ from discord.ui import View, Button, Modal, TextInput, Select
 from cogs.logger import send_log
 from core.data import (
     ADMIN_IDS, get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
+    get_cfg_stock_category, get_cfg_sold_category,
     get_cfg_counter_channel, get_cfg_legit_channel,
     get_cfg_proof_channel, get_cfg_ai_channel, get_cfg_font, set_cfg_font,
     save_cfg, load_data, save_data, get_buy_roles, save_buy_roles,
@@ -322,6 +323,10 @@ class SettingsView(View):
             view=TicketRoleConfigView(),
             ephemeral=True,
         )
+    @discord.ui.button(label="📦 Stock Category",   style=discord.ButtonStyle.secondary, row=3)
+    async def stock_cat(self, i, b): await self._send_category_select(i, "cfg_stock_category", "Stock Category", "Category chứa hàng đang bán (auto-sold)")
+    @discord.ui.button(label="✅ Sold Category",    style=discord.ButtonStyle.secondary, row=3)
+    async def sold_cat(self,  i, b): await self._send_category_select(i, "cfg_sold_category",  "Sold Category",  "Category chứa hàng đã bán")
 
 
 def _build_ticket_roles_embed(guild: discord.Guild | None = None) -> discord.Embed:
