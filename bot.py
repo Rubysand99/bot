@@ -38,6 +38,7 @@ COGS = [
     "cogs.giveaway",
     "cogs.admin",
     "cogs.mod",
+    "cogs.seller",
 ]
 
 async def load_cogs():
