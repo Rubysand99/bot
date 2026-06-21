@@ -31,21 +31,30 @@ FEEDBACK_CHANNEL_ID   = 1502464872686948403
 STOCK_CATEGORY_ID     = 1506520186063163423
 SOLD_CATEGORY_ID      = 1506652491779932240
 CHANGELOG_CHANNEL_ID  = 1486967511839801414
-# FIX: ADMIN_IDS đọc từ env, fallback hardcode
+# ADMIN_IDS — đọc từ 2 biến riêng biệt:
+#   ADMIN_RUBY_ID   — Ruby (phát triển, quản lý bot & server)
+#   ADMIN_TUYTAM_ID — TuyTam (giao dịch, buôn bán)
+# Cả 2 đều có toàn quyền như nhau.
 def _load_admin_ids() -> list[int]:
-    env = os.getenv("ADMIN_IDS", "")
-    if env:
-        try:
-            ids = [int(x.strip()) for x in env.split(",") if x.strip()]
-            if ids:
-                return ids
-        except ValueError:
-            pass
-    log.critical("[DATA] ❌ ADMIN_IDS env chưa cài hoặc không hợp lệ! "
-                 "Bot sẽ không có admin nào. Hãy set biến môi trường ADMIN_IDS.")
-    return []
+    ids = []
+    for var in ("ADMIN_RUBY_ID", "ADMIN_TUYTAM_ID"):
+        val = os.getenv(var, "").strip()
+        if val:
+            try:
+                ids.append(int(val))
+            except ValueError:
+                log.error(f"[DATA] ❌ {var} không hợp lệ (phải là số): '{val}'")
+        else:
+            log.warning(f"[DATA] ⚠️ {var} chưa được cài trong Railway env.")
+    if not ids:
+        log.critical("[DATA] ❌ Không có ADMIN nào! Hãy set ADMIN_RUBY_ID và ADMIN_TUYTAM_ID.")
+    return ids
 
 ADMIN_IDS = _load_admin_ids()
+
+# Tiện truy cập từng ID riêng nếu sau này cần phân quyền
+ADMIN_RUBY_ID   = next((i for i in ADMIN_IDS if str(i) == os.getenv("ADMIN_RUBY_ID","").strip()), None)
+ADMIN_TUYTAM_ID = next((i for i in ADMIN_IDS if str(i) == os.getenv("ADMIN_TUYTAM_ID","").strip()), None)
 QR_FILE   = "/data/qr_code.png" if os.path.isdir("/data") else "./qr_code.png"
 
 MONGO_URI = os.getenv("MONGO_URI")
