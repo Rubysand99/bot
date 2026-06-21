@@ -373,6 +373,24 @@ class AdminCog(commands.Cog):
                      "Cài kênh AI qua `.st` → AI Channel", False),
                 ]
             },
+            "seller": {
+                "emoji": "🏪", "title": "Seller Subscription",
+                "fields": [
+                    ("📋 Lệnh admin",
+                     "`.seller add @user [days]` — Thêm mới hoặc gia hạn seller (mặc định 30 ngày)\n"
+                     "`.seller remove @user` — Xoá seller\n"
+                     "`.seller list` — Danh sách tất cả seller + trạng thái hết hạn\n"
+                     "`.seller info @user` — Xem thông tin gói của 1 seller\n"
+                     "`.seller panel [@user]` — Gửi embed thông tin seller (mẫu chào mừng)", False),
+                    ("👤 Lệnh seller (tự dùng)",
+                     "`.myseller` — Xem thông tin gói đăng ký của bản thân", False),
+                    ("🎨 Trạng thái",
+                     "🟢 Xanh — Còn hạn\n"
+                     "🟡 Vàng — Sắp hết hạn (≤ 3 ngày)\n"
+                     "🔴 Đỏ — Đã hết hạn\n\n"
+                     "Bot tự động log kênh ticket khi seller sắp hết/đã hết hạn (mỗi giờ kiểm tra 1 lần)", False),
+                ]
+            },
             "admin": {
                 "emoji": "⚙️", "title": "Admin",
                 "fields": [
@@ -411,12 +429,13 @@ class AdminCog(commands.Cog):
             "ai": "ai", "aichat": "ai", "chatai": "ai",
             "log": "log", "logger": "log",
             "admin": "admin", "adm": "admin",
+            "seller": "seller", "shop": "seller",
         }
 
         if topic:
             key = ALIASES.get(topic.lower().strip())
             if not key:
-                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "invite", "dichvu", "giveaway", "mod", "ai", "log", "admin"])
+                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "invite", "dichvu", "giveaway", "mod", "ai", "log", "admin", "seller"])
                 return await ctx.reply(f"❌ Không tìm thấy mục `{topic}`.\nCác mục hợp lệ: {topics_list}")
             t = TOPICS[key]
             embed = discord.Embed(
@@ -444,6 +463,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🤖 AI Chat",   value="`.aireset` `.mychat`", inline=True)
         embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo` `.baocao`", inline=True)
         embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel`", inline=True)
+        embed.add_field(name="🏪 Seller",    value="`.seller add/remove/list/panel`\n`.myseller`", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
 
