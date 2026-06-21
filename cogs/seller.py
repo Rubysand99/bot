@@ -16,7 +16,8 @@ Lệnh seller (tự xem):
 import discord
 from discord.ext import commands, tasks
 import datetime
-from core.data import ADMIN_IDS, get_or_fetch_channel, send_log
+from core.data import ADMIN_IDS, get_or_fetch_channel
+from cogs.logger import send_log
 
 # ── Màu embed ──────────────────────────────────────────────────────────────────
 COLOR_OK      = 0x57F287   # xanh lá — còn hạn
