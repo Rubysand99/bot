@@ -140,7 +140,8 @@ class SellerCog(commands.Cog, name="Seller"):
                     name = member.display_name if member else f"ID:{uid}"
                     await send_log(self.bot, "INFO", "🔴 Seller hết hạn",
                         fields=[("Seller", name, True),
-                                ("Hết hạn", f"<t:{int(expires_at.timestamp())}:R>", True)])
+                                ("Hết hạn", f"<t:{int(expires_at.timestamp())}:R>", True)],
+                        guild_id=guild.id)
                     doc["notified_expire"] = True
                     _save_one(guild.id, uid, doc)
 
@@ -149,7 +150,8 @@ class SellerCog(commands.Cog, name="Seller"):
                     name = member.display_name if member else f"ID:{uid}"
                     await send_log(self.bot, "INFO", "⚠️ Seller sắp hết hạn",
                         fields=[("Seller", name, True),
-                                ("Hết hạn", f"<t:{int(expires_at.timestamp())}:R>", True)])
+                                ("Hết hạn", f"<t:{int(expires_at.timestamp())}:R>", True)],
+                        guild_id=guild.id)
                     doc["notified_warn"] = True
                     _save_one(guild.id, uid, doc)
 
@@ -210,7 +212,8 @@ class SellerCog(commands.Cog, name="Seller"):
             fields=[("Seller", f"{member} ({member.id})", False),
                     ("Ngày thêm", str(days), True),
                     ("Hết hạn", f"<t:{int(new_expire.timestamp())}:F>", True),
-                    ("Admin", str(ctx.author), True)])
+                    ("Admin", str(ctx.author), True)],
+            guild_id=ctx.guild.id)
 
     @seller_group.command(name="remove")
     async def seller_remove(self, ctx, member: discord.Member):
@@ -223,7 +226,8 @@ class SellerCog(commands.Cog, name="Seller"):
         await ctx.send(f"🗑️ Đã xoá seller {member.mention}.")
         await send_log(self.bot, "INFO", "Seller bị xoá",
             fields=[("Seller", f"{member} ({member.id})", True),
-                    ("Admin", str(ctx.author), True)])
+                    ("Admin", str(ctx.author), True)],
+            guild_id=ctx.guild.id)
 
     @seller_group.command(name="list")
     async def seller_list(self, ctx):

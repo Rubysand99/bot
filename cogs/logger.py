@@ -185,11 +185,13 @@ async def send_log(
     user: discord.Member | discord.User = None,
     color: int = None,
     footer: str = None,
+    guild_id: int = None,
 ):
     """
     Gửi log vào kênh tương ứng với nhóm của event_type.
     Fallback về kênh log_rudy nếu nhóm chưa được cài.
     fields: list of (name, value, inline?)
+    guild_id: truyền vào khi gọi từ background task (không có ctx/guild context).
 
     Gửi dưới dạng plain text để tránh đẩy trôi history.
     Báo cáo tổng hợp (daily report) vẫn dùng embed vì cần layout đẹp.
@@ -205,7 +207,16 @@ async def send_log(
     if not ch_id:
         print(f"[LOG] ⚠️ Không có kênh log cho nhóm '{group}' ({event_type}), bỏ qua.")
         return
-    channel = await get_or_fetch_channel(bot, ch_id)
+
+    # Nếu có guild_id, ưu tiên tìm channel trong guild đó (tránh gửi nhầm server)
+    channel = None
+    if guild_id:
+        guild = bot.get_guild(guild_id)
+        if guild:
+            channel = guild.get_channel(ch_id)
+    if not channel:
+        channel = await get_or_fetch_channel(bot, ch_id)
+
     if not channel:
         print(f"[LOG] ⚠️ Không tìm được kênh {ch_id} cho '{group}' ({event_type}), bỏ qua.")
         return
