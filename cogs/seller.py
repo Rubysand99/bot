@@ -1,93 +1,86 @@
 """
 cogs/seller.py — Seller Subscription System
-Quản lý gói thuê kênh bán hàng theo tháng trong server Discord.
+Lưu data vào bot_data document (load_data/save_data) — giống các module khác.
 
 Lệnh admin:
-  .seller add @user [days]     — Thêm seller mới hoặc gia hạn (mặc định 30 ngày)
+  .seller add @user [days]     — Thêm mới hoặc gia hạn (mặc định 30 ngày)
   .seller remove @user         — Xoá seller
   .seller list                 — Danh sách tất cả seller
-  .seller info @user           — Xem thông tin 1 seller
-  .seller panel [@user]        — Gửi embed thông tin seller (giống ảnh mẫu)
+  .seller panel [@user]        — Gửi embed thông tin seller
 
-Lệnh seller (tự xem):
+Lệnh seller:
   .myseller                    — Xem thông tin gói của mình
 """
 
+import datetime
 import discord
 from discord.ext import commands, tasks
-import datetime
-from core.data import ADMIN_IDS, get_or_fetch_channel
+
+from core.data import ADMIN_IDS, load_data, save_data, get_or_fetch_channel
 from cogs.logger import send_log
 
-# ── Màu embed ──────────────────────────────────────────────────────────────────
-COLOR_OK      = 0x57F287   # xanh lá — còn hạn
-COLOR_WARN    = 0xFEE75C   # vàng — sắp hết hạn (≤3 ngày)
-COLOR_EXPIRED = 0xED4245   # đỏ — đã hết hạn
-COLOR_INFO    = 0x5865F2   # tím
+COLOR_OK      = 0x57F287
+COLOR_WARN    = 0xFEE75C
+COLOR_EXPIRED = 0xED4245
+COLOR_INFO    = 0x5865F2
 
+# ── Helpers data (lưu vào bot_data["seller_subs"]) ─────────────────────────────
 
-# ── Helper MongoDB ──────────────────────────────────────────────────────────────
-async def _get_seller(db, guild_id: int, user_id: int) -> dict | None:
-    col = db[f"sellers_{guild_id}"]
-    return await col.find_one({"_id": user_id})
+def _get_all(guild_id: int) -> dict:
+    """Trả về dict {str(user_id): doc} cho guild."""
+    return load_data().get("seller_subs", {}).get(str(guild_id), {})
 
+def _get_one(guild_id: int, user_id: int) -> dict | None:
+    return _get_all(guild_id).get(str(user_id))
 
-async def _upsert_seller(db, guild_id: int, user_id: int, data: dict):
-    col = db[f"sellers_{guild_id}"]
-    await col.update_one({"_id": user_id}, {"$set": data}, upsert=True)
+def _save_one(guild_id: int, user_id: int, doc: dict):
+    data = load_data()
+    subs = data.setdefault("seller_subs", {})
+    guild_subs = subs.setdefault(str(guild_id), {})
+    guild_subs[str(user_id)] = doc
+    save_data(data)
 
+def _delete_one(guild_id: int, user_id: int):
+    data = load_data()
+    subs = data.get("seller_subs", {})
+    guild_subs = subs.get(str(guild_id), {})
+    guild_subs.pop(str(user_id), None)
+    save_data(data)
 
-async def _delete_seller(db, guild_id: int, user_id: int):
-    col = db[f"sellers_{guild_id}"]
-    await col.delete_one({"_id": user_id})
+# ── Build embed ─────────────────────────────────────────────────────────────────
 
+def _build_embed(member: discord.Member, doc: dict, guild: discord.Guild) -> discord.Embed:
+    now = datetime.datetime.now(datetime.timezone.utc)
 
-async def _list_sellers(db, guild_id: int) -> list[dict]:
-    col = db[f"sellers_{guild_id}"]
-    return await col.find({}).to_list(length=200)
-
-
-# ── Build embed theo mẫu ảnh ───────────────────────────────────────────────────
-def _build_seller_embed(member: discord.Member, doc: dict, guild: discord.Guild) -> discord.Embed:
-    expire_dt: datetime.datetime = doc.get("expires_at")
-    now = datetime.datetime.utcnow()
-
-    if expire_dt is None:
-        color = COLOR_INFO
-        status_text = "Không xác định"
-        time_left = ""
-    elif expire_dt < now:
-        color = COLOR_EXPIRED
-        status_text = "❌ Đã hết hạn"
-        time_left = ""
-    else:
-        delta = expire_dt - now
-        days_left = delta.days
-        if days_left <= 3:
-            color = COLOR_WARN
-            status_text = f"⚠️ Còn {days_left} ngày"
+    expire_str_raw = doc.get("expires_at")
+    if expire_str_raw:
+        expire_dt = datetime.datetime.fromisoformat(expire_str_raw)
+        expire_ts = int(expire_dt.timestamp())
+        if expire_dt < now:
+            color = COLOR_EXPIRED
+            time_left = "❌ Đã hết hạn"
         else:
-            color = COLOR_OK
-            status_text = f"✅ Còn {days_left} ngày"
-        time_left = f"({status_text})"
-
-    # Format ngày hết hạn kiểu Discord timestamp
-    expire_ts = int(expire_dt.timestamp()) if expire_dt else None
-    expire_str = (
-        f"<t:{expire_ts}:F> {time_left}" if expire_ts else "Không xác định"
-    )
+            delta = expire_dt - now
+            days_left = delta.days
+            if days_left <= 3:
+                color = COLOR_WARN
+                time_left = f"⚠️ Còn {days_left} ngày"
+            else:
+                color = COLOR_OK
+                time_left = f"✅ Còn {days_left} ngày"
+        expire_display = f"<t:{expire_ts}:F> ({time_left})"
+    else:
+        color = COLOR_INFO
+        expire_display = "Không xác định"
 
     embed = discord.Embed(
         title="Chào Mừng Chủ Shop",
         description=f"Chào mừng {member.mention}! Shop của bạn đã sẵn sàng hoạt động.",
         color=color,
-        timestamp=datetime.datetime.utcnow(),
+        timestamp=now,
     )
-
-    # Ảnh đại diện seller
     embed.set_thumbnail(url=member.display_avatar.url)
 
-    # Nội quy shop
     embed.add_field(
         name="📋 NỘI QUY SHOP",
         value=(
@@ -99,261 +92,204 @@ def _build_seller_embed(member: discord.Member, doc: dict, guild: discord.Guild)
         inline=False,
     )
 
-    # Thời hạn
     embed.add_field(
         name="⏳ THỜI HẠN SHOP",
-        value=f"Hết hạn: {expire_str}",
+        value=f"Hết hạn: {expire_display}",
         inline=False,
     )
 
-    # Info thêm
-    joined_at = doc.get("joined_at")
-    if joined_at:
-        joined_ts = int(joined_at.timestamp())
+    joined_str = doc.get("joined_at")
+    if joined_str:
+        joined_ts = int(datetime.datetime.fromisoformat(joined_str).timestamp())
         embed.add_field(name="📅 Ngày tham gia", value=f"<t:{joined_ts}:D>", inline=True)
 
     total_days = doc.get("total_days_paid", 0)
-    embed.add_field(name="💰 Tổng thời gian đã mua", value=f"{total_days} ngày", inline=True)
+    embed.add_field(name="💰 Tổng ngày đã mua", value=f"{total_days} ngày", inline=True)
 
     embed.set_footer(text=f"Market Management System | {guild.name}")
     return embed
 
 
-# ── Cog ────────────────────────────────────────────────────────────────────────
+# ── Cog ─────────────────────────────────────────────────────────────────────────
+
 class SellerCog(commands.Cog, name="Seller"):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot):
         self.bot = bot
         self.check_expiry_loop.start()
 
     def cog_unload(self):
         self.check_expiry_loop.cancel()
 
-    @property
-    def db(self):
-        return self.bot.db  # Motor async client từ bot.py
-
-    # ── Auto check hết hạn mỗi giờ ─────────────────────────────────────────────
+    # Auto check hết hạn mỗi giờ
     @tasks.loop(hours=1)
     async def check_expiry_loop(self):
-        """Tự động log khi seller sắp hết hạn (3 ngày) hoặc đã hết hạn."""
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(datetime.timezone.utc)
         warn_threshold = now + datetime.timedelta(days=3)
 
         for guild in self.bot.guilds:
-            sellers = await _list_sellers(self.db, guild.id)
-            for doc in sellers:
-                expires_at = doc.get("expires_at")
-                if not expires_at:
+            subs = _get_all(guild.id)
+            for uid_str, doc in subs.items():
+                expires_str = doc.get("expires_at")
+                if not expires_str:
                     continue
-                uid = doc["_id"]
-                notified_expire = doc.get("notified_expire", False)
-                notified_warn   = doc.get("notified_warn", False)
+                expires_at = datetime.datetime.fromisoformat(expires_str)
+                uid = int(uid_str)
 
-                if expires_at < now and not notified_expire:
-                    # Đã hết hạn — chưa thông báo
+                if expires_at < now and not doc.get("notified_expire"):
                     member = guild.get_member(uid)
                     name = member.display_name if member else f"ID:{uid}"
-                    await send_log(
-                        self.bot, "TICKET",
-                        "🔴 Seller hết hạn",
-                        fields=[
-                            ("Seller", name, True),
-                            ("Hết hạn", f"<t:{int(expires_at.timestamp())}:R>", True),
-                        ]
-                    )
-                    await _upsert_seller(self.db, guild.id, uid, {"notified_expire": True})
+                    await send_log(self.bot, "INFO", "🔴 Seller hết hạn",
+                        fields=[("Seller", name, True),
+                                ("Hết hạn", f"<t:{int(expires_at.timestamp())}:R>", True)])
+                    doc["notified_expire"] = True
+                    _save_one(guild.id, uid, doc)
 
-                elif expires_at < warn_threshold and expires_at > now and not notified_warn:
-                    # Sắp hết hạn
+                elif now < expires_at < warn_threshold and not doc.get("notified_warn"):
                     member = guild.get_member(uid)
                     name = member.display_name if member else f"ID:{uid}"
-                    await send_log(
-                        self.bot, "TICKET",
-                        "⚠️ Seller sắp hết hạn",
-                        fields=[
-                            ("Seller", name, True),
-                            ("Hết hạn", f"<t:{int(expires_at.timestamp())}:R>", True),
-                        ]
-                    )
-                    await _upsert_seller(self.db, guild.id, uid, {"notified_warn": True})
+                    await send_log(self.bot, "INFO", "⚠️ Seller sắp hết hạn",
+                        fields=[("Seller", name, True),
+                                ("Hết hạn", f"<t:{int(expires_at.timestamp())}:R>", True)])
+                    doc["notified_warn"] = True
+                    _save_one(guild.id, uid, doc)
 
     @check_expiry_loop.before_loop
     async def before_check(self):
         await self.bot.wait_until_ready()
 
-    # ── Group lệnh .seller ──────────────────────────────────────────────────────
+    # ── .seller ──────────────────────────────────────────────────────────────────
+
     @commands.group(name="seller", invoke_without_command=True)
-    async def seller_group(self, ctx: commands.Context):
+    async def seller_group(self, ctx):
         if ctx.author.id not in ADMIN_IDS:
             return
-        await ctx.send(
-            "❓ Dùng: `.seller add/remove/list/info/panel`",
-            delete_after=10
-        )
+        await ctx.send("❓ Dùng: `.seller add/remove/list/panel`", delete_after=10)
 
-    # .seller add @user [days]
     @seller_group.command(name="add")
-    async def seller_add(self, ctx: commands.Context, member: discord.Member, days: int = 30):
+    async def seller_add(self, ctx, member: discord.Member, days: int = 30):
         if ctx.author.id not in ADMIN_IDS:
             return
 
-        now = datetime.datetime.utcnow()
-        doc = await _get_seller(self.db, ctx.guild.id, member.id)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        doc = _get_one(ctx.guild.id, member.id)
 
-        if doc and doc.get("expires_at") and doc["expires_at"] > now:
-            # Gia hạn từ ngày hiện tại của họ
-            new_expire = doc["expires_at"] + datetime.timedelta(days=days)
-            action = "gia hạn"
+        if doc and doc.get("expires_at"):
+            old_expire = datetime.datetime.fromisoformat(doc["expires_at"])
+            if old_expire > now:
+                new_expire = old_expire + datetime.timedelta(days=days)
+                action = "gia hạn"
+            else:
+                new_expire = now + datetime.timedelta(days=days)
+                action = "gia hạn (hết hạn rồi)"
         else:
-            # Thêm mới hoặc hết hạn rồi → tính từ bây giờ
             new_expire = now + datetime.timedelta(days=days)
             action = "thêm mới"
 
         total_days = (doc.get("total_days_paid", 0) if doc else 0) + days
+        joined_at = doc.get("joined_at") if doc else now.isoformat()
 
-        await _upsert_seller(self.db, ctx.guild.id, member.id, {
-            "username": str(member),
-            "expires_at": new_expire,
+        new_doc = {
+            "username":        str(member),
+            "expires_at":      new_expire.isoformat(),
             "total_days_paid": total_days,
-            "joined_at": doc.get("joined_at", now) if doc else now,
-            "notified_warn": False,
+            "joined_at":       joined_at,
+            "notified_warn":   False,
             "notified_expire": False,
-        })
+        }
+        _save_one(ctx.guild.id, member.id, new_doc)
 
-        embed = discord.Embed(
-            title=f"✅ Seller {action}",
-            color=COLOR_OK,
-            timestamp=now,
-        )
-        embed.add_field(name="Seller", value=member.mention, inline=True)
-        embed.add_field(name="Thêm (ngày)", value=str(days), inline=True)
-        embed.add_field(
-            name="Hết hạn mới",
-            value=f"<t:{int(new_expire.timestamp())}:F>",
-            inline=False,
-        )
-        embed.set_footer(text=f"By {ctx.author.display_name}")
-        await ctx.send(embed=embed)
+        embed = discord.Embed(title=f"✅ Seller {action}", color=COLOR_OK, timestamp=now)
+        embed.add_field(name="Seller",      value=member.mention, inline=True)
+        embed.add_field(name="Thêm (ngày)", value=str(days),      inline=True)
+        embed.add_field(name="Hết hạn mới",
+                        value=f"<t:{int(new_expire.timestamp())}:F>", inline=False)
+        embed.set_footer(text=f"Bởi {ctx.author.display_name}")
+        await ctx.reply(embed=embed)
 
-        await send_log(
-            self.bot, "TICKET",
-            f"Seller {action}",
-            fields=[
-                ("Seller", f"{member} ({member.id})", False),
-                ("Ngày thêm", str(days), True),
-                ("Hết hạn", f"<t:{int(new_expire.timestamp())}:F>", True),
-                ("Admin", str(ctx.author), True),
-            ]
-        )
+        await send_log(self.bot, "INFO", f"Seller {action}",
+            fields=[("Seller", f"{member} ({member.id})", False),
+                    ("Ngày thêm", str(days), True),
+                    ("Hết hạn", f"<t:{int(new_expire.timestamp())}:F>", True),
+                    ("Admin", str(ctx.author), True)])
 
-    # .seller remove @user
     @seller_group.command(name="remove")
-    async def seller_remove(self, ctx: commands.Context, member: discord.Member):
+    async def seller_remove(self, ctx, member: discord.Member):
         if ctx.author.id not in ADMIN_IDS:
             return
+        if not _get_one(ctx.guild.id, member.id):
+            return await ctx.send(f"❌ {member.mention} không phải seller.", delete_after=8)
 
-        doc = await _get_seller(self.db, ctx.guild.id, member.id)
-        if not doc:
-            await ctx.send(f"❌ {member.mention} không phải seller.", delete_after=8)
-            return
-
-        await _delete_seller(self.db, ctx.guild.id, member.id)
+        _delete_one(ctx.guild.id, member.id)
         await ctx.send(f"🗑️ Đã xoá seller {member.mention}.")
-        await send_log(
-            self.bot, "TICKET",
-            "Seller bị xoá",
-            fields=[
-                ("Seller", f"{member} ({member.id})", True),
-                ("Admin", str(ctx.author), True),
-            ]
-        )
+        await send_log(self.bot, "INFO", "Seller bị xoá",
+            fields=[("Seller", f"{member} ({member.id})", True),
+                    ("Admin", str(ctx.author), True)])
 
-    # .seller list
     @seller_group.command(name="list")
-    async def seller_list(self, ctx: commands.Context):
+    async def seller_list(self, ctx):
         if ctx.author.id not in ADMIN_IDS:
             return
 
-        docs = await _list_sellers(self.db, ctx.guild.id)
-        if not docs:
-            await ctx.send("📭 Chưa có seller nào.", delete_after=8)
-            return
+        subs = _get_all(ctx.guild.id)
+        if not subs:
+            return await ctx.send("📭 Chưa có seller nào.", delete_after=8)
 
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(datetime.timezone.utc)
         lines = []
-        for doc in sorted(docs, key=lambda d: d.get("expires_at", datetime.datetime.min)):
-            uid = doc["_id"]
-            expires_at = doc.get("expires_at")
-            member = ctx.guild.get_member(uid)
-            name = member.mention if member else f"`{doc.get('username', uid)}`"
-
-            if not expires_at:
-                status = "❓"
-            elif expires_at < now:
-                status = "🔴"
-            elif expires_at - now <= datetime.timedelta(days=3):
-                status = "🟡"
+        for uid_str, doc in subs.items():
+            member = ctx.guild.get_member(int(uid_str))
+            name = member.mention if member else f"`{doc.get('username', uid_str)}`"
+            expires_str = doc.get("expires_at")
+            if not expires_str:
+                status = "❓"; expire_display = "N/A"
             else:
-                status = "🟢"
+                expire_dt = datetime.datetime.fromisoformat(expires_str)
+                expire_display = f"<t:{int(expire_dt.timestamp())}:d>"
+                if expire_dt < now:
+                    status = "🔴"
+                elif expire_dt - now <= datetime.timedelta(days=3):
+                    status = "🟡"
+                else:
+                    status = "🟢"
+            lines.append((expire_dt if expires_str else datetime.datetime.min.replace(tzinfo=datetime.timezone.utc),
+                          f"{status} {name} — hết hạn {expire_display}"))
 
-            expire_str = f"<t:{int(expires_at.timestamp())}:d>" if expires_at else "N/A"
-            lines.append(f"{status} {name} — hết hạn {expire_str}")
+        lines.sort(key=lambda x: x[0])
+        text_lines = [t for _, t in lines]
 
-        # Tách thành nhiều embed nếu quá dài
-        chunks = []
-        chunk = []
-        for line in lines:
-            chunk.append(line)
-            if len(chunk) == 20:
-                chunks.append(chunk)
-                chunk = []
-        if chunk:
-            chunks.append(chunk)
-
-        for i, ch in enumerate(chunks):
+        # Gửi theo chunk 20 dòng
+        chunks = [text_lines[i:i+20] for i in range(0, len(text_lines), 20)]
+        for i, chunk in enumerate(chunks):
             embed = discord.Embed(
-                title=f"📋 Danh sách Seller ({len(docs)}) — Trang {i+1}/{len(chunks)}",
-                description="\n".join(ch),
+                title=f"📋 Danh sách Seller ({len(subs)}) — Trang {i+1}/{len(chunks)}",
+                description="\n".join(chunk),
                 color=COLOR_INFO,
                 timestamp=now,
             )
-            embed.set_footer(text="🟢 Còn hạn  🟡 Sắp hết  🔴 Hết hạn")
+            embed.set_footer(text="🟢 Còn hạn  🟡 Sắp hết (≤3 ngày)  🔴 Hết hạn")
             await ctx.send(embed=embed)
 
-    # .seller info @user
-    @seller_group.command(name="info")
-    async def seller_info(self, ctx: commands.Context, member: discord.Member):
-        if ctx.author.id not in ADMIN_IDS:
-            return
-        await self._send_seller_panel(ctx, member)
-
-    # .seller panel [@user]
     @seller_group.command(name="panel")
-    async def seller_panel(self, ctx: commands.Context, member: discord.Member = None):
+    async def seller_panel(self, ctx, member: discord.Member = None):
         if ctx.author.id not in ADMIN_IDS:
             return
-        target = member or ctx.author
-        await self._send_seller_panel(ctx, target)
+        await self._send_panel(ctx, member or ctx.author)
 
-    # ── .myseller (self) ────────────────────────────────────────────────────────
+    # ── .myseller ────────────────────────────────────────────────────────────────
+
     @commands.command(name="myseller")
-    async def my_seller(self, ctx: commands.Context):
-        await self._send_seller_panel(ctx, ctx.author)
+    async def my_seller(self, ctx):
+        await self._send_panel(ctx, ctx.author)
 
-    # ── Helper send panel ───────────────────────────────────────────────────────
-    async def _send_seller_panel(self, ctx: commands.Context, member: discord.Member):
-        doc = await _get_seller(self.db, ctx.guild.id, member.id)
+    # ── Helper ───────────────────────────────────────────────────────────────────
+
+    async def _send_panel(self, ctx, member: discord.Member):
+        doc = _get_one(ctx.guild.id, member.id)
         if not doc:
-            await ctx.send(
-                f"❌ {member.mention} chưa được đăng ký làm seller.",
-                delete_after=10
-            )
-            return
-
-        embed = _build_seller_embed(member, doc, ctx.guild)
-        await ctx.send(embed=embed)
+            return await ctx.send(
+                f"❌ {member.mention} chưa được đăng ký làm seller.", delete_after=10)
+        await ctx.send(embed=_build_embed(member, doc, ctx.guild))
 
 
-# ── Setup ───────────────────────────────────────────────────────────────────────
-async def setup(bot: commands.Bot):
+async def setup(bot):
     await bot.add_cog(SellerCog(bot))
