@@ -1,5 +1,32 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.8.0] — 2026-06-22
+
+### ✨ Tính năng mới
+- `cogs/admin.py` — Nút "💰 Nhập giá" trong DM giờ **sống sót qua restart bot**: `bot.py` gọi `resume_pending_sold_views()` ở `on_ready`, đọc lại mọi đơn `pending_sold_price` còn tồn và đăng ký lại persistent view theo đúng `message_id` của từng DM (TuyTam và/hoặc Ruby)
+- `cogs/admin.py` — **Escalation 24h**: nếu sau 24h admin TuyTam chưa điền giá, bot tự động DM thêm cho `ADMIN_RUBY_ID` kèm nút nhập giá riêng. Nút bên DM TuyTam **không bị thu hồi** — TuyTam vẫn bấm được nếu online trễ
+- `cogs/admin.py` — Khi 1 trong 2 admin (TuyTam hoặc Ruby) điền giá xong: admin còn lại được DM báo "đơn đã được xử lý bởi ai — giá bao nhiêu"; nếu admin còn lại bấm nút sau đó, bot cũng hiển thị ngay thông tin đó thay vì báo lỗi chung
+- `core/data.py` — Mở rộng `pending_sold_price` thêm `tuytam_message_id`, `ruby_message_id`, `escalated`; thêm `get_all_pending_sold_price()`, `set_pending_sold_dm()`, `mark_pending_sold_escalated()`
+- `core/data.py` — Thêm `resolved_sold_price` + `mark_pending_sold_resolved()` / `get_resolved_sold_price()`: lưu lại đơn đã xử lý để trả lời chính xác khi admin còn lại bấm nút trễ
+
+---
+
+## [v4.7.0] — 2026-06-22
+
+### ✨ Tính năng mới
+- `cogs/admin.py` — `handle_sold()` (lệnh `sold`/`SOLD` trong kênh Stock) giờ tự **parse giá từ tên kênh** (vd: `✅𝟏𝟑𝟎𝐤-𝐧𝐨𝐧-𝟏𝐜𝐚𝐩𝐞` → `130000`, bỏ font Unicode + ✅/dấu trước số) và **ghi nhận thống kê doanh số cho seller** đã gõ lệnh — chỉ tính nếu seller có gói `.seller add` còn hạn (check qua `cogs/seller.is_active_seller`)
+- `cogs/admin.py` — Nếu không parse được giá từ tên kênh: bot vẫn chuyển kênh sang Sold như cũ, lưu `pending_sold_price` và **DM cho `ADMIN_TUYTAM_ID`** kèm nút "💰 Nhập giá" → mở Modal nhập tay (vd: `130k`, `1m2`, `1tr5`) → ghi nhận đúng seller, đúng kênh
+- `core/data.py` — Thêm `add_seller_sale()`, `get_seller_sales()`, `get_seller_sales_stats()`: lưu lịch sử sold-stock vào `seller_sales` (list), tính thống kê **24h + all-time** theo từng seller
+- `core/data.py` — Thêm `add_pending_sold_price()`, `get_pending_sold_price()`, `remove_pending_sold_price()`: lưu đơn đang chờ admin điền giá thủ công vào `pending_sold_price`
+- `core/data.py` — `parse_amount()` hỗ trợ thêm dạng `<số>m<1-chữ-số>` (vd: `1m2` = 1.200.000), tương tự `1tr5` đã có sẵn
+- `cogs/seller.py` — Thêm `is_active_seller(guild_id, user_id)`: kiểm tra seller có gói còn hạn hay không (dùng bởi `admin.py`)
+- `cogs/logger.py` — Báo cáo 8h sáng (`_send_daily_report`) thêm field **🏪 Doanh Số Seller (Sold-Stock)**: hiển thị top 10 seller theo doanh thu all-time, mỗi dòng có cả **24h** và **all-time** (số đơn + doanh thu)
+
+### 🔧 Thay đổi kỹ thuật
+- Nếu seller gõ `sold` nhưng KHÔNG có gói `.seller add` còn hạn → kênh vẫn được chuyển sang Sold như bình thường, nhưng **không** ghi nhận vào thống kê doanh số
+
+---
+
 ## [v4.5.0] — 2026-06-14
 
 ### 🐛 Sửa lỗi

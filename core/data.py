@@ -108,6 +108,9 @@ def _default_data() -> dict:
         "seller_qr":        {},        # {user_id: qr_path} — QR riêng của từng seller
         "seller_categories": {},       # {user_id: category_id} — category riêng của từng seller
         "log_channels":     {},        # {group: channel_id} — kênh log theo nhóm
+        "seller_sales":      [],       # [{user_id, amount, channel_name, channel_id, time}] — lịch sử sold-stock
+        "pending_sold_price": {},      # {channel_id: {seller_id, channel_name, old_name, guild_id, time, tuytam_message_id, ruby_message_id, escalated}}
+        "resolved_sold_price": {},     # {channel_id: {amount, resolved_by, old_name, time}} — đơn đã được admin xử lý
     }
 
 # ══════════════════════════════════════════
@@ -292,6 +295,132 @@ def remove_seller_category(user_id: int):
 
 def get_all_seller_categories() -> dict:
     return load_data().get("seller_categories", {})
+
+# ══════════════════════════════════════════
+# SELLER SOLD-STOCK SALES (.stock → sold qua "sold"/"SOLD")
+# Mỗi lần seller gõ "sold" thành công (seller hợp lệ + parse được giá)
+# sẽ ghi 1 record vào "seller_sales" (list). Thống kê 24h tính theo
+# timestamp, all-time là cộng dồn toàn bộ list.
+# ══════════════════════════════════════════
+def add_seller_sale(user_id: int, amount: int, channel_name: str, channel_id: int) -> dict:
+    """Ghi nhận 1 đơn sold cho seller. Trả về record vừa lưu."""
+    data = load_data()
+    data.setdefault("seller_sales", [])
+    record = {
+        "user_id":     user_id,
+        "amount":      amount,
+        "channel_name": channel_name,
+        "channel_id":  channel_id,
+        "time":        datetime.now(timezone.utc).isoformat(),
+    }
+    data["seller_sales"].append(record)
+    save_data(data)
+    return record
+
+def get_seller_sales() -> list:
+    """Trả về toàn bộ lịch sử sold-stock (mọi seller)."""
+    return load_data().get("seller_sales", [])
+
+def get_seller_sales_stats() -> dict:
+    """
+    Trả về {user_id_str: {"count_24h": int, "amount_24h": int,
+                            "count_all": int, "amount_all": int}}
+    Tính cho TẤT CẢ seller xuất hiện trong lịch sử seller_sales.
+    """
+    from datetime import timedelta
+    sales = get_seller_sales()
+    now   = datetime.now(timezone.utc)
+    since = now - timedelta(hours=24)
+
+    stats: dict = {}
+    for rec in sales:
+        uid = str(rec.get("user_id"))
+        amt = rec.get("amount", 0)
+        stats.setdefault(uid, {"count_24h": 0, "amount_24h": 0, "count_all": 0, "amount_all": 0})
+        stats[uid]["count_all"]  += 1
+        stats[uid]["amount_all"] += amt
+        try:
+            t = datetime.fromisoformat(rec.get("time", ""))
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            if t >= since:
+                stats[uid]["count_24h"]  += 1
+                stats[uid]["amount_24h"] += amt
+        except Exception:
+            continue
+    return stats
+
+# ── Pending sold price — chờ admin TuyTam/Ruby điền giá thủ công qua DM ──
+# {channel_id_str: {seller_id, channel_name, old_name, guild_id, time,
+#                    tuytam_message_id, ruby_message_id, escalated}}
+def add_pending_sold_price(channel_id: int, seller_id: int, channel_name: str, old_name: str, guild_id: int):
+    data = load_data()
+    data.setdefault("pending_sold_price", {})
+    data["pending_sold_price"][str(channel_id)] = {
+        "seller_id":         seller_id,
+        "channel_name":      channel_name,
+        "old_name":          old_name,
+        "guild_id":          guild_id,
+        "time":              datetime.now(timezone.utc).isoformat(),
+        "tuytam_message_id": None,
+        "ruby_message_id":   None,
+        "escalated":         False,
+    }
+    save_data(data)
+
+def get_pending_sold_price(channel_id: int) -> dict | None:
+    return load_data().get("pending_sold_price", {}).get(str(channel_id))
+
+def get_all_pending_sold_price() -> dict:
+    """Trả về toàn bộ pending {channel_id_str: doc} — dùng khi resume sau restart."""
+    return dict(load_data().get("pending_sold_price", {}))
+
+def set_pending_sold_dm(channel_id: int, *, tuytam_message_id: int = None, ruby_message_id: int = None):
+    """Lưu message_id của DM (TuyTam và/hoặc Ruby) để resume persistent view sau restart."""
+    data = load_data()
+    pending = data.setdefault("pending_sold_price", {})
+    doc = pending.get(str(channel_id))
+    if not doc:
+        return
+    if tuytam_message_id is not None:
+        doc["tuytam_message_id"] = tuytam_message_id
+    if ruby_message_id is not None:
+        doc["ruby_message_id"] = ruby_message_id
+    pending[str(channel_id)] = doc
+    save_data(data)
+
+def mark_pending_sold_escalated(channel_id: int):
+    data = load_data()
+    pending = data.setdefault("pending_sold_price", {})
+    doc = pending.get(str(channel_id))
+    if not doc:
+        return
+    doc["escalated"] = True
+    pending[str(channel_id)] = doc
+    save_data(data)
+
+def remove_pending_sold_price(channel_id: int):
+    data = load_data()
+    data.setdefault("pending_sold_price", {})
+    data["pending_sold_price"].pop(str(channel_id), None)
+    save_data(data)
+
+# ── Resolved sold price — lưu kết quả sau khi 1 admin đã điền giá ──
+# Cho phép admin còn lại (bấm nút trễ) biết đơn đã được ai xử lý + giá bao nhiêu.
+# {channel_id_str: {amount, resolved_by (user_id), old_name, time}} — tự dọn sau 7 ngày
+def mark_pending_sold_resolved(channel_id: int, amount: int, resolved_by: int, old_name: str):
+    data = load_data()
+    data.setdefault("resolved_sold_price", {})
+    data["resolved_sold_price"][str(channel_id)] = {
+        "amount":      amount,
+        "resolved_by": resolved_by,
+        "old_name":    old_name,
+        "time":        datetime.now(timezone.utc).isoformat(),
+    }
+    save_data(data)
+
+def get_resolved_sold_price(channel_id: int) -> dict | None:
+    return load_data().get("resolved_sold_price", {}).get(str(channel_id))
 
 async def get_ticket_number() -> str:
     """FIX: async + Lock đảm bảo không bao giờ tạo 2 ticket trùng số."""
@@ -514,9 +643,9 @@ def _uname_plain(user) -> str:
 def parse_amount(raw: str) -> int | None:
     import re as _re
     raw = raw.strip().lower().replace(",", ".").replace(" ", "")
-    m = _re.match(r"^(\d+)tr(\d)$", raw)   # chỉ 1 chữ số sau tr: 1tr5 = 1.500.000
+    m = _re.match(r"^(\d+)(tr|m)(\d)$", raw)   # chỉ 1 chữ số sau tr/m: 1tr5 / 1m2 = 1.500.000 / 1.200.000
     if m:
-        a, b = int(m.group(1)), int(m.group(2))
+        a, b = int(m.group(1)), int(m.group(3))
         return a * 1_000_000 + b * 100_000
     m = _re.match(r"^(\d+(?:\.\d+)?)(k|tr|m|đ)?$", raw)
     if not m: return None

@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.6.1"
+BOT_VERSION = "4.8.0"
 BOT_UPDATED = "2026-06-22"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
@@ -57,6 +57,7 @@ async def on_ready():
     from core.data import init_data_cache
     from cogs.ticket import TicketPanel, TicketButtons, sync_ticket_counter
     from cogs.giveaway import GiveawayView, GiveawayCog
+    from cogs.admin import resume_pending_sold_views
 
     await init_data_cache()
 
@@ -69,6 +70,9 @@ async def on_ready():
     bot.add_view(TicketPanel())
     bot.add_view(TicketButtons())
     bot.add_view(GiveawayView())
+
+    # Resume nút DM "Nhập giá" sold-stock (đơn pending chưa được admin xử lý)
+    await resume_pending_sold_views(bot)
 
     # Sync invite cache & ticket counter
     from cogs.invite import cache_invites
