@@ -47,6 +47,20 @@ def _delete_one(guild_id: int, user_id: int):
     guild_subs.pop(str(user_id), None)
     save_data(data)
 
+def is_active_seller(guild_id: int, user_id: int) -> bool:
+    """Trả về True nếu user có subscription còn hạn."""
+    doc = _get_one(guild_id, user_id)
+    if not doc:
+        return False
+    expires_str = doc.get("expires_at")
+    if not expires_str:
+        return False
+    try:
+        expires_at = datetime.datetime.fromisoformat(expires_str)
+        return expires_at > datetime.datetime.now(datetime.timezone.utc)
+    except Exception:
+        return False
+
 # ── Build embed ─────────────────────────────────────────────────────────────────
 
 def _build_embed(member: discord.Member, doc: dict, guild: discord.Guild) -> discord.Embed:
