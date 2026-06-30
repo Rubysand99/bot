@@ -80,6 +80,29 @@ def register_primary_ip(ip: str, user_id: int):
         _save_shared_ip(d)
 
 
+# vpn_users: user_id (str) → {ip, country, isp, ts}
+# lưu trong MongoDB qua key "_vpn_users" trong main doc
+async def _register_vpn(user_id: int, ip: str, country: str, isp: str):
+    """Đánh dấu user đã verify bằng VPN/Proxy — ghi atomic vào MongoDB."""
+    from core.data import _get_mongo
+    col, _ = _get_mongo()
+    try:
+        await col.update_one(
+            {"_id": "main"},
+            {"$set": {
+                f"_vpn_users.{user_id}": {
+                    "ip":      ip,
+                    "country": country,
+                    "isp":     isp,
+                    "ts":      datetime.now(timezone.utc).isoformat(),
+                }
+            }},
+            upsert=True,
+        )
+    except Exception as e:
+        print(f"[INVITE] ⚠️ Không lưu được _vpn_users: {e}")
+
+
 # ══════════════════════════════════════════
 # INVITE COUNTS HELPERS — MONTHLY + ALL-TIME
 # ══════════════════════════════════════════
@@ -898,6 +921,7 @@ class InviteCog(commands.Cog):
 
         # VPN log
         if is_vpn:
+            await _register_vpn(user_id, ip, country, isp)
             await send_log(self.bot, "INVITE_VERIFY", "Verify — phát hiện VPN/Proxy",
                 fields=[
                     ("👤 Thành viên", f"{member} (`{user_id}`)",     True),
@@ -1075,8 +1099,9 @@ class InviteCog(commands.Cog):
     @commands.command(name="backfillip")
     async def backfillip_cmd(self, ctx, limit: int = 2000):
         """
-        Admin: đọc lại lịch sử kênh log general, parse IP từ INVITE_VERIFY/INVITE_FAKE,
-        rồi backfill vào MongoDB _ip_records.
+        Admin: đọc lại lịch sử kênh log general, parse IP từ INVITE_VERIFY/INVITE_FAKE
+        (backfill _ip_records, _shared_ip) và parse luôn log "phát hiện VPN/Proxy"
+        (backfill _vpn_users) trong cùng 1 lượt quét.
         """
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin.")
@@ -1095,12 +1120,17 @@ class InviteCog(commands.Cog):
 
         status_msg = await ctx.reply(f"⏳ Đang quét {limit} message trong {log_channel.mention}...")
 
-        re_user2 = re.compile(r"\(`(\d{10,20})`\)")
-        re_ip    = re.compile(r"\|\|`([\d\.]+)`\|\|")
+        re_user = re.compile(r"\(`(\d{10,20})`\)")
+        re_ip   = re.compile(r"\|\|`([\d\.]+)`\|\|")
+        re_isp  = re.compile(r"\*\*📡 ISP:\*\*\s*([^·\n]+)")
+        re_geo  = re.compile(r"\*\*🌍 Quốc gia:\*\*\s*([^·\n]+)")
 
-        found   = 0
-        added   = 0
-        skipped = 0
+        found_ip   = 0
+        added_ip   = 0
+        skipped_ip = 0
+        found_vpn   = 0
+        added_vpn   = 0
+        skipped_vpn = 0
 
         col, _ = _get_mongo()
 
@@ -1109,20 +1139,16 @@ class InviteCog(commands.Cog):
             if "[INVITE_VERIFY]" not in content and "[INVITE_FAKE]" not in content:
                 continue
 
-            m_user = re_user2.search(content)
-            if not m_user:
-                continue
-            try:
-                user_id = int(m_user.group(1))
-            except ValueError:
+            m_user = re_user.search(content)
+            m_ip   = re_ip.search(content)
+            if not m_user or not m_ip:
                 continue
 
-            m_ip = re_ip.search(content)
-            if not m_ip:
-                continue
-            ip = m_ip.group(1)
+            user_id = int(m_user.group(1))
+            ip      = m_ip.group(1)
 
-            found += 1
+            # ── Backfill IP record ──
+            found_ip += 1
             ip_key = ip.replace(".", "_")
 
             result = await col.update_one(
@@ -1131,14 +1157,34 @@ class InviteCog(commands.Cog):
                 upsert=True,
             )
             if result.modified_count > 0:
-                added += 1
+                added_ip += 1
             else:
-                skipped += 1
+                skipped_ip += 1
 
             await col.update_one(
                 {"_id": "main", f"_shared_ip.{ip}": {"$exists": False}},
                 {"$set": {f"_shared_ip.{ip}": user_id}},
             )
+
+            # ── Backfill VPN record (nếu log này là log phát hiện VPN) ──
+            if "phát hiện VPN/Proxy" in content:
+                found_vpn += 1
+                m_isp = re_isp.search(content)
+                m_geo = re_geo.search(content)
+                isp     = m_isp.group(1).strip() if m_isp else "?"
+                country = m_geo.group(1).strip() if m_geo else "?"
+
+                vpn_result = await col.update_one(
+                    {"_id": "main", f"_vpn_users.{user_id}": {"$exists": False}},
+                    {"$set": {f"_vpn_users.{user_id}": {
+                        "ip": ip, "isp": isp, "country": country,
+                        "ts": msg.created_at.isoformat(),
+                    }}},
+                )
+                if vpn_result.modified_count > 0:
+                    added_vpn += 1
+                else:
+                    skipped_vpn += 1
 
         doc = await col.find_one({"_id": "main"}, {"_ip_records": 1})
         global _ip_records
@@ -1146,10 +1192,15 @@ class InviteCog(commands.Cog):
 
         await status_msg.edit(content=(
             f"✅ **Backfill hoàn tất**\n"
-            f"› Quét: **{limit}** message\n"
-            f"› Tìm thấy INVITE_VERIFY/FAKE: **{found}**\n"
-            f"› Ghi mới vào DB: **{added}** cặp (ip, user)\n"
-            f"› Đã có sẵn (bỏ qua): **{skipped}**\n\n"
+            f"› Quét: **{limit}** message\n\n"
+            f"**🌐 IP:**\n"
+            f"› Tìm thấy INVITE_VERIFY/FAKE: **{found_ip}**\n"
+            f"› Ghi mới vào DB: **{added_ip}** cặp (ip, user)\n"
+            f"› Đã có sẵn (bỏ qua): **{skipped_ip}**\n\n"
+            f"**🛡️ VPN:**\n"
+            f"› Tìm thấy log VPN: **{found_vpn}**\n"
+            f"› Ghi mới vào DB: **{added_vpn}** tài khoản\n"
+            f"› Đã có sẵn (bỏ qua): **{skipped_vpn}**\n\n"
             f"Dùng `.ipstats` để xem kết quả."
         ))
 
@@ -1224,57 +1275,89 @@ class InviteCog(commands.Cog):
         from core.data import _get_mongo
         col, _ = _get_mongo()
         try:
-            doc = await col.find_one({"_id": "main"}, {"_ip_records": 1, "_shared_ip": 1})
+            doc = await col.find_one({"_id": "main"}, {"_ip_records": 1, "_shared_ip": 1, "_vpn_users": 1})
         except Exception as e:
             return await ctx.reply(f"❌ Lỗi đọc MongoDB: `{e}`")
 
         ip_records_raw = (doc or {}).get("_ip_records", {})
         shared_ip_raw  = (doc or {}).get("_shared_ip", {})
+        vpn_users_raw  = (doc or {}).get("_vpn_users", {})
 
         dupes = {
             key.replace("_", "."): uids
             for key, uids in ip_records_raw.items()
             if len(uids) >= 2
         }
-        if not dupes:
-            return await ctx.reply("✅ Không có IP nào dùng chung từ 2 tài khoản trở lên.")
-
-        sorted_dupes = sorted(dupes.items(), key=lambda x: len(x[1]), reverse=True)
-
-        PAGE_SIZE = 5
-        pages     = [sorted_dupes[i:i+PAGE_SIZE] for i in range(0, len(sorted_dupes), PAGE_SIZE)]
-        total_ips = len(sorted_dupes)
-        total_acc = sum(len(uids) for uids in dupes.values())
 
         embeds = []
-        for page_idx, page in enumerate(pages):
-            embed = discord.Embed(
-                title     = f"🌐 IP dùng chung — {total_ips} IP · {total_acc} tài khoản",
-                color     = 0xE74C3C,
-                timestamp = datetime.now(timezone.utc),
-            )
-            if len(pages) > 1:
-                embed.set_author(name=f"Trang {page_idx+1}/{len(pages)}")
-            embed.set_footer(text="TuyTam Store  •  Chỉ admin thấy")
 
-            for ip_display, uids in page:
-                ip_key_dot   = ip_display
-                ip_key_under = ip_display.replace(".", "_")
-                primary_id   = shared_ip_raw.get(ip_key_dot) or shared_ip_raw.get(ip_key_under)
-                if primary_id is None and uids:
-                    primary_id = uids[0]
-                lines = []
-                for uid in uids:
-                    m        = ctx.guild.get_member(uid) if ctx.guild else None
-                    name     = str(m) if m else f"ID:{uid}"
-                    is_prim  = "✅" if uid == primary_id else "❌"
-                    lines.append(f"{is_prim} `{uid}` {name}")
-                embed.add_field(
-                    name   = f"||`{ip_display}`|| — {len(uids)} acc",
-                    value  = "\n".join(lines),
-                    inline = False,
+        if dupes:
+            sorted_dupes = sorted(dupes.items(), key=lambda x: len(x[1]), reverse=True)
+
+            PAGE_SIZE = 5
+            pages     = [sorted_dupes[i:i+PAGE_SIZE] for i in range(0, len(sorted_dupes), PAGE_SIZE)]
+            total_ips = len(sorted_dupes)
+            total_acc = sum(len(uids) for uids in dupes.values())
+
+            for page_idx, page in enumerate(pages):
+                embed = discord.Embed(
+                    title     = f"🌐 IP dùng chung — {total_ips} IP · {total_acc} tài khoản",
+                    color     = 0xE74C3C,
+                    timestamp = datetime.now(timezone.utc),
                 )
-            embeds.append(embed)
+                if len(pages) > 1:
+                    embed.set_author(name=f"Trang {page_idx+1}/{len(pages)}")
+                embed.set_footer(text="TuyTam Store  •  Chỉ admin thấy")
+
+                for ip_display, uids in page:
+                    ip_key_dot   = ip_display
+                    ip_key_under = ip_display.replace(".", "_")
+                    primary_id   = shared_ip_raw.get(ip_key_dot) or shared_ip_raw.get(ip_key_under)
+                    if primary_id is None and uids:
+                        primary_id = uids[0]
+                    lines = []
+                    for uid in uids:
+                        m        = ctx.guild.get_member(uid) if ctx.guild else None
+                        name     = str(m) if m else f"ID:{uid}"
+                        is_prim  = "✅" if uid == primary_id else "❌"
+                        lines.append(f"{is_prim} `{uid}` {name}")
+                    embed.add_field(
+                        name   = f"||`{ip_display}`|| — {len(uids)} acc",
+                        value  = "\n".join(lines),
+                        inline = False,
+                    )
+                embeds.append(embed)
+
+        # ── Danh sách tài khoản dùng VPN/Proxy ──
+        if vpn_users_raw:
+            vpn_items = sorted(vpn_users_raw.items(), key=lambda x: x[1].get("ts", ""), reverse=True)
+            VPN_PAGE_SIZE = 10
+            vpn_pages = [vpn_items[i:i+VPN_PAGE_SIZE] for i in range(0, len(vpn_items), VPN_PAGE_SIZE)]
+
+            for page_idx, page in enumerate(vpn_pages):
+                vembed = discord.Embed(
+                    title     = f"🛡️ Tài khoản dùng VPN/Proxy — {len(vpn_items)} tài khoản",
+                    color     = 0xF39C12,
+                    timestamp = datetime.now(timezone.utc),
+                )
+                if len(vpn_pages) > 1:
+                    vembed.set_author(name=f"Trang {page_idx+1}/{len(vpn_pages)}")
+                vembed.set_footer(text="TuyTam Store  •  Chỉ admin thấy")
+
+                lines = []
+                for uid_str, info in page:
+                    uid  = int(uid_str)
+                    m    = ctx.guild.get_member(uid) if ctx.guild else None
+                    name = str(m) if m else f"ID:{uid}"
+                    lines.append(
+                        f"`{uid}` **{name}** — ||`{info.get('ip','?')}`|| "
+                        f"({info.get('isp','?')}, {info.get('country','?')})"
+                    )
+                vembed.description = "\n".join(lines) or "*(trống)*"
+                embeds.append(vembed)
+
+        if not embeds:
+            return await ctx.reply("✅ Không có IP nào dùng chung, và không có tài khoản VPN nào được ghi nhận.")
 
         for e in embeds:
             await ctx.send(embed=e)
