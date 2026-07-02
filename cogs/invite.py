@@ -1110,9 +1110,9 @@ class InviteCog(commands.Cog):
         from core.data import _get_mongo
 
         from cogs.logger import get_log_channel
-        ch_id = get_log_channel("general")
+        ch_id = get_log_channel("invite")
         if not ch_id:
-            return await ctx.reply("❌ Chưa cài kênh log `general`. Dùng `.setlog` trước.")
+            return await ctx.reply("❌ Chưa cài kênh log `invite`. Dùng `.setlog` trước.")
 
         log_channel = self.bot.get_channel(ch_id) or await self.bot.fetch_channel(ch_id)
         if not log_channel:
