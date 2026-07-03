@@ -328,6 +328,21 @@ class SettingsView(View):
     @discord.ui.button(label="✅ Sold Category",    style=discord.ButtonStyle.secondary, row=3)
     async def sold_cat(self,  i, b): await self._send_category_select(i, "cfg_sold_category",  "Sold Category",  "Category chứa hàng đã bán")
 
+    @discord.ui.button(label="🪄 Relay Tin Admin (Ticket)", style=discord.ButtonStyle.secondary, row=4)
+    async def ticket_relay_toggle(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        data = load_data()
+        new_val = not data.get("cfg_ticket_relay", True)
+        save_cfg("cfg_ticket_relay", new_val)
+        status = "🟢 BẬT" if new_val else "🔴 TẮT"
+        await interaction.response.send_message(
+            f"⚙️ Đã **{status}** tính năng Relay Tin Admin trong Ticket.\n"
+            "*(Khi bật: tin admin gửi trong ticket sẽ bị xoá và gửi lại y hệt qua webhook, "
+            "giữ nguyên avatar admin, tên hiển thị thêm hậu tố \" bot\".)*",
+            ephemeral=True,
+        )
+
 
 def _build_ticket_roles_embed(guild: discord.Guild | None = None) -> discord.Embed:
     """Embed hiển thị config ticket → roles hiện tại."""

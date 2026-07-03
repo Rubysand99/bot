@@ -1017,6 +1017,76 @@ class TicketButtons(View):
 class TicketCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._relay_webhook_cache: dict[int, discord.Webhook] = {}
+
+    # ── Admin message relay (xoá tin admin gửi trong ticket, gửi lại y chang qua webhook) ──
+    async def _get_relay_webhook(self, channel: discord.TextChannel) -> discord.Webhook | None:
+        wh = self._relay_webhook_cache.get(channel.id)
+        if wh:
+            return wh
+        try:
+            hooks = await channel.webhooks()
+            wh = discord.utils.get(hooks, name="TuyTam-Relay")
+            if not wh:
+                wh = await channel.create_webhook(name="TuyTam-Relay", reason="Ticket admin message relay")
+            self._relay_webhook_cache[channel.id] = wh
+            return wh
+        except Exception as _e:
+            log.debug(f"[SILENT] {_e}")
+            return None
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        # Bỏ qua tin của bot / webhook (kể cả webhook relay của chính bot)
+        if message.author.bot or message.webhook_id:
+            return
+        if message.author.id not in ADMIN_IDS:
+            return
+        if not isinstance(message.channel, discord.TextChannel):
+            return
+        # Chỉ áp dụng trong kênh ticket (topic có dạng user_id||...)
+        if not (message.channel.topic and "|" in message.channel.topic):
+            return
+        # Bỏ qua nếu tính năng đang bị tắt qua .st
+        if not load_data().get("cfg_ticket_relay", True):
+            return
+        # Bỏ qua nếu đây là command (.close, .done, ...)
+        ctx = await self.bot.get_context(message)
+        if ctx.valid:
+            return
+        if not message.content and not message.attachments:
+            return
+
+        webhook = await self._get_relay_webhook(message.channel)
+        if not webhook:
+            return  # Không tạo được webhook (thiếu quyền Manage Webhooks...) → giữ nguyên tin gốc
+
+        files = []
+        try:
+            for att in message.attachments:
+                files.append(await att.to_file())
+        except Exception as _e:
+            log.debug(f"[SILENT] {_e}")
+
+        # Avatar giữ y hệt admin, tên hiển thị thêm hậu tố " bot"
+        relay_name = f"{message.author.display_name} bot"[:80]
+
+        try:
+            await webhook.send(
+                content=message.content or None,
+                username=relay_name,
+                avatar_url=message.author.display_avatar.url,
+                files=files,
+                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True),
+            )
+        except Exception as _e:
+            log.debug(f"[SILENT] relay send fail: {_e}")
+            return
+
+        try:
+            await message.delete()
+        except Exception as _e:
+            log.debug(f"[SILENT] {_e}")
 
     @commands.command()
     async def panel(self, ctx):
