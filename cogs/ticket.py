@@ -1068,14 +1068,15 @@ class TicketCog(commands.Cog):
         except Exception as _e:
             log.debug(f"[SILENT] {_e}")
 
-        # Avatar giữ y hệt admin, tên hiển thị thêm hậu tố " bot"
-        relay_name = f"{message.author.display_name} bot"[:80]
+        # Tên webhook cố định "Ruby bot", avatar luôn dùng avatar của chính bot
+        relay_name   = "Ruby bot"
+        relay_avatar = self.bot.user.display_avatar.url
 
         try:
             await webhook.send(
                 content=message.content or None,
                 username=relay_name,
-                avatar_url=message.author.display_avatar.url,
+                avatar_url=relay_avatar,
                 files=files,
                 allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True),
             )

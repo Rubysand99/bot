@@ -338,8 +338,8 @@ class SettingsView(View):
         status = "🟢 BẬT" if new_val else "🔴 TẮT"
         await interaction.response.send_message(
             f"⚙️ Đã **{status}** tính năng Relay Tin Admin trong Ticket.\n"
-            "*(Khi bật: tin admin gửi trong ticket sẽ bị xoá và gửi lại y hệt qua webhook, "
-            "giữ nguyên avatar admin, tên hiển thị thêm hậu tố \" bot\".)*",
+            "*(Khi bật: tin admin gửi trong ticket sẽ bị xoá và gửi lại y hệt qua webhook "
+            "tên **\"Ruby bot\"**, dùng avatar của chính bot.)*",
             ephemeral=True,
         )
 
