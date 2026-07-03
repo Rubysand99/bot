@@ -3,8 +3,8 @@
 ## [v4.9.0] — 2026-07-03
 
 ### ✨ Tính năng mới
-- `cogs/ticket.py` — **Relay Tin Admin trong Ticket**: khi admin (`ADMIN_IDS`) gửi tin nhắn thường (không phải lệnh) trong kênh ticket, bot tự động xoá tin gốc và gửi lại y hệt qua webhook `TuyTam-Relay` — giữ nguyên **avatar** admin, tên hiển thị thêm hậu tố `" bot"` (vd: `Ruby bot`). Hỗ trợ cả nội dung text lẫn file đính kèm
-- `cogs/admin_views.py` — Thêm nút **🪄 Relay Tin Admin (Ticket)** trong panel `.st` để **bật/tắt** tính năng trên (lưu qua `save_cfg("cfg_ticket_relay", bool)`, mặc định **BẬT**)
+- `cogs/ticket.py` — **Relay Tin Admin trong Ticket**: khi admin (`ADMIN_IDS`) gửi tin nhắn thường (không phải lệnh) trong kênh ticket, bot tự động xoá tin gốc và gửi lại y hệt qua webhook tên cố định **"Ruby bot"**, avatar dùng **avatar của chính bot**. Hỗ trợ cả nội dung text lẫn file đính kèm
+- `cogs/admin_views.py` — Panel `.st` thêm nút **🪄 Relay Tin Admin (Ticket)** để bật/tắt tính năng (`cfg_ticket_relay`, mặc định BẬT)
 
 ### 🔧 Thay đổi kỹ thuật
 - `cogs/ticket.py` — Webhook được tạo/lấy 1 lần cho mỗi kênh ticket rồi cache trong `TicketCog._relay_webhook_cache` (tránh gọi API tạo webhook lặp lại); tự bỏ qua nếu bot thiếu quyền `Manage Webhooks`
