@@ -25,7 +25,7 @@ from core.data import (
     ADMIN_IDS, get_cfg_log_rudy, get_log_channels, get_log_channel_by_group,
     set_log_channel_db, get_or_fetch_channel,
     get_monthly_stats, load_giveaways_data, fmt_amount,
-    load_data,
+    load_data, set_current_guild,
 )
 
 LOG_ICONS = {
@@ -203,6 +203,14 @@ async def send_log(
     """
     if bot is None:
         return
+
+    # FIX: set guild context TRƯỚC khi đọc config, vì send_log() thường được gọi từ các
+    # listener (on_member_join, on_command, on_guild_join, v.v.) chạy trên 1 asyncio Task
+    # RIÊNG (do discord.py tự dispatch), không thừa hưởng contextvar đã set ở before_invoke/
+    # on_message/interaction_check. Thiếu dòng này khiến get_log_channel()/get_cfg_log_rudy()
+    # bên dưới gọi load_data() mà KHÔNG có guild context → log bị rớt âm thầm.
+    if guild_id:
+        set_current_guild(guild_id)
 
     text = _fmt_log_text(event_type, title, fields, description, user)
 
@@ -422,6 +430,7 @@ class LoggerCog(commands.Cog):
                 ("🗂️ Nhóm",   label,                   True),
             ],
             user=ctx.author,
+            guild_id=ctx.guild.id,
         )
 
     @commands.command(name="setuplog")
@@ -562,6 +571,7 @@ class LoggerCog(commands.Cog):
                         + (f" ⚠️ Dùng fallback vì `{grp}` chưa cài riêng." if using_fallback else "")
                     ),
                     user=ctx.author,
+                    guild_id=ctx.guild.id,
                 )
                 tag = " *(fallback)*" if using_fallback else ""
                 status_lines.append(f"✅ **{label}** → {channel.mention}{tag}")
@@ -623,6 +633,7 @@ class LoggerCog(commands.Cog):
                 ("👥 Tổng member", str(member.guild.member_count), True),
             ],
             user=member,
+            guild_id=member.guild.id,
         )
 
     @commands.Cog.listener()
@@ -636,6 +647,7 @@ class LoggerCog(commands.Cog):
                 ("👥 Tổng member", str(member.guild.member_count), True),
             ],
             user=member,
+            guild_id=member.guild.id,
         )
 
     @commands.Cog.listener()
@@ -650,6 +662,7 @@ class LoggerCog(commands.Cog):
                     ("🏷️ Role",       role.name,                         True),
                 ],
                 user=after,
+                guild_id=after.guild.id,
             )
         for role in removed:
             await send_log(
@@ -659,6 +672,7 @@ class LoggerCog(commands.Cog):
                     ("🏷️ Role",       role.name,                         True),
                 ],
                 user=after,
+                guild_id=after.guild.id,
             )
 
     @commands.Cog.listener()
@@ -667,6 +681,8 @@ class LoggerCog(commands.Cog):
             return
         if ctx.command is None:
             return
+        if ctx.guild is None:
+            return  # Lệnh gõ trong DM — không có guild để tra kênh log
         await send_log(
             self.bot, "CMD_USED", f"Lệnh: .{ctx.command}",
             fields=[
@@ -675,12 +691,15 @@ class LoggerCog(commands.Cog):
                 ("📌 Kênh",        ctx.channel.mention,                        True),
             ],
             user=ctx.author,
+            guild_id=ctx.guild.id,
         )
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         if interaction.type != discord.InteractionType.application_command:
             return
+        if interaction.guild_id is None:
+            return  # Slash command trong DM — không có guild để tra kênh log
         cmd_name = getattr(interaction.command, "name", "unknown")
         opts = ""
         if interaction.data and interaction.data.get("options"):
@@ -696,6 +715,7 @@ class LoggerCog(commands.Cog):
                 ("📌 Kênh",       getattr(interaction.channel, "mention", "N/A"), True),
             ],
             user=interaction.user,
+            guild_id=interaction.guild_id,
         )
 
 

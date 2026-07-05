@@ -963,22 +963,27 @@ def remove_tempban(user_id: int) -> None:
 # Lưu _member_inviters và _pending_joins vào MongoDB
 # ══════════════════════════════════════════
 def get_member_inviters() -> dict:
-    """Trả về {str(member_id): {inviter_id, guild_id}}."""
-    return dict(load_data().get("_member_inviters", {}))
+    """Trả về {str(member_id): {inviter_id, guild_id}}.
+    FIX: dữ liệu này CHUNG cho mọi guild (mỗi entry tự lưu guild_id riêng, giống
+    _tempbans/_ip_records) — trước đây dùng nhầm load_data() (theo guild) khiến
+    cog_load() lỗi lúc khởi động (chưa có guild context) và dữ liệu bị tách lẻ
+    sai theo guild hiện tại thay vì dùng chung như thiết kế ban đầu."""
+    return dict(load_global_data().get("_member_inviters", {}))
 
 def save_member_inviters(inviters: dict) -> None:
-    data = load_data()
+    data = load_global_data()
     data["_member_inviters"] = {str(k): v for k, v in inviters.items()}
-    save_data(data)
+    save_global_data(data)
 
 def get_pending_joins() -> dict:
-    """Trả về {str(member_id): {inviter_id, guild_id, joined_at}}."""
-    return dict(load_data().get("_pending_joins", {}))
+    """Trả về {str(member_id): {inviter_id, guild_id, joined_at}}.
+    FIX: tương tự get_member_inviters() — data CHUNG cho mọi guild."""
+    return dict(load_global_data().get("_pending_joins", {}))
 
 def save_pending_joins(pending: dict) -> None:
-    data = load_data()
+    data = load_global_data()
     data["_pending_joins"] = {str(k): v for k, v in pending.items()}
-    save_data(data)
+    save_global_data(data)
 
 # ══════════════════════════════════════════
 # IP RECORDS PERSISTENCE — CHUNG cho mọi guild (cố ý, chống multi-acc né qua server khác)

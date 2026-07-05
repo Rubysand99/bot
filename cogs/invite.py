@@ -19,6 +19,7 @@ from discord.ext import commands
 from cogs.logger import send_log
 from core.data import (
     ADMIN_IDS, load_data, save_data, _uname, _uname_plain,
+    load_global_data, save_global_data,
     get_member_inviters, save_member_inviters,
     get_pending_joins, save_pending_joins,
     get_ip_records, save_ip_records,
@@ -60,13 +61,16 @@ _ip_records:      dict[str, list[int]]      = {}   # ip → [user_id, ...]  (per
 
 # shared_ip: ip → first_verified_user_id (tài khoản đầu tiên verify trên IP đó được ưu tiên giveaway)
 # lưu trong MongoDB qua key "_shared_ip" trong main doc
+# FIX: dùng load_global_data()/save_global_data() thay vì load_data()/save_data() —
+# IP không thuộc về guild nào cụ thể (giống _ip_records/_tempbans), dùng nhầm hàm theo-guild
+# trước đây khiến dữ liệu bị tách lẻ sai theo guild hiện tại thay vì dùng chung.
 def _get_shared_ip() -> dict:
-    return load_data().get("_shared_ip", {})
+    return load_global_data().get("_shared_ip", {})
 
 def _save_shared_ip(data: dict):
-    d = load_data()
+    d = load_global_data()
     d["_shared_ip"] = data
-    save_data(d)
+    save_global_data(d)
 
 def get_primary_user_for_ip(ip: str) -> int | None:
     """Trả về user_id đầu tiên verify trên IP này (được phép join giveaway)."""
@@ -261,6 +265,7 @@ class InviteCog(commands.Cog):
                 ("👑 Owner",   str(guild.owner) if guild.owner else "?",        True),
                 ("👥 Members", str(guild.member_count),                         True),
             ],
+            guild_id=guild.id,
         )
 
     async def _ensure_roles(self, guild: discord.Guild):
@@ -385,6 +390,7 @@ class InviteCog(commands.Cog):
                     ("⚙️ Admin",   str(ctx.author),             True),
                     ("📌 Method",  "Force (không qua link)",    True),
                 ],
+                guild_id=guild.id,
             )
             return
 
@@ -483,6 +489,7 @@ class InviteCog(commands.Cog):
                     ("🆔 Guild ID", str(gid),         True),
                     ("⚙️ Admin",    str(ctx.author),   True),
                 ],
+                guild_id=ctx.guild.id,
             )
         except discord.HTTPException as e:
             await ctx.reply(f"❌ Không rời được: `{e}`")
@@ -659,7 +666,8 @@ class InviteCog(commands.Cog):
                 fields=[
                     ("👤 Admin", str(ctx.author), True),
                     ("📅 Tháng", month_label,     True),
-                ])
+                ],
+                guild_id=ctx.guild.id)
             return
 
         if not member and arg_clean:
@@ -685,7 +693,8 @@ class InviteCog(commands.Cog):
                     ("👤 Admin",  str(ctx.author), True),
                     ("🎯 Target", str(member),     True),
                     ("📅 Tháng",  month_label,     True),
-                ])
+                ],
+                guild_id=ctx.guild.id)
         else:
             await ctx.reply(
                 "❌ Dùng:\n"
@@ -777,7 +786,8 @@ class InviteCog(commands.Cog):
                     ("👤 Admin",  str(ctx.author), True),
                     ("🎯 Target", str(member),     True),
                     ("🗂️ Scope",  "All-time",      True),
-                ])
+                ],
+                guild_id=ctx.guild.id)
         else:
             _save_alltime_counts({})
             await confirm_msg.edit(
@@ -791,7 +801,8 @@ class InviteCog(commands.Cog):
                 fields=[
                     ("👤 Admin", str(ctx.author), True),
                     ("🗂️ Scope", "All-time",      True),
-                ])
+                ],
+                guild_id=ctx.guild.id)
 
     # ── Events ──
 
@@ -860,6 +871,7 @@ class InviteCog(commands.Cog):
                 ("🔗 Invite code", f"`{invite_code}`" if invite_code else "Không rõ", True),
                 ("📅 Tạo acc",     f"<t:{int(member.created_at.timestamp())}:R>", True),
             ],
+            guild_id=member.guild.id,
         )
 
         # Gửi DM link verify
@@ -895,6 +907,7 @@ class InviteCog(commands.Cog):
                     ("👤 Thành viên", f"{member} (`{member.id}`)", True),
                     ("⚠️ Lý do",      "User đã tắt DM",           True),
                 ],
+                guild_id=member.guild.id,
             )
             VERIFY_CALLBACKS.pop(token, None)
 
@@ -906,6 +919,7 @@ class InviteCog(commands.Cog):
                         ("👤 Thành viên", f"{member} (`{member.id}`)", True),
                         ("⏱️ Trạng thái", "Timeout 10 phút",           True),
                     ],
+                    guild_id=member.guild.id,
                 )
 
         asyncio.create_task(_timeout())
@@ -930,6 +944,7 @@ class InviteCog(commands.Cog):
                     ("🌍 Quốc gia",   country,                       True),
                     ("⚠️ VPN",        "✅ Phát hiện",                True),
                 ],
+                guild_id=member.guild.id,
             )
 
         # ── Kiểm tra tuổi tài khoản (phải tạo ít nhất 1 ngày trước) ──
@@ -1004,6 +1019,7 @@ class InviteCog(commands.Cog):
                     ("📡 ISP",           isp,                                                                True),
                     ("🌍 Quốc gia",      country,                                                            True),
                 ],
+                guild_id=member.guild.id,
             )
         elif is_fake:
             # Đánh dấu fake nhưng vẫn cho vào — đã gán VERIFY ở trên
@@ -1052,6 +1068,7 @@ class InviteCog(commands.Cog):
                     ("📡 ISP",       isp,                                                                True),
                     ("🌍 Quốc gia",  country,                                                            True),
                 ],
+                guild_id=member.guild.id,
             )
         else:
             # ── Hợp lệ hoàn toàn: -1 unverify, +1 verify ──
@@ -1066,6 +1083,7 @@ class InviteCog(commands.Cog):
                     ("📡 ISP",        isp,                       True),
                     ("✅ Trạng thái", "Hợp lệ",                  True),
                 ],
+                guild_id=member.guild.id,
             )
 
     @commands.Cog.listener()
@@ -1094,6 +1112,7 @@ class InviteCog(commands.Cog):
                     ("👤 Thành viên", f"{member} (`{member.id}`)",                                              True),
                     ("📨 Được mời bởi", str(inviter_m) if inviter_m else f"ID:{inv_info['inviter_id']}",        True),
                 ],
+                guild_id=member.guild.id,
             )
 
     @commands.command(name="backfillip")
@@ -1402,6 +1421,7 @@ class InviteCog(commands.Cog):
                 ("📡 ISP",        "Test ISP",                   True),
                 ("🌍 Quốc gia",   "Vietnam",                    True),
             ],
+            guild_id=ctx.guild.id,
         )
 
         await send_log(self.bot, "INVITE_FAKE", "⚠️ IP trùng — đã verify nhưng bị hạn chế giveaway",
@@ -1414,6 +1434,7 @@ class InviteCog(commands.Cog):
                 ("📡 ISP",      "Test ISP",                                        True),
                 ("🌍 Quốc gia", "Vietnam",                                         True),
             ],
+            guild_id=ctx.guild.id,
         )
 
         await ctx.reply(

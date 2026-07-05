@@ -948,7 +948,8 @@ async def handle_sold(bot, message: discord.Message):
         )
         await message.add_reaction("✅")
         await send_log(bot, "INFO", f"Kênh sold: `{old_name}` → `{new_name}`",
-            fields=[("Seller", message.author.mention, True), ("Kênh mới", f"<#{channel.id}>", True), ("Category", sold_category.name, True)])
+            fields=[("Seller", message.author.mention, True), ("Kênh mới", f"<#{channel.id}>", True), ("Category", sold_category.name, True)],
+            guild_id=message.guild.id)
     except discord.Forbidden:
         await message.add_reaction("⚠️")
         return
@@ -1032,6 +1033,7 @@ class ShopOrdersToggleButton(discord.ui.Button):
             interaction.client, "SETTINGS", f"Shop Orders (thử nghiệm) → {status_text}",
             fields=[("👤 Admin", f"{interaction.user}", True)],
             user=interaction.user,
+            guild_id=interaction.guild_id,
         )
 
 
