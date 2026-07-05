@@ -10,6 +10,7 @@ import asyncio
 from datetime import datetime, timezone
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
@@ -25,7 +26,36 @@ if not TOKEN:
     raise RuntimeError("❌ Thiếu biến môi trường TOKEN!")
 
 intents = discord.Intents.all()
-bot     = commands.Bot(command_prefix=".", intents=intents, help_command=None)
+
+
+class GuildContextTree(app_commands.CommandTree):
+    """CommandTree tùy chỉnh — tự set guild context (contextvar ở core/data.py) TRƯỚC khi
+    chạy bất kỳ slash command nào, để load_data()/save_data() thao tác đúng document
+    của guild đang gõ lệnh (thay vì lẫn giữa 2 server)."""
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        from core.data import set_current_guild
+        if interaction.guild_id:
+            set_current_guild(interaction.guild_id)
+        return True
+
+
+bot = commands.Bot(command_prefix=".", intents=intents, help_command=None, tree_cls=GuildContextTree)
+
+@bot.before_invoke
+async def _set_guild_context_prefix(ctx: commands.Context):
+    """Tương tự GuildContextTree nhưng cho lệnh gõ chữ (.command) — chạy TRƯỚC mọi lệnh prefix."""
+    from core.data import set_current_guild
+    if ctx.guild:
+        set_current_guild(ctx.guild.id)
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    """Bot vừa được mời vào 1 server mới — load cache riêng cho guild đó ngay,
+    không cần đợi bot restart mới hoạt động đúng."""
+    from core.data import ensure_guild_loaded, set_current_guild
+    await ensure_guild_loaded(guild.id)
+    set_current_guild(guild.id)
+    print(f"[BOT] ✅ Đã tham gia guild mới: {guild.name} ({guild.id})")
 
 # ══════════════════════════════════════════
 # LOAD COGS
@@ -54,14 +84,14 @@ async def load_cogs():
 # ══════════════════════════════════════════
 @bot.event
 async def on_ready():
-    from core.data import init_data_cache
+    from core.data import init_data_cache, set_current_guild
     from cogs.ticket import TicketPanel, TicketButtons, sync_ticket_counter
     from cogs.giveaway import GiveawayView, GiveawayCog
     from cogs.admin import resume_pending_sold_views
 
-    await init_data_cache()
+    await init_data_cache(bot)
 
-    # Resume giveaways
+    # Resume giveaways (không cần guild context — giveaway tách theo message_id, xem core/data.py)
     gw_cog = bot.cogs.get("GiveawayCog")
     if gw_cog:
         await gw_cog.resume_active_giveaways()
@@ -72,11 +102,14 @@ async def on_ready():
     bot.add_view(GiveawayView())
 
     # Resume nút DM "Nhập giá" sold-stock (đơn pending chưa được admin xử lý)
+    # Hàm này tự loop qua từng guild bên trong (vì pending_sold_price giờ tách theo guild).
     await resume_pending_sold_views(bot)
 
-    # Sync invite cache & ticket counter
+    # Sync invite cache & ticket counter — set context TRƯỚC mỗi guild vì cache_invites()/
+    # sync_ticket_counter() đều gọi load_data()/save_data() bên trong.
     from cogs.invite import cache_invites
     for guild in bot.guilds:
+        set_current_guild(guild.id)
         await cache_invites(guild)
         await sync_ticket_counter(bot, guild)
 
@@ -162,6 +195,12 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
+    # Set guild context NGAY ĐẦU — mọi hàm gọi bên dưới (process_commands, handle_sold,
+    # handle_ai_message, legit/vouch) đều nằm trong cùng 1 task nên sẽ tự động thấy đúng guild.
+    if message.guild:
+        from core.data import set_current_guild
+        set_current_guild(message.guild.id)
+
     await bot.process_commands(message)
 
     # Auto sold — stock → sold category
@@ -229,58 +268,60 @@ async def _handle_vouch(message: discord.Message):
 BACKFILL_LIMIT = 25  # Số tin nhắn gần nhất cần quét
 
 async def _backfill_legit():
-    """Sau khi bot online, quét 25 tin nhắn gần nhất trong kênh legit.
+    """Sau khi bot online, quét 25 tin nhắn gần nhất trong kênh legit CỦA TỪNG GUILD.
     Tin nào khớp +1legit mà chưa có reaction ✅ từ bot → thả reaction và đổi tên kênh +1.
     Fetch lại tên kênh sau mỗi lần edit để tránh số đếm bị sai."""
     await asyncio.sleep(3)  # Chờ cache sẵn sàng
-    from core.data import get_cfg_legit_channel, get_or_fetch_channel
+    from core.data import get_cfg_legit_channel, get_or_fetch_channel, set_current_guild
     IGNORED = {628400349979344919}
 
-    legit_ch_id = get_cfg_legit_channel()
-    if not legit_ch_id:
-        print("[BACKFILL] ⚠️ Chưa cài legit channel, bỏ qua.")
-        return
+    for guild in bot.guilds:
+        set_current_guild(guild.id)
+        legit_ch_id = get_cfg_legit_channel()
+        if not legit_ch_id:
+            print(f"[BACKFILL] ⚠️ Guild {guild.id} chưa cài legit channel, bỏ qua.")
+            continue
 
-    channel = await get_or_fetch_channel(bot, legit_ch_id)
-    if not channel:
-        print(f"[BACKFILL] ⚠️ Không tìm thấy channel {legit_ch_id}")
-        return
+        channel = await get_or_fetch_channel(bot, legit_ch_id)
+        if not channel:
+            print(f"[BACKFILL] ⚠️ Guild {guild.id}: không tìm thấy channel {legit_ch_id}")
+            continue
 
-    fixed = 0
-    try:
-        msgs = []
-        async for msg in channel.history(limit=BACKFILL_LIMIT):
-            msgs.append(msg)
-        msgs.reverse()  # cũ → mới
+        fixed = 0
+        try:
+            msgs = []
+            async for msg in channel.history(limit=BACKFILL_LIMIT):
+                msgs.append(msg)
+            msgs.reverse()  # cũ → mới
 
-        for msg in msgs:
-            if msg.author.bot: continue
-            if msg.author.id in IGNORED: continue
-            if not _re.match(r"^\+1\s*legit\b", msg.content.strip(), _re.IGNORECASE): continue
+            for msg in msgs:
+                if msg.author.bot: continue
+                if msg.author.id in IGNORED: continue
+                if not _re.match(r"^\+1\s*legit\b", msg.content.strip(), _re.IGNORECASE): continue
 
-            already = any(r.emoji == "✅" and r.me for r in msg.reactions)
-            if not already:
-                try:
-                    await msg.add_reaction("✅")
-                except Exception as e:
-                    print(f"[BACKFILL] ❌ Không thả được reaction msg {msg.id}: {e}")
-                # Đổi tên kênh +1, fetch lại channel để lấy tên mới nhất
-                try:
-                    channel = await channel.guild.fetch_channel(channel.id)  # refresh
-                    name = channel.name
-                    match = _re.search(r"-(\d+)$", name)
-                    new_num = (int(match.group(1)) + 1) if match else 1
-                    base = name[:match.start()] if match else name
-                    await channel.edit(name=f"{base}-{new_num}", reason=f"+1 legit backfill bởi {msg.author}")
-                    fixed += 1
-                    print(f"[BACKFILL] ✅ {msg.id} — kênh đổi thành {base}-{new_num}")
-                except Exception as e:
-                    print(f"[BACKFILL] ❌ Không đổi được tên kênh: {e}")
-    except Exception as e:
-        print(f"[BACKFILL] ❌ Lỗi khi quét legit channel: {e}")
-        return
+                already = any(r.emoji == "✅" and r.me for r in msg.reactions)
+                if not already:
+                    try:
+                        await msg.add_reaction("✅")
+                    except Exception as e:
+                        print(f"[BACKFILL] ❌ Không thả được reaction msg {msg.id}: {e}")
+                    # Đổi tên kênh +1, fetch lại channel để lấy tên mới nhất
+                    try:
+                        channel = await channel.guild.fetch_channel(channel.id)  # refresh
+                        name = channel.name
+                        match = _re.search(r"-(\d+)$", name)
+                        new_num = (int(match.group(1)) + 1) if match else 1
+                        base = name[:match.start()] if match else name
+                        await channel.edit(name=f"{base}-{new_num}", reason=f"+1 legit backfill bởi {msg.author}")
+                        fixed += 1
+                        print(f"[BACKFILL] ✅ {msg.id} — kênh đổi thành {base}-{new_num}")
+                    except Exception as e:
+                        print(f"[BACKFILL] ❌ Không đổi được tên kênh: {e}")
+        except Exception as e:
+            print(f"[BACKFILL] ❌ Guild {guild.id}: lỗi khi quét legit channel: {e}")
+            continue
 
-    print(f"[BACKFILL] ✅ Hoàn tất — đã xử lý {fixed} tin nhắn bị bỏ sót.")
+        print(f"[BACKFILL] ✅ Guild {guild.id} hoàn tất — đã xử lý {fixed} tin nhắn bị bỏ sót.")
 
 
 # ══════════════════════════════════════════

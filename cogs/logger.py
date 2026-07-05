@@ -237,34 +237,39 @@ async def send_log(
 class LoggerCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self._last_report_date: str | None = None  # "YYYY-MM-DD" — tránh gửi 2 lần
+        self._last_report_date: dict[int, str] = {}  # {guild_id: "YYYY-MM-DD"} — tránh gửi 2 lần
         self.daily_report_task.start()
 
     def cog_unload(self):
         self.daily_report_task.cancel()
 
     # ══════════════════════════════════════════
-    # BÁO CÁO HÀNG NGÀY 8H SÁNG
+    # BÁO CÁO HÀNG NGÀY 8H SÁNG — cho TỪNG GUILD
     # ══════════════════════════════════════════
     @tasks.loop(hours=1)
     async def daily_report_task(self):
-        """Kiểm tra mỗi giờ, khi đúng 8h sáng UTC+7 (= 01:00 UTC) thì gửi báo cáo."""
+        """Kiểm tra mỗi giờ, khi đúng 8h sáng UTC+7 (= 01:00 UTC) thì gửi báo cáo,
+        lặp riêng cho từng guild (mỗi server có ticket_history/kênh log riêng)."""
         now = datetime.now(timezone.utc)
         # UTC+7 = UTC + 7h → 8h sáng UTC+7 = 01:00 UTC
         if now.hour != 1:
             return
         today_str = now.strftime("%Y-%m-%d")
-        if self._last_report_date == today_str:
-            return
-        # Check MongoDB phòng bot restart trong giờ 01:xx gửi lại
-        data = load_data()
-        if data.get("_daily_report_date") == today_str:
-            self._last_report_date = today_str
-            return
-        from core.data import save_cfg
-        save_cfg("_daily_report_date", today_str)
-        self._last_report_date = today_str
-        await self._send_daily_report()
+
+        from core.data import set_current_guild, save_cfg
+        for guild in self.bot.guilds:
+            set_current_guild(guild.id)  # task nền không có context tự nhiên như lệnh/nút bấm
+
+            if self._last_report_date.get(guild.id) == today_str:
+                continue
+            # Check MongoDB phòng bot restart trong giờ 01:xx gửi lại
+            data = load_data()
+            if data.get("_daily_report_date") == today_str:
+                self._last_report_date[guild.id] = today_str
+                continue
+            save_cfg("_daily_report_date", today_str)
+            self._last_report_date[guild.id] = today_str
+            await self._send_daily_report()
 
     @daily_report_task.before_loop
     async def before_daily_report(self):

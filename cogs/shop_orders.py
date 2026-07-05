@@ -27,6 +27,7 @@ from core.data import (
     get_cfg_shop_orders_enabled,
     get_shop_orders_config, save_shop_orders_config,
     get_cfg_queue_channel, save_cfg_queue_channel,
+    GuildContextView,
 )
 from cogs.logger import send_log
 
@@ -98,7 +99,7 @@ async def send_to_queue(bot, buyer: discord.abc.User, ticket_channel: discord.ab
     await queue_channel.send(embed=embed, view=QueueOrderView())
 
 
-class QueueOrderView(discord.ui.View):
+class QueueOrderView(GuildContextView):
     """Persistent view — không gắn order_code, chỉ sửa trực tiếp embed của message được bấm."""
 
     def __init__(self):

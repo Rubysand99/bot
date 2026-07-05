@@ -11,11 +11,12 @@ import discord
 from cogs.logger import send_log
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import View, Button, Modal, TextInput, Select
+from discord.ui import Button, TextInput, Select
 
 from core.data import (
     ADMIN_IDS, load_giveaways_data, save_giveaways_data,
     _uname, _uname_plain, get_or_fetch_channel,
+    GuildContextView as View, GuildContextModal as Modal,
 )
 
 # ── State in-memory ──

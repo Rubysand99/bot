@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
-from discord.ui import View, Button, Modal, TextInput, Select
+from discord.ui import Button, TextInput, Select
 
 from core.data import (
     ADMIN_IDS, TRANSCRIPT_CHANNEL_ID,
@@ -32,6 +32,7 @@ from core.data import (
     BUILDER_BASE_ROLE_ID as _BUILDER_ROLE_ID,
     get_ticket_role_id, set_ticket_role_id, get_all_ticket_role_ids,
     get_ticket_role_ids,
+    GuildContextView as View, GuildContextModal as Modal,
 )
 from cogs.logger import send_log
 

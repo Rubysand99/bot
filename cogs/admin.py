@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import discord
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import View, Button, Modal, TextInput, Select
+from discord.ui import Button, TextInput, Select
 
 from cogs.logger import send_log
 from core.data import (
@@ -30,6 +30,7 @@ from core.data import (
     remove_pending_sold_price, set_pending_sold_dm, mark_pending_sold_escalated,
     mark_pending_sold_resolved, get_resolved_sold_price,
     get_cfg_shop_orders_enabled, set_cfg_shop_orders_enabled,
+    GuildContextView as View, GuildContextModal as Modal,
 )
 from cogs.seller import is_active_seller
 
@@ -852,36 +853,40 @@ async def _escalate_pending_sold(bot, channel_id: int):
 
 async def resume_pending_sold_views(bot):
     """Gọi từ bot.py on_ready — đăng ký lại persistent view cho mọi đơn pending còn tồn,
-    và lên lịch escalate đúng theo thời gian còn lại (hoặc escalate ngay nếu đã quá 24h)."""
-    pending_all = get_all_pending_sold_price()
-    for channel_id_str, pending in pending_all.items():
-        channel_id = int(channel_id_str)
+    và lên lịch escalate đúng theo thời gian còn lại (hoặc escalate ngay nếu đã quá 24h).
+    Lặp qua từng guild vì pending_sold_price giờ lưu riêng theo guild (multi-guild)."""
+    from core.data import set_current_guild
+    for guild in bot.guilds:
+        set_current_guild(guild.id)
+        pending_all = get_all_pending_sold_price()
+        for channel_id_str, pending in pending_all.items():
+            channel_id = int(channel_id_str)
 
-        tuytam_mid = pending.get("tuytam_message_id")
-        if tuytam_mid:
-            bot.add_view(_SoldPriceView(channel_id), message_id=tuytam_mid)
+            tuytam_mid = pending.get("tuytam_message_id")
+            if tuytam_mid:
+                bot.add_view(_SoldPriceView(channel_id), message_id=tuytam_mid)
 
-        ruby_mid = pending.get("ruby_message_id")
-        if ruby_mid:
-            bot.add_view(_SoldPriceView(channel_id), message_id=ruby_mid)
+            ruby_mid = pending.get("ruby_message_id")
+            if ruby_mid:
+                bot.add_view(_SoldPriceView(channel_id), message_id=ruby_mid)
 
-        if pending.get("escalated"):
-            continue  # Đã escalate trước khi restart, không cần lên lịch lại
+            if pending.get("escalated"):
+                continue  # Đã escalate trước khi restart, không cần lên lịch lại
 
-        try:
-            created_at = datetime.fromisoformat(pending["time"])
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
-        except Exception:
-            created_at = datetime.now(timezone.utc)
+            try:
+                created_at = datetime.fromisoformat(pending["time"])
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+            except Exception:
+                created_at = datetime.now(timezone.utc)
 
-        elapsed   = (datetime.now(timezone.utc) - created_at).total_seconds()
-        remaining = SOLD_ESCALATE_AFTER_SECONDS - elapsed
+            elapsed   = (datetime.now(timezone.utc) - created_at).total_seconds()
+            remaining = SOLD_ESCALATE_AFTER_SECONDS - elapsed
 
-        if remaining <= 0:
-            asyncio.create_task(_escalate_pending_sold_now(bot, channel_id))
-        else:
-            asyncio.create_task(_escalate_pending_sold_after(bot, channel_id, remaining))
+            if remaining <= 0:
+                asyncio.create_task(_escalate_pending_sold_now(bot, channel_id))
+            else:
+                asyncio.create_task(_escalate_pending_sold_after(bot, channel_id, remaining))
 
 
 async def _escalate_pending_sold_now(bot, channel_id: int):

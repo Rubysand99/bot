@@ -16,7 +16,7 @@ import datetime
 import discord
 from discord.ext import commands, tasks
 
-from core.data import ADMIN_IDS, load_data, save_data, get_or_fetch_channel
+from core.data import ADMIN_IDS, load_data, save_data, get_or_fetch_channel, set_current_guild
 from cogs.logger import send_log
 
 COLOR_OK      = 0x57F287
@@ -141,6 +141,7 @@ class SellerCog(commands.Cog, name="Seller"):
         warn_threshold = now + datetime.timedelta(days=3)
 
         for guild in self.bot.guilds:
+            set_current_guild(guild.id)  # task nền không có context tự nhiên như lệnh/nút bấm
             subs = _get_all(guild.id)
             for uid_str, doc in subs.items():
                 expires_str = doc.get("expires_at")

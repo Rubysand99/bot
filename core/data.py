@@ -10,14 +10,67 @@ v3.6.3 fixes:
 import os
 import asyncio
 import logging
+import contextvars
 from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorClient
+import discord
 
 log = logging.getLogger("data")
 
 # ══════════════════════════════════════════
+# MULTI-GUILD SUPPORT (thêm khi mở rộng ra server thứ 2)
+# ══════════════════════════════════════════
+# Guild ID của server chính (TuyTam Community) — dùng để migrate 1 lần dữ liệu
+# từ document "main" cũ (single-guild) sang document "guild_<id>" (multi-guild).
+LEGACY_MAIN_GUILD_ID = 1464407860640219189
+
+# ContextVar giữ guild_id đang được xử lý trong task/coroutine hiện tại.
+# Được set tự động ở bot.py (before_invoke + CommandTree.interaction_check + on_message)
+# và ở GuildContextView/GuildContextModal bên dưới (cho các nút bấm/modal).
+_current_guild_id: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "current_guild_id", default=None
+)
+
+def set_current_guild(guild_id: int | None):
+    """Set guild đang xử lý cho task hiện tại. Trả về token để reset (không bắt buộc dùng)."""
+    return _current_guild_id.set(guild_id)
+
+def reset_current_guild(token) -> None:
+    try:
+        _current_guild_id.reset(token)
+    except Exception:
+        pass
+
+def get_current_guild_id() -> int | None:
+    return _current_guild_id.get()
+
+
+class GuildContextView(discord.ui.View):
+    """Thay thế discord.ui.View — tự set guild context trước khi chạy callback của bất kỳ
+    nút/select nào bên trong, để load_data()/save_data() thao tác đúng document của guild đó.
+    Dùng: từ discord.ui import Button, Select  (KHÔNG import View)
+          from core.data import GuildContextView as View
+    """
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild_id:
+            set_current_guild(interaction.guild_id)
+        return True
+
+
+class GuildContextModal(discord.ui.Modal):
+    """Tương tự GuildContextView nhưng cho Modal."""
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild_id:
+            set_current_guild(interaction.guild_id)
+        return True
+
+
+# ══════════════════════════════════════════
 # CONSTANTS
 # ══════════════════════════════════════════
+# ⚠️ Các ID dưới đây là fallback mặc định — CHỈ đúng cho server chính (Tuytam Community).
+# Server thứ 2 (hoặc bất kỳ guild mới nào) PHẢI tự cấu hình lại qua các lệnh .set*/.st,
+# nếu không các hàm get_cfg_* sẽ trả về ID này (không tồn tại ở guild khác) → coi như "chưa cài".
 LOG_CHANNEL           = 1482234024868053083
 TICKET_CATEGORY_ID    = 1464426174611456195
 SUPPORT_ROLE_ID       = 1474572393908404305
@@ -77,11 +130,11 @@ def _get_mongo():
     return _col_data, _col_giveaway
 
 # ══════════════════════════════════════════
-# DEFAULT DATA
+# DEFAULT DATA (theo từng guild)
 # ══════════════════════════════════════════
-def _default_data() -> dict:
+def _default_data(guild_id: int) -> dict:
     return {
-        "_id": "main",
+        "_id": f"guild_{guild_id}",
         "ticket": 0,
         "panel_channel_id": None,
         "qr_path": None,
@@ -113,17 +166,32 @@ def _default_data() -> dict:
         "resolved_sold_price": {},     # {channel_id: {amount, resolved_by, old_name, time}} — đơn đã được admin xử lý
     }
 
+def _default_data_global() -> dict:
+    """Data KHÔNG tách theo guild — chống multi-acc/VPN (_ip_records) và tempban
+    được cố ý dùng chung cho mọi server để không ai né được bằng cách nhảy server."""
+    return {
+        "_id": "main",
+        "_tempbans": {},
+        "_ip_records": {},
+    }
+
 # ══════════════════════════════════════════
-# LOCKS
+# LOCKS (1 lock riêng mỗi guild + 1 lock cho global doc)
 # ══════════════════════════════════════════
-_save_lock    = None   # Lock ghi MongoDB
+_save_locks: dict[int, asyncio.Lock] = {}
+_global_save_lock = None
 _ticket_lock  = None   # FIX: Lock tránh trùng số ticket
 
-def _get_save_lock():
-    global _save_lock
-    if _save_lock is None:
-        _save_lock = asyncio.Lock()
-    return _save_lock
+def _get_save_lock(guild_id: int) -> asyncio.Lock:
+    if guild_id not in _save_locks:
+        _save_locks[guild_id] = asyncio.Lock()
+    return _save_locks[guild_id]
+
+def _get_global_save_lock() -> asyncio.Lock:
+    global _global_save_lock
+    if _global_save_lock is None:
+        _global_save_lock = asyncio.Lock()
+    return _global_save_lock
 
 def _get_ticket_lock():
     global _ticket_lock
@@ -135,85 +203,177 @@ def _get_ticket_lock():
 # ══════════════════════════════════════════
 # LOW-LEVEL MongoDB
 # ══════════════════════════════════════════
-_data_cache: dict | None = None
+_data_cache: dict[int, dict] = {}      # {guild_id: data}
+_global_cache: dict | None = None      # data KHÔNG tách theo guild (tempban, ip records)
+_giveaways_cache: dict = {}            # {message_id: {...}} — KHÔNG tách theo guild (tự nhiên theo message_id)
 
-async def _mongo_load() -> dict:
+async def _mongo_load(guild_id: int) -> dict:
     col, _ = _get_mongo()
+    doc_id = f"guild_{guild_id}"
     try:
-        doc = await col.find_one({"_id": "main"})
+        doc = await col.find_one({"_id": doc_id})
+        if doc is None and guild_id == LEGACY_MAIN_GUILD_ID:
+            # Migrate 1 lần: document "main" cũ (trước khi tách multi-guild) → "guild_<id>".
+            legacy = await col.find_one({"_id": "main"})
+            if legacy:
+                doc = {k: v for k, v in legacy.items() if k != "_id"}
+                doc["_id"] = doc_id
+                for k, v in _default_data(guild_id).items():
+                    doc.setdefault(k, v)
+                await col.insert_one(doc)
+                log.info(f"[DATA] 🔀 Đã migrate document 'main' → '{doc_id}'")
         if doc is None:
-            doc = _default_data()
+            doc = _default_data(guild_id)
             await col.insert_one(doc)
-            print("[DATA] 🆕 Tạo document mới trong MongoDB")
+            print(f"[DATA] 🆕 Tạo document mới cho guild {guild_id}")
         else:
             changed = False
-            for k, v in _default_data().items():
+            for k, v in _default_data(guild_id).items():
                 if k not in doc:
                     doc[k] = v
                     changed = True
             if changed:
-                await _mongo_save(doc)
+                await _mongo_save(guild_id, doc)
         return doc
     except Exception as e:
-        log.error(f"[DATA] ❌ Lỗi đọc MongoDB: {e}")
-        return _default_data()
+        log.error(f"[DATA] ❌ Lỗi đọc MongoDB (guild {guild_id}): {e}")
+        return _default_data(guild_id)
 
-async def _mongo_save(data: dict):
+async def _mongo_save(guild_id: int, data: dict):
+    col, _ = _get_mongo()
+    doc_id = f"guild_{guild_id}"
+    try:
+        save = {k: v for k, v in data.items() if k != "_id"}
+        await col.update_one({"_id": doc_id}, {"$set": save}, upsert=True)
+    except Exception as e:
+        log.error(f"[DATA] ❌ Lỗi ghi MongoDB (guild {guild_id}): {e}")
+
+async def _mongo_load_global() -> dict:
+    col, _ = _get_mongo()
+    try:
+        doc = await col.find_one({"_id": "main"})
+        if doc is None:
+            doc = _default_data_global()
+            await col.insert_one(doc)
+        else:
+            changed = False
+            for k, v in _default_data_global().items():
+                if k not in doc:
+                    doc[k] = v
+                    changed = True
+            if changed:
+                await _mongo_save_global(doc)
+        return doc
+    except Exception as e:
+        log.error(f"[DATA] ❌ Lỗi đọc MongoDB (global): {e}")
+        return _default_data_global()
+
+async def _mongo_save_global(data: dict):
     col, _ = _get_mongo()
     try:
         save = {k: v for k, v in data.items() if k != "_id"}
         await col.update_one({"_id": "main"}, {"$set": save}, upsert=True)
     except Exception as e:
-        log.error(f"[DATA] ❌ Lỗi ghi MongoDB: {e}")
+        log.error(f"[DATA] ❌ Lỗi ghi MongoDB (global): {e}")
 
-async def _flush_to_mongo():
-    """FIX: Dùng Lock đảm bảo không ghi đồng thời."""
-    lock = _get_save_lock()
+async def _flush_to_mongo(guild_id: int):
+    """FIX: Dùng Lock đảm bảo không ghi đồng thời (mỗi guild 1 lock riêng)."""
+    lock = _get_save_lock(guild_id)
     async with lock:
-        if _data_cache is not None:
-            await _mongo_save(_data_cache)
+        data = _data_cache.get(guild_id)
+        if data is not None:
+            await _mongo_save(guild_id, data)
+
+async def _flush_global_to_mongo():
+    lock = _get_global_save_lock()
+    async with lock:
+        if _global_cache is not None:
+            await _mongo_save_global(_global_cache)
 
 # ══════════════════════════════════════════
 # HIGH-LEVEL API
 # ══════════════════════════════════════════
 def load_data() -> dict:
-    """Trả về shallow copy của cache để tránh các cog mutate trực tiếp.
-    Dùng save_data() để ghi lại sau khi thay đổi."""
-    if _data_cache is not None:
-        return dict(_data_cache)
-    return _default_data()
+    """Trả về shallow copy của cache CHO GUILD ĐANG XỬ LÝ (lấy từ contextvar).
+    Dùng save_data() để ghi lại sau khi thay đổi.
+    ⚠️ Nếu gọi mà không có guild context (bug ở nơi gọi), sẽ log lỗi và trả về default rỗng
+    thay vì crash hoặc lỡ tay ghi nhầm sang guild khác."""
+    guild_id = get_current_guild_id()
+    if guild_id is None:
+        log.error("[DATA] ⚠️ load_data() được gọi mà KHÔNG có guild context — trả về default tạm.")
+        return _default_data(0)
+    if guild_id in _data_cache:
+        return dict(_data_cache[guild_id])
+    log.warning(f"[DATA] ⚠️ Guild {guild_id} chưa có trong cache — trả về default tạm (chưa lưu).")
+    return _default_data(guild_id)
 
 def save_data(data: dict):
-    """
-    FIX: Dùng asyncio.create_task thay ensure_future.
-    create_task an toàn hơn, có thể track được task.
-    """
+    """FIX: Dùng asyncio.create_task thay ensure_future. Ghi vào cache của guild đang xử lý
+    (lấy từ contextvar) — KHÔNG cần truyền guild_id, mọi cog cũ gọi save_data(data) vẫn hoạt động
+    y nguyên, chỉ khác là giờ nó tự biết ghi đúng guild nào."""
     global _data_cache
-    _data_cache = data
+    guild_id = get_current_guild_id()
+    if guild_id is None:
+        log.error("[DATA] ❌ save_data() được gọi mà KHÔNG có guild context — dữ liệu KHÔNG được lưu để tránh ghi nhầm guild.")
+        return
+    _data_cache[guild_id] = data
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_flush_to_mongo())
+        loop.create_task(_flush_to_mongo(guild_id))
     except RuntimeError:
-        # Không có event loop (test/init context) — bỏ qua
         pass
     except Exception as e:
-        log.error(f"[DATA] ❌ Lỗi tạo save task: {e}")
+        log.error(f"[DATA] ❌ Lỗi tạo save task (guild {guild_id}): {e}")
 
-async def init_data_cache():
+def load_global_data() -> dict:
+    """Data KHÔNG tách theo guild (tempban, ip records) — dùng chung cho mọi server."""
+    if _global_cache is not None:
+        return dict(_global_cache)
+    return _default_data_global()
+
+def save_global_data(data: dict):
+    global _global_cache
+    _global_cache = data
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_flush_global_to_mongo())
+    except RuntimeError:
+        pass
+    except Exception as e:
+        log.error(f"[DATA] ❌ Lỗi tạo save task (global): {e}")
+
+async def ensure_guild_loaded(guild_id: int) -> None:
+    """Gọi khi bot join guild mới giữa chừng (on_guild_join) để guild đó có cache ngay,
+    không phải đợi restart bot."""
     global _data_cache
-    _data_cache = await _mongo_load()
+    if guild_id not in _data_cache:
+        _data_cache[guild_id] = await _mongo_load(guild_id)
+        log.info(f"[DATA] ✅ Đã load cache cho guild mới {guild_id}")
+
+async def init_data_cache(bot) -> None:
+    """Gọi 1 lần ở on_ready. Load riêng document cho TỪNG guild bot đang ở,
+    cộng thêm 1 document global (tempban/ip) và toàn bộ giveaways (tách theo message_id,
+    không thuộc guild nào cụ thể trong cache)."""
+    global _data_cache, _global_cache, _giveaways_cache
+    _data_cache = {}
+    for guild in bot.guilds:
+        _data_cache[guild.id] = await _mongo_load(guild.id)
+
+    _global_cache = await _mongo_load_global()
+
     _, col_gw = _get_mongo()
     try:
         giveaways = {}
         async for doc in col_gw.find({}):
             mid = str(doc.get("message_id", doc.get("_id", "")))
             giveaways[mid] = {k: v for k, v in doc.items() if k not in ("_id", "message_id")}
-        _data_cache["_giveaways"] = giveaways
+        _giveaways_cache = giveaways
     except Exception as e:
         log.warning(f"[DATA] ⚠️ Không load được giveaways: {e}")
-        _data_cache.setdefault("_giveaways", {})  # FIX: fallback đúng chỗ
+        _giveaways_cache = {}
 
-    print(f"[DATA] ✅ Đã kết nối MongoDB — ticket#{_data_cache.get('ticket', 0):03d}")
+    guild_list = ", ".join(f"{g.id}(#{_data_cache[g.id].get('ticket', 0):03d})" for g in bot.guilds)
+    print(f"[DATA] ✅ Đã kết nối MongoDB — {len(_data_cache)} guild(s): {guild_list}")
 
 # ══════════════════════════════════════════
 # CONFIG GETTERS / SETTERS
@@ -422,8 +582,9 @@ def mark_pending_sold_resolved(channel_id: int, amount: int, resolved_by: int, o
 def get_resolved_sold_price(channel_id: int) -> dict | None:
     return load_data().get("resolved_sold_price", {}).get(str(channel_id))
 
-async def get_ticket_number() -> str:
-    """FIX: async + Lock đảm bảo không bao giờ tạo 2 ticket trùng số."""
+async def get_ticket_number(guild_id: int) -> str:
+    """FIX: async + Lock đảm bảo không bao giờ tạo 2 ticket trùng số.
+    Mỗi guild đếm ticket riêng (guild_id bắt buộc truyền vào từ nơi gọi, VD ctx.guild.id)."""
     async with _get_ticket_lock():
         data = load_data()
         data["ticket"] = data.get("ticket", 0) + 1
@@ -431,12 +592,12 @@ async def get_ticket_number() -> str:
         # Ghi trực tiếp vào MongoDB ngay lập tức (không dùng queue)
         col, _ = _get_mongo()
         try:
-            await col.update_one({"_id": "main"}, {"$set": {"ticket": num}}, upsert=True)
+            await col.update_one({"_id": f"guild_{guild_id}"}, {"$set": {"ticket": num}}, upsert=True)
         except Exception as e:
-            log.error(f"[DATA] ❌ Lỗi cập nhật ticket counter: {e}")
+            log.error(f"[DATA] ❌ Lỗi cập nhật ticket counter (guild {guild_id}): {e}")
         global _data_cache
-        if _data_cache is not None:
-            _data_cache["ticket"] = num
+        if guild_id in _data_cache:
+            _data_cache[guild_id]["ticket"] = num
         return f"{num:03d}"
 
 # ══════════════════════════════════════════
@@ -570,16 +731,19 @@ def save_price_sections(sections: list):
 # GIVEAWAY
 # ══════════════════════════════════════════
 def _load_giveaway_section() -> dict:
-    return load_data().get("_giveaways", {})
+    return dict(_giveaways_cache)
 
 def _save_giveaway_section(giveaways: dict):
+    """Giveaway KHÔNG đi qua load_data()/save_data() (vốn giờ tách theo guild) vì active_giveaways
+    ở cogs/giveaway.py là 1 dict phẳng chứa giveaway của MỌI guild, phân biệt bằng message_id.
+    Nếu đi qua save_data() sẽ vô tình ghi giveaway của cả 2 server lẫn vào document của guild
+    đang xử lý tại thời điểm gọi. col_gw (collection riêng) mới là nguồn lưu trữ chính thức."""
+    global _giveaways_cache
     serializable = {
         str(mid): {k: list(v) if isinstance(v, set) else v for k, v in gw.items()}
         for mid, gw in giveaways.items()
     }
-    data = load_data().copy()
-    data["_giveaways"] = serializable
-    save_data(data)
+    _giveaways_cache = serializable
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(_sync_giveaways_to_mongo(serializable))
@@ -769,30 +933,30 @@ def get_all_ticket_multi_roles() -> dict:
     return load_data().get("ticket_multi_roles", {})
 
 # ══════════════════════════════════════════
-# TEMPBAN PERSISTENCE
+# TEMPBAN PERSISTENCE — CHUNG cho mọi guild (cố ý, xem _default_data_global)
 # Lưu {user_id: {guild_id, unban_at (unix timestamp), reason}} vào MongoDB
 # ══════════════════════════════════════════
 def get_active_tempbans() -> dict:
     """Trả về dict {str(user_id): {guild_id, unban_at, reason}}."""
-    return dict(load_data().get("_tempbans", {}))
+    return dict(load_global_data().get("_tempbans", {}))
 
 def add_tempban(user_id: int, guild_id: int, unban_at: float, reason: str = "") -> None:
-    """Lưu tempban vào MongoDB."""
-    data = load_data()
+    """Lưu tempban vào MongoDB (document global, không tách theo guild)."""
+    data = load_global_data()
     data.setdefault("_tempbans", {})
     data["_tempbans"][str(user_id)] = {
         "guild_id": guild_id,
         "unban_at": unban_at,
         "reason": reason,
     }
-    save_data(data)
+    save_global_data(data)
 
 def remove_tempban(user_id: int) -> None:
     """Xoá tempban khỏi MongoDB (sau khi unban xong)."""
-    data = load_data()
+    data = load_global_data()
     data.setdefault("_tempbans", {})
     data["_tempbans"].pop(str(user_id), None)
-    save_data(data)
+    save_global_data(data)
 
 # ══════════════════════════════════════════
 # INVITE STATE PERSISTENCE
@@ -817,22 +981,22 @@ def save_pending_joins(pending: dict) -> None:
     save_data(data)
 
 # ══════════════════════════════════════════
-# IP RECORDS PERSISTENCE
+# IP RECORDS PERSISTENCE — CHUNG cho mọi guild (cố ý, chống multi-acc né qua server khác)
 # Lưu {ip: [user_id, ...]} — dùng cho fake detection
 # ══════════════════════════════════════════
 
 def get_ip_records() -> dict:
     """Trả về {ip: [user_id, ...]}."""
-    return dict(load_data().get("_ip_records", {}))
+    return dict(load_global_data().get("_ip_records", {}))
 
 def save_ip_records(records: dict) -> None:
-    data = load_data()
+    data = load_global_data()
     data["_ip_records"] = records
-    save_data(data)
+    save_global_data(data)
 
 async def atomic_register_ip(ip: str, user_id: int) -> list[int]:
     """
-    Atomic: dùng $addToSet để thêm user_id vào list IP trong MongoDB.
+    Atomic: dùng $addToSet để thêm user_id vào list IP trong MongoDB (document global).
     Tránh race condition khi 2 người verify cùng lúc.
     Trả về list user_ids hiện tại trên IP đó (SAU khi đã thêm).
     """
@@ -846,15 +1010,16 @@ async def atomic_register_ip(ip: str, user_id: int) -> list[int]:
         )
         doc = await col.find_one({"_id": "main"}, {key: 1})
         users = (doc or {}).get("_ip_records", {}).get(ip.replace(".", "_"), [])
-        # Sync lại cache
-        if _data_cache is not None:
-            _data_cache.setdefault("_ip_records", {})[ip.replace(".", "_")] = users
+        # Sync lại cache global
+        global _global_cache
+        if _global_cache is not None:
+            _global_cache.setdefault("_ip_records", {})[ip.replace(".", "_")] = users
         return users
     except Exception as e:
         log.error(f"[DATA] ❌ atomic_register_ip lỗi: {e}")
         # Fallback: in-memory
-        if _data_cache is not None:
-            recs = _data_cache.setdefault("_ip_records", {})
+        if _global_cache is not None:
+            recs = _global_cache.setdefault("_ip_records", {})
             ip_key = ip.replace(".", "_")
             if ip_key not in recs:
                 recs[ip_key] = []
@@ -901,7 +1066,7 @@ async def get_ip_users_mongo(ip: str) -> list[int]:
         return (doc or {}).get("_ip_records", {}).get(ip.replace(".", "_"), [])
     except Exception as e:
         log.error(f"[DATA] ❌ get_ip_users_mongo lỗi: {e}")
-        # Fallback cache
-        if _data_cache is not None:
-            return _data_cache.get("_ip_records", {}).get(ip.replace(".", "_"), [])
+        # Fallback cache global
+        if _global_cache is not None:
+            return _global_cache.get("_ip_records", {}).get(ip.replace(".", "_"), [])
         return []
