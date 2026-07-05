@@ -58,6 +58,8 @@ LOG_ICONS = {
     "SETTINGS":        ("⚙️",  0xFEE75C),
     "ERROR":           ("❌", 0xED4245),
     "INFO":            ("ℹ️",  0x5865F2),
+    "SHOP_QR_SHOWN":       ("🧾", 0x2ECC71),
+    "SHOP_QUEUE_DONE":     ("✅", 0x2ECC71),
 }
 
 # Map event_type → nhóm kênh
@@ -91,6 +93,8 @@ LOG_ROUTES: dict[str, str] = {
     "RATING":          "general",
     "ERROR":           "general",
     "INFO":            "general",
+    "SHOP_QR_SHOWN":       "shop",
+    "SHOP_QUEUE_DONE":     "shop",
 }
 
 # Tên hiển thị cho từng nhóm
@@ -104,6 +108,7 @@ LOG_GROUP_LABELS: dict[str, str] = {
     "admin":    "⌨️ Admin",
     "invite":   "📨 Invite",
     "general":  "📋 General",
+    "shop":     "🛒 Shop Order",
 }
 
 # Lưu channel ID theo nhóm: đọc/ghi thẳng vào MongoDB qua core.data
@@ -437,6 +442,7 @@ class LoggerCog(commands.Cog):
             "admin":    "log-admin",
             "invite":   "log-invite",
             "general":  "log-general",
+            "shop":     "log-shop",
         }
 
         # Chỉ bot và admin mới xem được kênh log
@@ -502,6 +508,7 @@ class LoggerCog(commands.Cog):
             "admin":    ("CMD_USED",        "Test — Lệnh admin"),
             "invite":   ("INVITE_VERIFY",   "Test — Verify thành viên"),
             "general":  ("INFO",            "Test — Thông tin chung"),
+            "shop":     ("SHOP_QR_SHOWN",  "Test — QR thanh toán"),
         }
 
         # Chọn nhóm cần test

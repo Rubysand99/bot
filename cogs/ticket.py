@@ -1227,6 +1227,12 @@ class TicketCog(commands.Cog):
         embed.set_footer(text=f"Xác nhận bởi {_uname_plain(ctx.author)}")
         await ctx.reply(embed=embed)
 
+        from cogs.shop_orders import build_payment_qr_embed, send_to_queue
+        qr_embed = build_payment_qr_embed(amount)
+        if qr_embed:
+            await ctx.send(embed=qr_embed)
+        await send_to_queue(self.bot, buyer, ctx.channel, amount)
+
         log_fields = [
             ("👤 Buyer",        buyer.mention,        True),
             ("💵 Đơn này",      fmt_amount(amount),   True),
@@ -1294,6 +1300,12 @@ class TicketCog(commands.Cog):
             embed.add_field(name="🏆 Role", value=role_obj.mention if role_obj else role_cfg.get("label","?"), inline=False)
         embed.set_footer(text=f"Xác nhận bởi {_uname_plain(interaction.user)}")
         await interaction.response.send_message(embed=embed)
+
+        from cogs.shop_orders import build_payment_qr_embed, send_to_queue
+        qr_embed = build_payment_qr_embed(parsed)
+        if qr_embed:
+            await interaction.followup.send(embed=qr_embed)
+        await send_to_queue(self.bot, buyer, interaction.channel, parsed)
         await send_log(
             self.bot, "TICKET_DONE", f"Hoàn Thành Đơn — {interaction.channel.name}",
             fields=[

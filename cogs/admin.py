@@ -29,6 +29,7 @@ from core.data import (
     add_pending_sold_price, get_pending_sold_price, get_all_pending_sold_price,
     remove_pending_sold_price, set_pending_sold_dm, mark_pending_sold_escalated,
     mark_pending_sold_resolved, get_resolved_sold_price,
+    get_cfg_shop_orders_enabled, set_cfg_shop_orders_enabled,
 )
 from cogs.seller import is_active_seller
 
@@ -72,8 +73,13 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📦 Stock Category",    value=ch("cfg_stock_category",  0),                   inline=True)
         embed.add_field(name="✅ Sold Category",     value=ch("cfg_sold_category",   0),                   inline=True)
         embed.add_field(name="🔤 Font server",       value=FONT_LABELS.get(data.get("cfg_font","normal"),"normal"), inline=True)
+        shop_status = "🟢 Bật" if get_cfg_shop_orders_enabled() else "🔴 Tắt"
+        embed.add_field(name="🧪 Shop Orders (thử nghiệm)", value=shop_status, inline=True)
         embed.set_footer(text=f"Nhấn nút bên dưới để thay đổi  •  Yêu cầu bởi {ctx.author}")
-        await ctx.reply(embed=embed, view=SettingsView(ctx.guild))
+
+        view = SettingsView(ctx.guild)
+        view.add_item(ShopOrdersToggleButton())
+        await ctx.reply(embed=embed, view=view)
 
     # ── .sv / .giaset ──
     @commands.command(name="sv", aliases=["dichvu", "service"])
@@ -984,6 +990,44 @@ async def handle_sold(bot, message: discord.Message):
 
     # Sau 24h nếu chưa xử lý → escalate sang Ruby
     asyncio.create_task(_escalate_pending_sold(bot, channel.id))
+
+
+# ══════════════════════════════════════════
+# SHOP ORDERS — nút bật/tắt trong .st (tính năng đang thử nghiệm)
+# ══════════════════════════════════════════
+class ShopOrdersToggleButton(discord.ui.Button):
+    def __init__(self):
+        enabled = get_cfg_shop_orders_enabled()
+        super().__init__(
+            label="Tắt Shop Orders" if enabled else "Bật Shop Orders",
+            emoji="🧪",
+            style=discord.ButtonStyle.danger if enabled else discord.ButtonStyle.success,
+            row=4,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Bạn không có quyền dùng nút này.", ephemeral=True)
+
+        new_state = not get_cfg_shop_orders_enabled()
+        set_cfg_shop_orders_enabled(new_state)
+
+        embed = interaction.message.embeds[0]
+        status_text = "🟢 Bật" if new_state else "🔴 Tắt"
+        for i, field in enumerate(embed.fields):
+            if field.name == "🧪 Shop Orders (thử nghiệm)":
+                embed.set_field_at(i, name=field.name, value=status_text, inline=True)
+                break
+
+        self.label = "Tắt Shop Orders" if new_state else "Bật Shop Orders"
+        self.style = discord.ButtonStyle.danger if new_state else discord.ButtonStyle.success
+
+        await interaction.response.edit_message(embed=embed, view=self.view)
+        await send_log(
+            interaction.client, "SETTINGS", f"Shop Orders (thử nghiệm) → {status_text}",
+            fields=[("👤 Admin", f"{interaction.user}", True)],
+            user=interaction.user,
+        )
 
 
 async def setup(bot):

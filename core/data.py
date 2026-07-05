@@ -863,6 +863,35 @@ async def atomic_register_ip(ip: str, user_id: int) -> list[int]:
             return recs[ip_key]
         return [user_id]
 
+
+# ══════════════════════════════════════════
+# SHOP QR (tính năng thử nghiệm — bật/tắt qua .st)
+# Chỉ lưu cấu hình ngân hàng để tạo QR VietQR động kèm .done <số tiền>.
+# ══════════════════════════════════════════
+def get_cfg_shop_orders_enabled() -> bool:
+    return load_data().get("cfg_shop_orders_enabled", False)
+
+def set_cfg_shop_orders_enabled(enabled: bool) -> None:
+    save_cfg("cfg_shop_orders_enabled", enabled)
+
+def get_shop_orders_config() -> dict:
+    """Trả về {bank_name, bank_code, account_number, account_holder, template, default_content}."""
+    return load_data().get("shop_orders_cfg", {})
+
+def save_shop_orders_config(**fields) -> None:
+    data = load_data()
+    cfg = data.setdefault("shop_orders_cfg", {})
+    cfg.update(fields)
+    data["shop_orders_cfg"] = cfg
+    save_data(data)
+
+def get_cfg_queue_channel() -> int:
+    return load_data().get("cfg_queue_channel", 0)
+
+def save_cfg_queue_channel(channel_id: int) -> None:
+    save_cfg("cfg_queue_channel", channel_id)
+
+
 async def get_ip_users_mongo(ip: str) -> list[int]:
     """Đọc trực tiếp từ MongoDB (không qua cache) — dùng khi check collision."""
     col, _ = _get_mongo()
