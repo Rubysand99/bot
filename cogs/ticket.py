@@ -912,14 +912,68 @@ class AccPreView(View):
             except Exception: pass
 
 
-class TicketPanel(View):
-    """Panel chính — tất cả nút trong 1 embed, không timeout (persistent)."""
-    def __init__(self):
-        super().__init__(timeout=None)
+# ══════════════════════════════════════════
+# PANEL BUTTONS — cấu hình bật/tắt theo từng guild
+# ══════════════════════════════════════════
+# key → (label, style, custom_id, row) — nguồn duy nhất định nghĩa 7 nút của panel chính.
+PANEL_BUTTON_DEFS = {
+    "donut":    ("🍩 DonutSMP",       discord.ButtonStyle.green,   "panel_donut",    0),
+    "kingmc":   ("👑 KingMC",          discord.ButtonStyle.blurple, "panel_kingmc",   0),
+    "ff":       ("🔥 Free Fire",       discord.ButtonStyle.red,     "panel_ff",       1),
+    "accpre":   ("🎭 Acc Pre",         discord.ButtonStyle.blurple, "panel_accpre",   2),
+    "build":    ("🏗️ Build",          discord.ButtonStyle.grey,    "panel_build",    2),
+    "giveaway": ("🎁 Nhận Giveaway",   discord.ButtonStyle.green,   "panel_giveaway", 3),
+    "support":  ("🆘 Hỗ Trợ",          discord.ButtonStyle.blurple, "panel_support",  3),
+}
+PANEL_BUTTON_LABELS = {k: v[0] for k, v in PANEL_BUTTON_DEFS.items()}
 
-    # ── Hàng 1: Donut & KingMC (chọn item → tạo ticket thẳng) ───────
-    @discord.ui.button(label="🍩 DonutSMP", style=discord.ButtonStyle.green,  custom_id="panel_donut", row=0)
-    async def btn_donut(self, interaction: discord.Interaction, button: Button):
+def get_panel_buttons_cfg() -> dict:
+    """Trả về {key: True/False} cho guild hiện tại (context đã được set bởi caller).
+    Mặc định BẬT nếu chưa cấu hình gì (không phá panel cũ khi mới nâng cấp bot)."""
+    cfg = load_data().get("cfg_panel_buttons", {})
+    return {key: cfg.get(key, True) for key in PANEL_BUTTON_DEFS}
+
+def set_panel_button_enabled(key: str, enabled: bool) -> None:
+    data = load_data()
+    cfg = data.setdefault("cfg_panel_buttons", {})
+    cfg[key] = enabled
+    save_data(data)
+
+
+class TicketPanel(View):
+    """Panel chính — nút được dựng ĐỘNG theo cấu hình bật/tắt riêng của từng guild.
+
+    guild_id=None  → dựng ĐỦ cả 7 nút (dùng lúc bot khởi động để đăng ký handler cho
+                      mọi custom_id có thể tồn tại trong các message panel cũ — xem bot.py
+                      on_ready: bot.add_view(TicketPanel())). KHÔNG liên quan tới việc nút
+                      có thực sự hiển thị trong 1 message cụ thể hay không.
+    guild_id=<id>  → chỉ dựng các nút đang BẬT của guild đó (dùng khi gửi panel thật qua
+                      lệnh .panel).
+    """
+    def __init__(self, guild_id: int | None = None):
+        super().__init__(timeout=None)
+        cfg = get_panel_buttons_cfg() if guild_id is not None else {k: True for k in PANEL_BUTTON_DEFS}
+
+        for key, (label, style, custom_id, row) in PANEL_BUTTON_DEFS.items():
+            if not cfg.get(key, True):
+                continue
+            btn = Button(label=label, style=style, custom_id=custom_id, row=row)
+            btn.callback = self._make_callback(key)
+            self.add_item(btn)
+
+    def _make_callback(self, key: str):
+        handlers = {
+            "donut":    self._h_donut,
+            "kingmc":   self._h_kingmc,
+            "ff":       self._h_ff,
+            "accpre":   self._h_accpre,
+            "build":    self._h_build,
+            "giveaway": self._h_giveaway,
+            "support":  self._h_support,
+        }
+        return handlers[key]
+
+    async def _h_donut(self, interaction: discord.Interaction):
         try:
             await interaction.response.send_message(
                 "🍩 **DonutSMP — Chọn loại item:**",
@@ -929,8 +983,7 @@ class TicketPanel(View):
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
-    @discord.ui.button(label="👑 KingMC", style=discord.ButtonStyle.blurple, custom_id="panel_kingmc", row=0)
-    async def btn_kingmc(self, interaction: discord.Interaction, button: Button):
+    async def _h_kingmc(self, interaction: discord.Interaction):
         try:
             await interaction.response.send_message(
                 "👑 **KingMC — Chọn loại item:**",
@@ -940,9 +993,7 @@ class TicketPanel(View):
             try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
-    # ── Hàng 2: OneMC, FreeFire (tạo ticket thẳng) ────────────────────
-    @discord.ui.button(label="🔥 Free Fire", style=discord.ButtonStyle.red,    custom_id="panel_ff",    row=1)
-    async def btn_ff(self, interaction: discord.Interaction, button: Button):
+    async def _h_ff(self, interaction: discord.Interaction):
         try:
             await interaction.response.defer(ephemeral=True)
             await create_direct_order_ticket(interaction, SERVER_FF)
@@ -950,9 +1001,7 @@ class TicketPanel(View):
             try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
-    # ── Hàng 3: AccPre, Build (popup Mua/Bán) ─────────────────────────
-    @discord.ui.button(label="🎭 Acc Pre", style=discord.ButtonStyle.blurple, custom_id="panel_accpre", row=2)
-    async def btn_accpre(self, interaction: discord.Interaction, button: Button):
+    async def _h_accpre(self, interaction: discord.Interaction):
         try:
             await interaction.response.defer(ephemeral=True)
             await create_accpre_ticket(interaction, trade_type="buy")
@@ -960,8 +1009,7 @@ class TicketPanel(View):
             try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
-    @discord.ui.button(label="🏗️ Build",   style=discord.ButtonStyle.grey,   custom_id="panel_build",  row=2)
-    async def btn_build(self, interaction: discord.Interaction, button: Button):
+    async def _h_build(self, interaction: discord.Interaction):
         try:
             await interaction.response.defer(ephemeral=True)
             await create_build_ticket(interaction, trade_type="buy")
@@ -969,9 +1017,7 @@ class TicketPanel(View):
             try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
-    # ── Hàng 4: Dịch vụ (Giveaway, Hỗ Trợ — tạo ticket thẳng) ───────
-    @discord.ui.button(label="🎁 Nhận Giveaway", style=discord.ButtonStyle.green,  custom_id="panel_giveaway", row=3)
-    async def btn_giveaway(self, interaction: discord.Interaction, button: Button):
+    async def _h_giveaway(self, interaction: discord.Interaction):
         try:
             await interaction.response.defer(ephemeral=True)
             await create_direct_service_ticket(interaction, "giveaway")
@@ -979,14 +1025,54 @@ class TicketPanel(View):
             try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
-    @discord.ui.button(label="🆘 Hỗ Trợ", style=discord.ButtonStyle.blurple, custom_id="panel_support", row=3)
-    async def btn_support(self, interaction: discord.Interaction, button: Button):
+    async def _h_support(self, interaction: discord.Interaction):
         try:
             await interaction.response.defer(ephemeral=True)
             await create_direct_service_ticket(interaction, "support")
         except Exception as e:
             try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
+
+
+class PanelButtonToggleView(View):
+    """UI cho lệnh .panelbuttons — 1 nút bấm / loại ticket, bấm để bật/tắt.
+    Không cần persistent (timeout mặc định), admin dùng xong ngay trong phiên."""
+    def __init__(self, ctx):
+        super().__init__(timeout=180)
+        self.ctx = ctx
+        self._build_buttons()
+
+    def _build_buttons(self):
+        self.clear_items()
+        cfg = get_panel_buttons_cfg()
+        for i, (key, (label, _style, _cid, row)) in enumerate(PANEL_BUTTON_DEFS.items()):
+            enabled = cfg.get(key, True)
+            btn = Button(
+                label=f"{'🟢' if enabled else '🔴'} {label}",
+                style=discord.ButtonStyle.green if enabled else discord.ButtonStyle.grey,
+                custom_id=f"toggle_panelbtn_{key}",
+                row=row,
+            )
+            btn.callback = self._make_toggle_callback(key)
+            self.add_item(btn)
+
+    def _make_toggle_callback(self, key: str):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id not in ADMIN_IDS:
+                return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            cfg = get_panel_buttons_cfg()
+            new_state = not cfg.get(key, True)
+            set_panel_button_enabled(key, new_state)
+            self._build_buttons()
+            await interaction.response.edit_message(view=self)
+            await send_log(
+                self.ctx.bot, "SETTINGS", f"Panel button {'BẬT' if new_state else 'TẮT'}: {PANEL_BUTTON_LABELS[key]}",
+                fields=[("👤 Admin", str(interaction.user), True)],
+                user=interaction.user,
+                guild_id=interaction.guild_id,
+            )
+        return callback
+
 
 # ══════════════════════════════════════════
 # TICKET BUTTONS
@@ -1093,8 +1179,23 @@ class TicketCog(commands.Cog):
     @commands.command()
     async def panel(self, ctx):
         if ctx.author.id not in ADMIN_IDS: return
-        await ctx.send(embed=build_panel_embed(ctx.guild), view=TicketPanel())
+        await ctx.send(embed=build_panel_embed(ctx.guild), view=TicketPanel(ctx.guild.id))
         await ctx.message.delete()
+
+    @commands.command(name="panelbuttons", aliases=["panelbtn", "ticketbuttons"])
+    async def panelbuttons_cmd(self, ctx):
+        """Bật/tắt từng nút của panel ticket — lưu riêng theo server (guild)."""
+        if ctx.author.id not in ADMIN_IDS: return
+        embed = discord.Embed(
+            title="⚙️ Bật/Tắt Nút Panel Ticket",
+            description=(
+                "Bấm vào từng nút bên dưới để bật (🟢) hoặc tắt (🔴).\n"
+                "Sau khi đổi, chạy lại `.panel` để gửi panel mới với các nút đã cập nhật "
+                "(panel đã gửi trước đó sẽ **không** tự đổi)."
+            ),
+            color=0x5865F2,
+        )
+        await ctx.send(embed=embed, view=PanelButtonToggleView(ctx))
 
     @commands.command()
     async def setpanel(self, ctx, channel: discord.TextChannel = None):
