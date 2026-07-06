@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.9.1"
+BOT_VERSION = "4.10.0"
 BOT_UPDATED = "2026-07-07"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
@@ -69,6 +69,7 @@ COGS = [
     "cogs.admin",
     "cogs.mod",
     "cogs.seller",
+    "cogs.shop_orders",
 ]
 
 async def load_cogs():
