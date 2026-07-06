@@ -270,6 +270,9 @@ class AdminCog(commands.Cog):
                      "`.done <tiền>` — Hoàn thành đơn (chỉ admin)\n"
                      "`.addnote <ghi chú>` — Thêm ghi chú vào ticket\n"
                      "`.orderbase` — Tạo ticket Order Base (admin)", False),
+                    ("🏷️ Loại ticket → Role",
+                     "`.setrole <ticket_key> <seller|builder|xoá>` — Gán loại ticket vào nhóm role\n"
+                     "`.listroles` — Xem toàn bộ cấu hình loại ticket → role", False),
                     ("📦 Stock Limit",
                      "`.setsl <item_key> <số lượng>` — Cài giới hạn tồn kho\n"
                      "`.removesl <item_key>` — Xoá giới hạn tồn kho\n"
@@ -291,13 +294,20 @@ class AdminCog(commands.Cog):
                      "  • `.invitetop 20` — top 20 tháng này\n"
                      "  • `.invitetop 06/2026` — top 10 tháng 6/2026\n"
                      "  • `.invitetop alltime` — top 10 all-time", False),
+                    ("✅ Verify thủ công (admin)",
+                     "`.verify [user_id]` — Verify tay 1 thành viên (đổi trạng thái unverify → verify),\n"
+                     "dùng khi verify server (chống VPN) bị lỗi/timeout", False),
                     ("🔄 Reset invite (admin)",
                      "`.resetinvite [@user|all]` — Reset invite **tháng hiện tại** (all-time giữ nguyên)\n"
                      "`.resetinvites [@user]` — Reset invite **all-time** *(hỏi lại trước khi xóa)*", False),
                     ("🔐 Kiểm tra IP (admin)",
                      "`.checkip @user` — Xem tất cả tài khoản chung IP với user đó\n"
                      "`.ipstats` — Danh sách IP có từ 2 tài khoản trở lên\n"
-                     "`.backfillip [số]` — Đọc lại lịch sử kênh log, backfill IP records vào DB (mặc định 2000 message)", False),
+                     "`.backfillip [số]` — Đọc lại lịch sử kênh log, backfill IP records vào DB (mặc định 2000 message)\n"
+                     "`.testip` — Test kết nối verify server (chống VPN/multi-acc)", False),
+                    ("🌐 Quản lý server bot (admin)",
+                     "`.serverlist` (alias `.servers`/`.guildlist`) — Danh sách server bot đang ở kèm ID\n"
+                     "`.leaveguild <guild_id>` — Cho bot rời khỏi 1 server cụ thể", False),
                     ("🔷 Slash commands",
                      "`/invite` `/invitetop` `/resetinvite`", False),
                 ]
@@ -321,7 +331,8 @@ class AdminCog(commands.Cog):
                      "`/gwlist <message_id>` — Xem danh sách người tham gia", False),
                     ("🔧 Prefix commands (admin)",
                      "`.gwstatus` — Xem toàn bộ giveaway đang chạy & đã kết thúc\n"
-                     "`.gpick <gw_id> <@user>` — Chọn tay winner cho giveaway", False),
+                     "`.gwpick <gw_id> <@user>` — Chọn tay winner cho giveaway\n"
+                     "`.gwreset <gw_id>` — Reset giveaway (xoá danh sách người tham gia)", False),
                 ]
             },
             "mod": {
@@ -404,6 +415,17 @@ class AdminCog(commands.Cog):
                      "Bot tự động log kênh ticket khi seller sắp hết/đã hết hạn (mỗi giờ kiểm tra 1 lần)", False),
                 ]
             },
+            "shoporders": {
+                "emoji": "🧾", "title": "Shop Orders (VietQR)",
+                "fields": [
+                    ("ℹ️ Giới thiệu",
+                     "Tính năng thử nghiệm — bật/tắt qua `.st`. Khi bật, `.done <tiền>` (mục Ticket)\n"
+                     "sẽ tự tạo mã QR VietQR động theo số tiền thay vì chỉ báo hoàn thành.", False),
+                    ("⚙️ Cấu hình (admin, bắt buộc trước khi dùng)",
+                     "`.shopbank <thông tin>` — Cài thông tin ngân hàng (tên NH, số TK, chủ TK...) để tạo QR\n"
+                     "`.setqueue #kênh` — Cài kênh hàng đợi đơn hàng cho seller (nút ✅ xác nhận đã xử lý)", False),
+                ]
+            },
             "admin": {
                 "emoji": "⚙️", "title": "Admin",
                 "fields": [
@@ -442,13 +464,15 @@ class AdminCog(commands.Cog):
             "ai": "ai", "aichat": "ai", "chatai": "ai",
             "log": "log", "logger": "log",
             "admin": "admin", "adm": "admin",
-            "seller": "seller", "shop": "seller",
+            "seller": "seller",
+            "shoporders": "shoporders", "shop": "shoporders", "qr": "shoporders",
+            "vietqr": "shoporders", "donhang": "shoporders", "order": "shoporders",
         }
 
         if topic:
             key = ALIASES.get(topic.lower().strip())
             if not key:
-                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "invite", "dichvu", "giveaway", "mod", "ai", "log", "admin", "seller"])
+                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "invite", "dichvu", "giveaway", "mod", "ai", "log", "admin", "seller", "shoporders"])
                 return await ctx.reply(f"❌ Không tìm thấy mục `{topic}`.\nCác mục hợp lệ: {topics_list}")
             t = TOPICS[key]
             embed = discord.Embed(
@@ -468,15 +492,16 @@ class AdminCog(commands.Cog):
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="🎫 Ticket",    value="`.panel` `.panelbuttons` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke` `.setsl`", inline=True)
-        embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite` `.resetinvites`\n`/invite` `/invitetop`", inline=True)
+        embed.add_field(name="🎫 Ticket",    value="`.panel` `.panelbuttons` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke` `.setsl` `.setrole`", inline=True)
+        embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite` `.verify`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
-        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick`", inline=True)
+        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick` `.gwreset`", inline=True)
         embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.timeout` `.tempban`\n`.warn` `.modlog` `.xoa` `.automod`", inline=True)
         embed.add_field(name="🤖 AI Chat",   value="`.aireset` `.mychat`", inline=True)
         embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo` `.baocao`", inline=True)
         embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel`", inline=True)
         embed.add_field(name="🏪 Seller",    value="`.seller add/remove/list/panel`\n`.myseller`", inline=True)
+        embed.add_field(name="🧾 Shop Orders", value="`.shopbank` `.setqueue`\n*(dùng chung `.done` ở Ticket)*", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
 
