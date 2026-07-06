@@ -300,11 +300,17 @@ def load_data() -> dict:
     thay vì crash hoặc lỡ tay ghi nhầm sang guild khác."""
     guild_id = get_current_guild_id()
     if guild_id is None:
-        log.error("[DATA] ⚠️ load_data() được gọi mà KHÔNG có guild context — trả về default tạm.")
+        # TẠM: in kèm stack trace để xác định chính xác nơi gọi thiếu guild context —
+        # gỡ đoạn traceback này sau khi đã xác định và sửa xong nguồn gốc lỗi.
+        import traceback
+        log.error("[DATA] ⚠️ load_data() được gọi mà KHÔNG có guild context — trả về default tạm.\n"
+                  + "".join(traceback.format_stack(limit=12)))
         return _default_data(0)
     if guild_id in _data_cache:
         return dict(_data_cache[guild_id])
-    log.warning(f"[DATA] ⚠️ Guild {guild_id} chưa có trong cache — trả về default tạm (chưa lưu).")
+    import traceback
+    log.warning(f"[DATA] ⚠️ Guild {guild_id} chưa có trong cache — trả về default tạm (chưa lưu).\n"
+                + "".join(traceback.format_stack(limit=12)))
     return _default_data(guild_id)
 
 def save_data(data: dict):
@@ -417,6 +423,22 @@ def get_panel_channel_id():
 
 def save_panel_channel_id(channel_id: int):
     data = load_data(); data["panel_channel_id"] = channel_id; save_data(data)
+
+# ── Bật/tắt từng nút trong panel ticket (.st) — mặc định TẤT CẢ đều bật ──
+PANEL_BUTTON_KEYS = ["donut", "kingmc", "ff", "accpre", "build", "giveaway", "support"]
+
+def get_panel_buttons_config() -> dict:
+    """{"donut": True, "kingmc": False, ...} — key vắng mặt coi như bật (default)."""
+    return load_data().get("panel_buttons", {})
+
+def is_panel_button_enabled(key: str) -> bool:
+    return get_panel_buttons_config().get(key, True)
+
+def set_panel_button_enabled(key: str, enabled: bool):
+    data = load_data()
+    cfg = data.setdefault("panel_buttons", {})
+    cfg[key] = enabled
+    save_data(data)
 
 def get_qr_path():
     return load_data().get("qr_path", None)

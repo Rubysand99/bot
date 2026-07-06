@@ -238,7 +238,7 @@ class ModCog(commands.Cog):
                     await guild.unban(user, reason="TempBan hết hạn — resume sau restart")
                     await send_log(self.bot, "INFO", f"TempBan hết hạn — {user}",
                         fields=[("👤", f"{user} (`{uid}`)", True), ("⏱️", "Resume sau restart", True)],
-                        color=0x57F287)
+                        color=0x57F287, guild_id=guild_id)
                 except Exception:
                     pass
                 finally:
