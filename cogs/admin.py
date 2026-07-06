@@ -264,6 +264,7 @@ class AdminCog(commands.Cog):
                 "fields": [
                     ("📋 Lệnh cơ bản",
                      "`.panel` — Đăng panel mua/bán\n"
+                     "`.panelbuttons` (alias `.panelbtn`) — Bật/tắt từng nút của panel (riêng theo server)\n"
                      "`.setpanel #kênh` — Cài kênh đăng panel tự động\n"
                      "`.close` — Đóng ticket hiện tại\n"
                      "`.done <tiền>` — Hoàn thành đơn (chỉ admin)\n"
@@ -467,7 +468,7 @@ class AdminCog(commands.Cog):
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="🎫 Ticket",    value="`.panel` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke` `.setsl`", inline=True)
+        embed.add_field(name="🎫 Ticket",    value="`.panel` `.panelbuttons` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke` `.setsl`", inline=True)
         embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite` `.resetinvites`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick`", inline=True)
