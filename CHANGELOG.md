@@ -1,5 +1,23 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.10.2] — 2026-07-07
+
+### 🐛 Sửa lỗi
+- `cogs/admin.py` — `.help giveaway` ghi sai `.gpick`, sửa thành `.gwpick` (tên lệnh thật)
+
+### ♻️ Thay đổi
+- `cogs/admin.py` — Viết lại `.help` đầy đủ: thêm mục Shop Orders (VietQR), bổ sung `.setrole`/`.listroles` (ticket), `.verify`/`.serverlist`/`.leaveguild`/`.testip` (invite), `.gwreset` (giveaway)
+
+---
+
+## [v4.10.1] — 2026-07-07
+
+### 🐛 Sửa lỗi
+- `core/data.py` — Thêm `wait_data_cache_ready()` (asyncio.Event) tránh race condition lúc khởi động
+- `cogs/seller.py`, `cogs/logger.py` — `before_loop` chờ data cache sẵn sàng, không chỉ `wait_until_ready()`
+- `cogs/mod.py` — `on_message` (automod) tự set guild context, tránh đọc config rỗng
+- `cogs/admin_views.py` — **Toàn bộ View/Modal (.st, setup server, buy roles, prefix...) không lưu được data do thiếu guild context** — đổi sang GuildContextView/Modal, vá 3 override `interaction_check`
+
 ## [v4.9.0] — 2026-07-03
 
 ### ✨ Tính năng mới
