@@ -25,6 +25,7 @@ from discord.ext import commands
 from core.data import (
     ADMIN_IDS, load_data, save_data, _uname_plain,
     add_tempban, remove_tempban, get_active_tempbans,
+    set_current_guild,
 )
 from cogs.logger import send_log
 
@@ -1102,6 +1103,11 @@ class ModCog(commands.Cog):
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
             return
+        # FIX: on_message của Cog này chạy trên 1 Task RIÊNG BIỆT do discord.py tự
+        # dispatch cho từng listener — KHÔNG thừa hưởng guild context đã set ở
+        # on_message chính trong bot.py. Thiếu dòng này khiến _get_mod_data() gọi
+        # load_data() mà không có guild context → automod luôn đọc config rỗng/mặc định.
+        set_current_guild(message.guild.id)
         mod = _get_mod_data()
         am  = mod.get("automod", {})
         if not am.get("enabled"):
@@ -1166,7 +1172,7 @@ class ModCog(commands.Cog):
                             ("📝 Lý do",   reason,                          True),
                             ("📌 Kênh",    message.channel.mention,         True),
                             ("💬 Nội dung", f"`{message.content[:200]}`",   False)],
-                    user=message.author, color=0xED4245)
+                    user=message.author, color=0xED4245, guild_id=message.guild.id)
             return
 
         # 5. Anti-spam text
@@ -1182,7 +1188,7 @@ class ModCog(commands.Cog):
             if am.get("log_violations"):
                 await send_log(self.bot, "INFO", f"Anti-Spam Text — {message.author}",
                     fields=[("👤", message.author.mention, True), ("📌", message.channel.mention, True)],
-                    user=message.author, color=0xFEE75C)
+                    user=message.author, color=0xFEE75C, guild_id=message.guild.id)
             return
 
         # 6. Anti-spam ảnh
@@ -1223,7 +1229,7 @@ class ModCog(commands.Cog):
                             ("📌", message.channel.mention, True),
                             ("⏱️ Timeout", "5 phút",        True),
                         ],
-                        user=message.author, color=0xE67E22)
+                        user=message.author, color=0xE67E22, guild_id=message.guild.id)
 
 
 async def setup(bot):

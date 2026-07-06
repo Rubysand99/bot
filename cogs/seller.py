@@ -16,7 +16,10 @@ import datetime
 import discord
 from discord.ext import commands, tasks
 
-from core.data import ADMIN_IDS, load_data, save_data, get_or_fetch_channel, set_current_guild
+from core.data import (
+    ADMIN_IDS, load_data, save_data, get_or_fetch_channel, set_current_guild,
+    wait_data_cache_ready,
+)
 from cogs.logger import send_log
 
 COLOR_OK      = 0x57F287
@@ -173,6 +176,10 @@ class SellerCog(commands.Cog, name="Seller"):
     @check_expiry_loop.before_loop
     async def before_check(self):
         await self.bot.wait_until_ready()
+        # FIX: init_data_cache() (chạy trong on_ready) hoàn tất ĐỘC LẬP và muộn hơn
+        # wait_until_ready() ~2-3s → nếu không chờ thêm, vòng lặp đầu chạy khi
+        # _data_cache chưa nạp xong → "Guild X chưa có trong cache".
+        await wait_data_cache_ready()
 
     # ── .seller ──────────────────────────────────────────────────────────────────
 

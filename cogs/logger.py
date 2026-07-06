@@ -25,7 +25,7 @@ from core.data import (
     ADMIN_IDS, get_cfg_log_rudy, get_log_channels, get_log_channel_by_group,
     set_log_channel_db, get_or_fetch_channel,
     get_monthly_stats, load_giveaways_data, fmt_amount,
-    load_data, set_current_guild,
+    load_data, set_current_guild, wait_data_cache_ready,
 )
 
 LOG_ICONS = {
@@ -282,6 +282,9 @@ class LoggerCog(commands.Cog):
     @daily_report_task.before_loop
     async def before_daily_report(self):
         await self.bot.wait_until_ready()
+        # FIX: xem giải thích ở seller.py: before_check — tránh chạy trước khi
+        # _data_cache nạp xong (init_data_cache() hoàn tất muộn hơn wait_until_ready()).
+        await wait_data_cache_ready()
 
     async def _send_daily_report(self):
         """Build và gửi embed báo cáo 24h qua vào kênh general log.

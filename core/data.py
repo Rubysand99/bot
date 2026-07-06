@@ -45,6 +45,25 @@ def get_current_guild_id() -> int | None:
     return _current_guild_id.get()
 
 
+# ══════════════════════════════════════════
+# DATA CACHE READY EVENT
+# ══════════════════════════════════════════
+# FIX: init_data_cache() chạy trong on_ready nhưng hoàn tất ĐỘC LẬP và có thể MUỘN
+# HƠN thời điểm bot.wait_until_ready() trả về (mất ~2-3s để load hết cache mọi guild).
+# Các tasks.loop nền (check_expiry_loop, daily_report_task...) trước đây chỉ
+# `await bot.wait_until_ready()` trong before_loop → vòng lặp đầu tiên có thể chạy
+# TRƯỚC KHI _data_cache được nạp xong → "Guild X chưa có trong cache" lúc khởi động.
+# Mọi tasks.loop nền đọc/ghi data theo guild PHẢI `await wait_data_cache_ready()`
+# trong before_loop, SAU bot.wait_until_ready().
+_data_cache_ready = asyncio.Event()
+
+def is_data_cache_ready() -> bool:
+    return _data_cache_ready.is_set()
+
+async def wait_data_cache_ready() -> None:
+    await _data_cache_ready.wait()
+
+
 class GuildContextView(discord.ui.View):
     """Thay thế discord.ui.View — tự set guild context trước khi chạy callback của bất kỳ
     nút/select nào bên trong, để load_data()/save_data() thao tác đúng document của guild đó.
@@ -380,6 +399,10 @@ async def init_data_cache(bot) -> None:
 
     guild_list = ", ".join(f"{g.id}(#{_data_cache[g.id].get('ticket', 0):03d})" for g in bot.guilds)
     print(f"[DATA] ✅ Đã kết nối MongoDB — {len(_data_cache)} guild(s): {guild_list}")
+
+    # FIX: báo hiệu cho mọi tasks.loop nền đang chờ (xem wait_data_cache_ready())
+    # rằng _data_cache đã nạp xong, an toàn để load_data()/save_data() theo guild.
+    _data_cache_ready.set()
 
 # ══════════════════════════════════════════
 # CONFIG GETTERS / SETTERS

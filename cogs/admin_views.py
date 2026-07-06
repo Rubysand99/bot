@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import discord
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import View, Button, Modal, TextInput, Select
+from discord.ui import Button, TextInput, Select
 
 from cogs.logger import send_log
 from core.data import (
@@ -28,6 +28,17 @@ from core.data import (
     get_ticket_type_role, set_ticket_type_role, get_all_ticket_type_roles,
     get_ticket_role_ids, set_ticket_role_ids, get_all_ticket_multi_roles,
     BUILDER_BASE_ROLE_ID,
+    set_current_guild,
+    # FIX (lỗi nghiêm trọng): file này trước đây import View/Modal THẲNG từ discord.ui,
+    # nghĩa là MỌI View/Modal trong file (2000+ dòng, ~20 class) KHÔNG hề set guild
+    # context trước khi save_cfg()/save_data()/load_data() chạy trong callback của
+    # chúng → mọi lựa chọn trong Settings (.st) có nguy cơ KHÔNG được lưu, hoặc tệ
+    # hơn là lưu nhầm sang guild khác đang được xử lý ở Task khác cùng lúc.
+    # GuildContextView/GuildContextModal tự set context trong interaction_check()
+    # trước khi gọi callback của bất kỳ Button/Select/Modal nào bên trong — dùng
+    # alias View/Modal như cũ để KHÔNG phải sửa từng class bên dưới.
+    GuildContextView as View,
+    GuildContextModal as Modal,
 )
 
 BOT_VERSION = "4.0.0"
@@ -681,6 +692,11 @@ class SetupMainView(View):
         self.ctx = ctx
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # FIX: override này che mất interaction_check() của GuildContextView (View cha)
+        # nên phải tự set guild context ở đây, nếu không mọi callback bên trong View
+        # này sẽ chạy mà KHÔNG có guild context.
+        if interaction.guild_id:
+            set_current_guild(interaction.guild_id)
         if interaction.user.id not in ADMIN_IDS:
             await interaction.response.send_message("❌ Chỉ admin.")
             return False
@@ -823,7 +839,7 @@ class SetupChannelView(View):
         await interaction.response.send_message(embed=embed, view=v)
 
 
-class CreateChannelModal(discord.ui.Modal, title="➕ Tạo Kênh Mới"):
+class CreateChannelModal(Modal, title="➕ Tạo Kênh Mới"):
     name_input = TextInput(label="Tên kênh", placeholder="vd: 💬・general", max_length=100)
     type_input = TextInput(label="Loại (text/voice/stage/forum)", placeholder="text", default="text", max_length=10)
     private_input = TextInput(label="Private? (yes/no)", placeholder="no", default="no", max_length=3)
@@ -896,7 +912,7 @@ class _RenameChannelSelect(Select):
         if not ch: return await interaction.response.send_message("❌ Không tìm thấy kênh.")
         await interaction.response.send_modal(_RenameChannelModal(ch))
 
-class _RenameChannelModal(discord.ui.Modal):
+class _RenameChannelModal(Modal):
     def __init__(self, ch):
         super().__init__(title=f"✏️ Đổi tên: #{ch.name[:40]}")
         self.ch = ch
@@ -1150,7 +1166,7 @@ class SetupCategoryView(View):
         await _send_channel_select_paged(interaction, _MoveChannelSelect, "📂 Chọn kênh cần di chuyển:")
 
 
-class CreateCategoryModal(discord.ui.Modal, title="➕ Tạo Category"):
+class CreateCategoryModal(Modal, title="➕ Tạo Category"):
     name_input = TextInput(label="Tên category", placeholder="vd: 📁 GENERAL", max_length=100)
     font_input = TextInput(label="Font (normal/bold/italic/sans_bold/script/double)", default="normal", max_length=20)
 
@@ -1190,7 +1206,7 @@ class _RenameCategorySelect(Select):
         if not cat: return await interaction.response.send_message("❌ Không tìm thấy.")
         await interaction.response.send_modal(_RenameCategoryModal(cat))
 
-class _RenameCategoryModal(discord.ui.Modal):
+class _RenameCategoryModal(Modal):
     def __init__(self, cat):
         super().__init__(title=f"✏️ Đổi tên: {cat.name[:40]}")
         self.cat = cat
@@ -1294,7 +1310,7 @@ class SetupRoleView(View):
         await RolePermFlow.start(interaction)
 
 
-class CreateRoleModal(discord.ui.Modal, title="➕ Tạo Role Mới"):
+class CreateRoleModal(Modal, title="➕ Tạo Role Mới"):
     name_input    = TextInput(label="Tên role", max_length=100)
     color_input   = TextInput(label="Màu hex (vd: #FF5733, để trống = mặc định)", required=False, max_length=7)
     hoist_input   = TextInput(label="Hiển thị riêng? (yes/no)", default="no",  max_length=3)
@@ -1343,7 +1359,7 @@ class _DeleteRoleSelect(Select):
             await interaction.response.send_message(f"❌ {e}")
 
 
-class AssignRoleModal(discord.ui.Modal):
+class AssignRoleModal(Modal):
     member_input = TextInput(label="User ID hoặc mention (@user)", max_length=30)
     role_input   = TextInput(label="Role ID hoặc tên role",        max_length=100)
 
@@ -1485,7 +1501,7 @@ class BuyRolesView(View):
         await interaction.response.send_message("\n\n".join(lines))
 
 
-class AddBuyRoleModal(discord.ui.Modal, title="➕ Thêm Buy Role Tier"):
+class AddBuyRoleModal(Modal, title="➕ Thêm Buy Role Tier"):
     role_input = TextInput(label="Role ID", max_length=25)
     min_input  = TextInput(label="Chi tiêu tối thiểu (VNĐ)", placeholder="vd: 50k / 1.5tr / 100000", max_length=15)
     max_input  = TextInput(label="Chi tiêu tối đa (VNĐ, để trống = ∞)", placeholder="vd: 500k / 2tr", required=False, max_length=15)
@@ -1624,7 +1640,7 @@ class _ServerRoleSelect(Select):
             f"✅ Đã cài **{self.title}** → <@&{role_id}>"
         )
 
-class SetPrefixModal(discord.ui.Modal, title="🔤 Đặt Prefix Bot"):
+class SetPrefixModal(Modal, title="🔤 Đặt Prefix Bot"):
     prefix_input = TextInput(label="Prefix mới", placeholder="vd: ! hoặc ? hoặc .", max_length=5)
     async def on_submit(self, interaction: discord.Interaction):
         prefix = self.prefix_input.value.strip()
@@ -1720,6 +1736,10 @@ class MkChannelView(View):
         self.add_item(lock_sel)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # FIX: override này che mất interaction_check() của GuildContextView (View cha),
+        # tự set guild context ở đây (xem SetupMainView để biết chi tiết).
+        if interaction.guild_id:
+            set_current_guild(interaction.guild_id)
         if interaction.user.id != self.ctx.author.id:
             await interaction.response.send_message("❌ Chỉ người gõ lệnh mới dùng được.", ephemeral=True)
             return False
@@ -1768,7 +1788,7 @@ class _MkLockSelect(Select):
         await interaction.response.defer()
 
 
-class MkChannelModal(discord.ui.Modal, title="➕ Tạo Kênh Mới"):
+class MkChannelModal(Modal, title="➕ Tạo Kênh Mới"):
     name_input = TextInput(
         label="Tên kênh",
         placeholder="vd: ✔️•5k+roblox  hoặc  💬・general",
@@ -1972,6 +1992,10 @@ class _PageView(View):
         self.next_btn.disabled = self.page >= len(self.embeds) - 1
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # FIX: đồng bộ với các override khác — view này không đụng data nhưng set
+        # context ở đây cho nhất quán, phòng khi sau này thêm callback đụng data.
+        if interaction.guild_id:
+            set_current_guild(interaction.guild_id)
         return interaction.user.id == self.author_id
 
     @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
