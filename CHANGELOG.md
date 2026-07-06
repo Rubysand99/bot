@@ -1,5 +1,15 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.10.2] — 2026-07-07
+
+### 🐛 Sửa lỗi
+- `cogs/admin.py` — `.help giveaway` ghi sai `.gpick`, sửa thành `.gwpick` (tên lệnh thật)
+
+### ♻️ Thay đổi
+- `cogs/admin.py` — Viết lại `.help` đầy đủ: thêm mục Shop Orders (VietQR), bổ sung `.setrole`/`.listroles` (ticket), `.verify`/`.serverlist`/`.leaveguild`/`.testip` (invite), `.gwreset` (giveaway)
+
+---
+
 ## [v4.10.1] — 2026-07-07
 
 ### 🐛 Sửa lỗi
