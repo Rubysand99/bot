@@ -2,7 +2,6 @@
 cogs/ticket.py — Ticket system: panel, views, modals, close/done logic.
 """
 
-import os
 import io
 import asyncio
 _ticket_create_lock = asyncio.Lock()
@@ -12,27 +11,27 @@ from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
-from discord.ui import Button, TextInput, Select
+from discord.ui import Button, Select
 
 from core.data import (
     ADMIN_IDS, TRANSCRIPT_CHANNEL_ID,
     get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
-    get_cfg_counter_channel, get_cfg_proof_channel,
-    get_panel_channel_id, save_panel_channel_id,
-    get_buy_roles, get_user_total_spent,
+    get_cfg_counter_channel,
+    save_panel_channel_id,
+    get_user_total_spent,
     add_user_spent, add_user_spent_server,
-    get_user_spent_by_server, get_user_spent_all_servers,
     save_ticket_record, get_user_ticket_history, get_monthly_stats,
     load_data, save_data, parse_amount, fmt_amount, is_staff_member,
-    _uname, _uname_plain, can_use_dangerous_cmd,
-    get_seller_category, save_seller_category,
+    _uname_plain,
+    save_seller_category,
     remove_seller_category, get_all_seller_categories,
     get_or_fetch_channel,
-    get_ticket_type_role, set_ticket_type_role, get_all_ticket_type_roles,
+    get_all_ticket_type_roles, set_ticket_type_role,
     BUILDER_BASE_ROLE_ID as _BUILDER_ROLE_ID,
-    get_ticket_role_id, set_ticket_role_id, get_all_ticket_role_ids,
+    set_ticket_role_id, get_all_ticket_role_ids,
     get_ticket_role_ids,
-    GuildContextView as View, GuildContextModal as Modal,
+    GuildContextView as View,
+    set_current_guild,
 )
 from cogs.logger import send_log
 
@@ -1134,6 +1133,11 @@ class TicketCog(commands.Cog):
         # Chỉ áp dụng trong kênh ticket (topic có dạng user_id||...)
         if not (message.channel.topic and "|" in message.channel.topic):
             return
+        # FIX: listener này chạy Task riêng do discord.py tự dispatch, không thừa hưởng
+        # guild context set ở on_message chính (bot.py). Thiếu dòng này khiến
+        # load_data() bên dưới luôn đọc default (True) thay vì cấu hình thật của guild.
+        if message.guild:
+            set_current_guild(message.guild.id)
         # Bỏ qua nếu tính năng đang bị tắt qua .st
         if not load_data().get("cfg_ticket_relay", True):
             return
@@ -1229,7 +1233,6 @@ class TicketCog(commands.Cog):
         if not user_id: return await ctx.reply("❌ Không đọc được thông tin buyer từ ticket.")
 
         trade_type = parts[2] if len(parts) > 2 else None
-        item_key   = parts[3] if len(parts) > 3 else None
         server_key = parts[5] if len(parts) > 5 else None  # slot 5: donut / kingmc / accpre / None
 
         if trade_type not in ("sell", "buy"):
@@ -1495,7 +1498,6 @@ class TicketCog(commands.Cog):
             embed.add_field(name="📈 Trung bình/đơn", value=f"**{fmt_amount(avg)}**", inline=True)
 
             # Top 3 buyer
-            from collections import Counter
             buyer_totals: dict[int, int] = {}
             for t in records:
                 uid = t.get("user_id")

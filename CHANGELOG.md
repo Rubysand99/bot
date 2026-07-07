@@ -1,5 +1,21 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.10.3] — 2026-07-08
+
+### 🐛 Sửa lỗi
+- `cogs/invite.py` — **`on_member_join` không set guild context** → mọi `_add_invite()` (total/unverify) khi có người join **không được lưu vào MongoDB** (xác nhận qua log lỗi thực tế `[DATA] ❌ save_data() được gọi mà KHÔNG có guild context`)
+- `cogs/invite.py` — **`_handle_verify_result` (callback từ `verify_server.py` qua HTTP, Task hoàn toàn tách biệt) không có guild context** → verify xong nhưng **không -1 unverify/+1 verify được**, lỗi nặng nhất vì âm thầm phá vỡ toàn bộ hệ thống đếm invite mỗi lần user verify
+- `cogs/invite.py` — **`on_member_remove` không set guild context** → -1 verify/+1 left khi user rời server cũng không được lưu
+- `cogs/admin_views.py` — `CreateRoleModal.on_submit`: gọi `log.debug(...)` nhưng file không import `log` → `NameError` (crash) khi nhập màu hex sai lúc tạo role
+- `cogs/ticket.py` — `on_message` (webhook relay "Ruby bot") đọc `load_data()` không có guild context → toggle bật/tắt qua `.st` không có tác dụng thật, luôn dùng mặc định
+
+### ♻️ Thay đổi
+- Rà soát toàn bộ repo: dọn ~70 import không dùng, biến local chết (`found_mid`, `invite_valid`, `notif`, `any_set`, `item_key`...), f-string thừa không có placeholder, xoá `global` thừa không cần thiết trong `core/data.py`
+- `.gitignore` — bổ sung `__pycache__/`, `*.pyc`, `.env`, `*.log`, `venv/` (trước đây chỉ ignore `nohup.out`)
+- `/botinfo` — dùng nốt `import platform` (trước đây import thừa không dùng) để thêm field 🐍 Python version
+
+---
+
 ## [v4.10.2] — 2026-07-07
 
 ### 🐛 Sửa lỗi

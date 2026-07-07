@@ -18,12 +18,13 @@ from discord.ext import commands
 
 from cogs.logger import send_log
 from core.data import (
-    ADMIN_IDS, load_data, save_data, _uname, _uname_plain,
+    ADMIN_IDS, load_data, save_data, _uname,
     load_global_data, save_global_data,
     get_member_inviters, save_member_inviters,
     get_pending_joins, save_pending_joins,
-    get_ip_records, save_ip_records,
+    get_ip_records,
     atomic_register_ip, get_ip_users_mongo,
+    set_current_guild,
 )
 from verify_server import (
     create_token, build_verify_url, VERIFY_CALLBACKS,
@@ -384,7 +385,7 @@ class InviteCog(commands.Cog):
                 save_member_inviters(_member_inviters)
 
             await ctx.reply(f"✅ Đã verify **{member}** thành công.")
-            await send_log(self.bot, "INVITE_VERIFY", f"Force verify bởi admin",
+            await send_log(self.bot, "INVITE_VERIFY", "Force verify bởi admin",
                 fields=[
                     ("👤 Member",  f"{member} (`{member.id}`)", True),
                     ("⚙️ Admin",   str(ctx.author),             True),
@@ -734,10 +735,10 @@ class InviteCog(commands.Cog):
             )
         else:
             confirm_text = (
-                f"⚠️ **Xác nhận reset ALL-TIME**\n\n"
-                f"Bạn sắp xóa vĩnh viễn toàn bộ lịch sử invite all-time của **toàn bộ server**.\n"
-                f"Hành động này **không thể hoàn tác**!\n\n"
-                f"Bấm ✅ để xác nhận hoặc ❌ để huỷ."
+                "⚠️ **Xác nhận reset ALL-TIME**\n\n"
+                "Bạn sắp xóa vĩnh viễn toàn bộ lịch sử invite all-time của **toàn bộ server**.\n"
+                "Hành động này **không thể hoàn tác**!\n\n"
+                "Bấm ✅ để xác nhận hoặc ❌ để huỷ."
             )
 
         class ConfirmView(discord.ui.View):
@@ -812,6 +813,12 @@ class InviteCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
+        # FIX: listener này chạy trên 1 Task RIÊNG do discord.py tự dispatch, KHÔNG
+        # thừa hưởng guild context set ở on_message/before_invoke. Thiếu dòng này khiến
+        # _add_invite()/load_data()/save_data() bên dưới lưu dữ liệu KHÔNG thành công
+        # (đã xác nhận qua log lỗi thực tế: "load_data() được gọi mà KHÔNG có guild context").
+        set_current_guild(member.guild.id)
+
         # Welcome ping (xóa sau 10s)
         ch_id = self.WELCOME_GUILDS.get(member.guild.id)
         if ch_id:
@@ -864,7 +871,7 @@ class InviteCog(commands.Cog):
 
         # Log member join
         inviter_member = member.guild.get_member(inviter_id) if inviter_id else None
-        await send_log(self.bot, "INVITE_JOIN", f"Thành viên mới tham gia",
+        await send_log(self.bot, "INVITE_JOIN", "Thành viên mới tham gia",
             fields=[
                 ("👤 Thành viên",  f"{member} (`{member.id}`)",        True),
                 ("📨 Được mời bởi", str(inviter_member) if inviter_member else (f"ID:{inviter_id}" if inviter_id else "Không rõ"), True),
@@ -926,6 +933,13 @@ class InviteCog(commands.Cog):
 
     async def _handle_verify_result(self, member: discord.Member, result: dict):
         """Xử lý kết quả sau khi user click verify link."""
+        # FIX: hàm này được gọi từ VERIFY_CALLBACKS, do verify_server.py (HTTP request
+        # riêng biệt, hoàn toàn KHÔNG cùng Task với on_message/before_invoke) trigger —
+        # nên contextvar guild_id CHƯA từng được set. Thiếu dòng này khiến mọi
+        # _add_invite()/load_data()/save_data() bên dưới chạy không có guild context
+        # → invite count KHÔNG được lưu (xem log lỗi thực tế đã gặp).
+        set_current_guild(member.guild.id)
+
         user_id    = result["user_id"]
         inviter_id = result["inviter_id"]
         ip         = result["ip"]
@@ -990,7 +1004,7 @@ class InviteCog(commands.Cog):
 
         # ── Xác định tính hợp lệ của invite ──
         # Invite chỉ được đếm khi: verify thành công + không IP trùng + acc >= 1 ngày
-        invite_valid = (not is_fake) and (not is_new_account)
+        # (logic thực tế xử lý theo từng nhánh is_new_account/is_fake bên dưới)
 
         if is_new_account:
             # Đánh dấu fake (tài khoản mới < 1 ngày): -1 unverify, +1 fake
@@ -1001,10 +1015,10 @@ class InviteCog(commands.Cog):
             inviter_member = member.guild.get_member(inviter_id) if member.guild and inviter_id else None
             try:
                 notice = (
-                    f"⚠️ **Thông báo từ TuyTam Store**\n\n"
-                    f"Tài khoản của bạn đã verify thành công. Tuy nhiên, tài khoản của bạn được tạo "
-                    f"**chưa đến 1 ngày** nên bị xem là tài khoản mới và **không được tính vào invite** của người mời.\n\n"
-                    f"Bạn vẫn có thể sử dụng server bình thường."
+                    "⚠️ **Thông báo từ TuyTam Store**\n\n"
+                    "Tài khoản của bạn đã verify thành công. Tuy nhiên, tài khoản của bạn được tạo "
+                    "**chưa đến 1 ngày** nên bị xem là tài khoản mới và **không được tính vào invite** của người mời.\n\n"
+                    "Bạn vẫn có thể sử dụng server bình thường."
                 )
                 await member.send(notice)
             except discord.Forbidden:
@@ -1088,6 +1102,10 @@ class InviteCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
+        # FIX: cùng lý do với on_member_join — listener chạy Task riêng, phải tự set
+        # guild context trước khi đụng vào cache_invites()/_add_invite()/save_*().
+        set_current_guild(member.guild.id)
+
         await cache_invites(member.guild)
 
         if member.id in _pending_joins:

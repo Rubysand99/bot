@@ -11,21 +11,17 @@ from datetime import datetime, timezone
 import discord
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import Button, TextInput, Select
+from discord.ui import Button, TextInput
 
 from cogs.logger import send_log
 from core.data import (
-    ADMIN_IDS, ADMIN_TUYTAM_ID, ADMIN_RUBY_ID, get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
+    ADMIN_IDS, ADMIN_TUYTAM_ID, ADMIN_RUBY_ID,
     get_cfg_stock_category, get_cfg_sold_category,
-    get_cfg_counter_channel, get_cfg_legit_channel,
-    get_cfg_proof_channel, get_cfg_ai_channel, get_cfg_font, set_cfg_font,
-    save_cfg, load_data, save_data, get_buy_roles, save_buy_roles,
-    get_user_total_spent, add_user_spent, get_price_sections, save_price_sections,
-    can_use_dangerous_cmd, parse_amount, fmt_amount, _uname, _uname_plain,
+    get_cfg_font,
+    load_data, get_price_sections,
+    can_use_dangerous_cmd, parse_amount, fmt_amount,
     get_or_fetch_channel,
-    get_ticket_type_role, set_ticket_type_role, get_all_ticket_type_roles,
-    BUILDER_BASE_ROLE_ID,
-    add_seller_sale, get_seller_sales_stats,
+    add_seller_sale,
     add_pending_sold_price, get_pending_sold_price, get_all_pending_sold_price,
     remove_pending_sold_price, set_pending_sold_dm, mark_pending_sold_escalated,
     mark_pending_sold_resolved, get_resolved_sold_price,
@@ -35,11 +31,11 @@ from core.data import (
 from cogs.seller import is_active_seller
 
 from cogs.admin_views import (
-    SettingsView, SetupMainView, PriceManagerView, BuyRolesView,
-    build_sv_embed, _build_ticket_roles_embed, FONT_LABELS,
-    _apply_font, _detect_channel_parts, _rebuild_name,
-    auto_give_buy_roles, _DEFAULT_PRICE_SECTIONS,
-    TicketRoleConfigView, MkChannelView,
+    SettingsView, SetupMainView, PriceManagerView,
+    build_sv_embed, FONT_LABELS,
+    _detect_channel_parts, _rebuild_name,
+    _DEFAULT_PRICE_SECTIONS,
+    MkChannelView,
 )
 
 BOT_VERSION = "4.5.0"
@@ -694,6 +690,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🏓 Latency",  value=f"**{round(self.bot.latency*1000)}ms**", inline=True)
         embed.add_field(name="🌐 Servers",  value=f"**{len(self.bot.guilds)}**",            inline=True)
         embed.add_field(name="📋 Version",  value=f"`v{BOT_VERSION}`",                     inline=True)
+        embed.add_field(name="🐍 Python",   value=f"`{platform.python_version()}`",        inline=True)
         if self.bot.user.avatar: embed.set_thumbnail(url=self.bot.user.avatar.url)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -775,7 +772,7 @@ class _SoldPriceModal(Modal, title="💰 Nhập giá đơn sold"):
         )
 
         bot_ref = interaction.client
-        await send_log(bot_ref, "INFO", f"Sold-stock — điền giá thủ công",
+        await send_log(bot_ref, "INFO", "Sold-stock — điền giá thủ công",
             fields=[
                 ("👤 Seller",  f"<@{seller_id}>",              True),
                 ("💰 Giá",     fmt_amount(amount),              True),

@@ -67,10 +67,18 @@ biết đang thao tác guild nào, `core/data.py` dùng 1 **`contextvars.Context
 6. Khi thêm 1 Cog MỚI có `on_ready`/`tasks.loop`/`cog_load` lặp qua `bot.guilds` — **luôn** gọi
    `set_current_guild(guild.id)` đầu mỗi vòng lặp, TRƯỚC bất kỳ lệnh gọi `load_data()`/`send_log()` nào.
 
-### Debug lỗi "chưa có trong cache" / "KHÔNG có guild context"
-Nếu log xuất hiện 2 dòng lỗi này (1 lần/guild) lúc khởi động mà không rõ nguồn — `load_data()` trong
-`core/data.py` hiện có in kèm `traceback.format_stack()` ở 2 nhánh cảnh báo (tạm thời, để debug) — gửi log
-kèm stack trace đó để xác định chính xác dòng code gây lỗi. **Nhớ gỡ đoạn traceback này sau khi xác định xong.**
+### Các vị trí ĐÃ TỪNG bị lỗi này (đã fix ở v4.10.3 — tham khảo khi thêm code mới tương tự)
+- `cogs/invite.py: on_member_join` — thiếu `set_current_guild(member.guild.id)` đầu hàm → `_add_invite()` không lưu được khi có người join
+- `cogs/invite.py: _handle_verify_result` — callback được `verify_server.py` trigger qua HTTP (Task hoàn toàn tách biệt, không thừa hưởng context từ đâu cả) → phải tự `set_current_guild()` đầu hàm
+- `cogs/invite.py: on_member_remove` — cùng lỗi, ảnh hưởng -1 verify/+1 left khi user rời server
+- `cogs/ticket.py: on_message` (webhook relay "Ruby bot") — đọc `load_data()` không có context → toggle `.st` không có tác dụng thật
+
+Log của `load_data()`/`save_data()` giờ chỉ in 1 dòng cảnh báo ngắn (KHÔNG còn dump full stack trace
+`traceback.format_stack()` như trước — đoạn debug tạm đó đã được gỡ ở v4.10.3 sau khi xác định xong
+các nguồn gốc phổ biến nhất, tránh flood log hàng trăm dòng mỗi lần listener chạy). Nếu gặp lỗi này ở
+vị trí MỚI (không nằm trong danh sách trên), cách debug nhanh nhất: thêm tạm 1 dòng
+`print(guild_id, flush=True)` + kiểm tra hàm gọi có phải listener/task chạy Task riêng không
+(xem quy tắc #3 và #4 ở trên).
 
 ---
 

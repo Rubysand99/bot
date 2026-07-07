@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.10.2"
-BOT_UPDATED = "2026-07-07"
+BOT_VERSION = "4.10.3"
+BOT_UPDATED = "2026-07-08"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
 TOKEN = os.getenv("TOKEN")
@@ -87,7 +87,7 @@ async def load_cogs():
 async def on_ready():
     from core.data import init_data_cache, set_current_guild
     from cogs.ticket import TicketPanel, TicketButtons, sync_ticket_counter
-    from cogs.giveaway import GiveawayView, GiveawayCog
+    from cogs.giveaway import GiveawayView
     from cogs.admin import resume_pending_sold_views
 
     await init_data_cache(bot)

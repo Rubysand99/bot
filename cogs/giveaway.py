@@ -11,12 +11,12 @@ import discord
 from cogs.logger import send_log
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import Button, TextInput, Select
+from discord.ui import Button, Select
 
 from core.data import (
     ADMIN_IDS, load_giveaways_data, save_giveaways_data,
     _uname, _uname_plain, get_or_fetch_channel,
-    GuildContextView as View, GuildContextModal as Modal,
+    GuildContextView as View,
 )
 
 # ── State in-memory ──
@@ -417,10 +417,10 @@ class GiveawayCog(commands.Cog):
         except:
             return await interaction.response.send_message("❌ GW ID không hợp lệ!", ephemeral=True)
 
-        found_mid, gw = None, None
-        for mid, g in active_giveaways.items():
+        gw = None
+        for g in active_giveaways.values():
             if g.get("gw_id") == ref:
-                found_mid, gw = mid, g
+                gw = g
                 break
 
         if not gw:
@@ -488,10 +488,10 @@ class GiveawayCog(commands.Cog):
         except ValueError:
             return await ctx.reply("❌ User ID không hợp lệ!")
 
-        found_mid, found_gw = None, None
-        for mid, gw in active_giveaways.items():
+        found_gw = None
+        for gw in active_giveaways.values():
             if gw.get("gw_id") == ref:
-                found_mid, found_gw = mid, gw
+                found_gw = gw
                 break
 
         if not found_gw:

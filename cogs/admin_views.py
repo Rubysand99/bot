@@ -11,23 +11,15 @@ import asyncio
 from datetime import datetime, timezone
 
 import discord
-from discord import app_commands
-from discord.ext import commands
 from discord.ui import Button, TextInput, Select
 
-from cogs.logger import send_log
 from core.data import (
-    ADMIN_IDS, get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
-    get_cfg_stock_category, get_cfg_sold_category,
-    get_cfg_counter_channel, get_cfg_legit_channel,
-    get_cfg_proof_channel, get_cfg_ai_channel, get_cfg_font, set_cfg_font,
-    save_cfg, load_data, save_data, get_buy_roles, save_buy_roles,
-    get_user_total_spent, add_user_spent, get_price_sections, save_price_sections,
-    can_use_dangerous_cmd, parse_amount, fmt_amount, _uname, _uname_plain,
-    get_or_fetch_channel,
-    get_ticket_type_role, set_ticket_type_role, get_all_ticket_type_roles,
+    ADMIN_IDS,
+    get_cfg_font, set_cfg_font,
+    save_cfg, load_data, get_buy_roles, save_buy_roles,
+    get_price_sections, save_price_sections,
+    parse_amount, fmt_amount,
     get_ticket_role_ids, set_ticket_role_ids, get_all_ticket_multi_roles,
-    BUILDER_BASE_ROLE_ID,
     set_current_guild,
     # FIX (lỗi nghiêm trọng): file này trước đây import View/Modal THẲNG từ discord.ui,
     # nghĩa là MỌI View/Modal trong file (2000+ dòng, ~20 class) KHÔNG hề set guild
@@ -1320,8 +1312,8 @@ class CreateRoleModal(Modal, title="➕ Tạo Role Mới"):
         color = discord.Color.default()
         if self.color_input.value.strip():
             try: color = discord.Color(int(self.color_input.value.strip().lstrip("#"), 16))
-            except Exception as _e:
-                log.debug(f"[SILENT] {_e}")
+            except Exception:
+                pass
         hoist       = self.hoist_input.value.strip().lower() in ("yes", "y", "true", "1")
         mentionable = self.mention_input.value.strip().lower() in ("yes", "y", "true", "1")
         try:
@@ -2023,7 +2015,7 @@ def _role_list_embeds(guild: discord.Guild) -> tuple[list[discord.Embed], list]:
         lines = [f"`{start + j:>3}.` {r.mention}" for j, r in enumerate(chunk)]
         half  = (len(lines) + 1) // 2
         embed = discord.Embed(
-            title       = f"🏷️ Chọn Role" + (f" (trang {page+1}/{total_pages})" if total_pages > 1 else ""),
+            title       = "🏷️ Chọn Role" + (f" (trang {page+1}/{total_pages})" if total_pages > 1 else ""),
             description = "Nhập số thứ tự, cách nhau bởi dấu phẩy.\nVí dụ: `1, 3, 5`",
             color       = 0x5865F2,
         )
@@ -2047,7 +2039,7 @@ def _channel_list_embeds(guild: discord.Guild) -> tuple[list[discord.Embed], lis
         lines = [f"`{start + j:>3}.` {c.mention}" for j, c in enumerate(chunk)]
         half  = (len(lines) + 1) // 2
         embed = discord.Embed(
-            title       = f"📋 Chọn Kênh" + (f" (trang {page+1}/{total_pages})" if total_pages > 1 else ""),
+            title       = "📋 Chọn Kênh" + (f" (trang {page+1}/{total_pages})" if total_pages > 1 else ""),
             description = "Nhập số thứ tự, cách nhau bởi dấu phẩy.\nVí dụ: `1, 2, 4`\nGõ `all` để chọn tất cả.",
             color       = 0x5865F2,
         )

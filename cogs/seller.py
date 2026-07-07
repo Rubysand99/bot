@@ -17,7 +17,7 @@ import discord
 from discord.ext import commands, tasks
 
 from core.data import (
-    ADMIN_IDS, load_data, save_data, get_or_fetch_channel, set_current_guild,
+    ADMIN_IDS, load_data, save_data, set_current_guild,
     wait_data_cache_ready,
 )
 from cogs.logger import send_log

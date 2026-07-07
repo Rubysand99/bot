@@ -319,24 +319,23 @@ def load_data() -> dict:
     thay vì crash hoặc lỡ tay ghi nhầm sang guild khác."""
     guild_id = get_current_guild_id()
     if guild_id is None:
-        # TẠM: in kèm stack trace để xác định chính xác nơi gọi thiếu guild context —
-        # gỡ đoạn traceback này sau khi đã xác định và sửa xong nguồn gốc lỗi.
-        import traceback
-        log.error("[DATA] ⚠️ load_data() được gọi mà KHÔNG có guild context — trả về default tạm.\n"
-                  + "".join(traceback.format_stack(limit=12)))
+        # Đã xác định xong các nguồn gốc phổ biến nhất gây lỗi này (on_member_join/remove,
+        # verify callback ở invite.py, on_message relay ở ticket.py — xem CHANGELOG v4.10.3
+        # và AI_CONTEXT.md mục Multi-guild). Chỉ log 1 dòng ngắn, KHÔNG dump full stack trace
+        # nữa để tránh flood log (trước đây in kèm traceback.format_stack() gây hàng trăm dòng
+        # log lặp lại mỗi lần listener chạy).
+        log.error("[DATA] ⚠️ load_data() được gọi mà KHÔNG có guild context — trả về default tạm. "
+                  "Nếu vừa thêm listener/task mới, nhớ set_current_guild() đầu hàm.")
         return _default_data(0)
     if guild_id in _data_cache:
         return dict(_data_cache[guild_id])
-    import traceback
-    log.warning(f"[DATA] ⚠️ Guild {guild_id} chưa có trong cache — trả về default tạm (chưa lưu).\n"
-                + "".join(traceback.format_stack(limit=12)))
+    log.warning(f"[DATA] ⚠️ Guild {guild_id} chưa có trong cache — trả về default tạm (chưa lưu).")
     return _default_data(guild_id)
 
 def save_data(data: dict):
     """FIX: Dùng asyncio.create_task thay ensure_future. Ghi vào cache của guild đang xử lý
     (lấy từ contextvar) — KHÔNG cần truyền guild_id, mọi cog cũ gọi save_data(data) vẫn hoạt động
     y nguyên, chỉ khác là giờ nó tự biết ghi đúng guild nào."""
-    global _data_cache
     guild_id = get_current_guild_id()
     if guild_id is None:
         log.error("[DATA] ❌ save_data() được gọi mà KHÔNG có guild context — dữ liệu KHÔNG được lưu để tránh ghi nhầm guild.")
@@ -370,7 +369,6 @@ def save_global_data(data: dict):
 async def ensure_guild_loaded(guild_id: int) -> None:
     """Gọi khi bot join guild mới giữa chừng (on_guild_join) để guild đó có cache ngay,
     không phải đợi restart bot."""
-    global _data_cache
     if guild_id not in _data_cache:
         _data_cache[guild_id] = await _mongo_load(guild_id)
         log.info(f"[DATA] ✅ Đã load cache cho guild mới {guild_id}")
@@ -640,7 +638,6 @@ async def get_ticket_number(guild_id: int) -> str:
             await col.update_one({"_id": f"guild_{guild_id}"}, {"$set": {"ticket": num}}, upsert=True)
         except Exception as e:
             log.error(f"[DATA] ❌ Lỗi cập nhật ticket counter (guild {guild_id}): {e}")
-        global _data_cache
         if guild_id in _data_cache:
             _data_cache[guild_id]["ticket"] = num
         return f"{num:03d}"
@@ -898,7 +895,6 @@ def set_log_channel_db(group: str, channel_id: int):
     save_data(data)
 
 def is_staff_member(member) -> bool:
-    import discord
     if member.id in ADMIN_IDS: return True
     guild = member.guild
     sr = guild.get_role(get_cfg_support_role())
@@ -1061,7 +1057,6 @@ async def atomic_register_ip(ip: str, user_id: int) -> list[int]:
         doc = await col.find_one({"_id": "main"}, {key: 1})
         users = (doc or {}).get("_ip_records", {}).get(ip.replace(".", "_"), [])
         # Sync lại cache global
-        global _global_cache
         if _global_cache is not None:
             _global_cache.setdefault("_ip_records", {})[ip.replace(".", "_")] = users
         return users

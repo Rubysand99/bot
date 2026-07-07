@@ -18,13 +18,12 @@ Log format: plain text thay vì embed để không đẩy trôi history.
 """
 
 from datetime import datetime, timezone, timedelta
-import asyncio
 import discord
 from discord.ext import commands, tasks
 from core.data import (
     ADMIN_IDS, get_cfg_log_rudy, get_log_channels, get_log_channel_by_group,
     set_log_channel_db, get_or_fetch_channel,
-    get_monthly_stats, load_giveaways_data, fmt_amount,
+    load_giveaways_data, fmt_amount,
     load_data, set_current_guild, wait_data_cache_ready,
 )
 
@@ -610,12 +609,10 @@ class LoggerCog(commands.Cog):
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc),
         )
-        any_set = False
         for grp, label in LOG_GROUP_LABELS.items():
             ch_id = get_log_channel(grp)
             if ch_id:
                 embed.add_field(name=label, value=f"<#{ch_id}>", inline=True)
-                any_set = True
             else:
                 embed.add_field(name=label, value="*(chưa cài)*", inline=True)
 
