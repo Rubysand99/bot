@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.10.3"
+BOT_VERSION = "4.11.0"
 BOT_UPDATED = "2026-07-08"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
@@ -222,8 +222,17 @@ async def on_message(message: discord.Message):
 # LEGIT / VOUCH HANDLERS
 # ══════════════════════════════════════════
 
+def _parse_emoji(emoji_str: str):
+    """Chuyển chuỗi emoji lưu trong DB (unicode hoặc '<:name:id>') thành dạng
+    add_reaction() dùng được. Custom emoji không hợp lệ (bot không cùng server,
+    id sai...) → fallback về ✅ để không làm crash handler."""
+    try:
+        return discord.PartialEmoji.from_str((emoji_str or "").strip() or "✅")
+    except Exception:
+        return "✅"
+
 async def _handle_legit(message: discord.Message):
-    from core.data import get_cfg_legit_channel
+    from core.data import get_cfg_legit_channel, get_cfg_legit_emoji
     IGNORED = {628400349979344919}
     if message.author.id in IGNORED: return
     legit_ch = get_cfg_legit_channel()
@@ -239,12 +248,12 @@ async def _handle_legit(message: discord.Message):
     base    = name[:match.start()] if match else name
     try:
         await ch.edit(name=f"{base}-{new_num}", reason=f"+1 legit bởi {message.author}")
-        await message.add_reaction("✅")
+        await message.add_reaction(_parse_emoji(get_cfg_legit_emoji()))
     except Exception:
         pass
 
 async def _handle_vouch(message: discord.Message):
-    from core.data import get_cfg_proof_channel
+    from core.data import get_cfg_proof_channel, get_cfg_vouch_emoji
     IGNORED = {628400349979344919}
     if message.author.id in IGNORED: return
     proof_ch = get_cfg_proof_channel()
@@ -257,7 +266,7 @@ async def _handle_vouch(message: discord.Message):
     base    = name[:match.start()] if match else name
     try:
         await ch.edit(name=f"{base}-{new_num}", reason=f"+1 vouch bởi {message.author}")
-        await message.add_reaction("✅")
+        await message.add_reaction(_parse_emoji(get_cfg_vouch_emoji()))
     except Exception:
         pass
 
@@ -273,7 +282,7 @@ async def _backfill_legit():
     Tin nào khớp +1legit mà chưa có reaction ✅ từ bot → thả reaction và đổi tên kênh +1.
     Fetch lại tên kênh sau mỗi lần edit để tránh số đếm bị sai."""
     await asyncio.sleep(3)  # Chờ cache sẵn sàng
-    from core.data import get_cfg_legit_channel, get_or_fetch_channel, set_current_guild
+    from core.data import get_cfg_legit_channel, get_cfg_legit_emoji, get_or_fetch_channel, set_current_guild
     IGNORED = {628400349979344919}
 
     for guild in bot.guilds:
@@ -282,6 +291,8 @@ async def _backfill_legit():
         if not legit_ch_id:
             print(f"[BACKFILL] ⚠️ Guild {guild.id} chưa cài legit channel, bỏ qua.")
             continue
+        emoji_str    = get_cfg_legit_emoji()
+        target_emoji = _parse_emoji(emoji_str)
 
         channel = await get_or_fetch_channel(bot, legit_ch_id)
         if not channel:
@@ -300,10 +311,10 @@ async def _backfill_legit():
                 if msg.author.id in IGNORED: continue
                 if not _re.match(r"^\+1\s*legit\b", msg.content.strip(), _re.IGNORECASE): continue
 
-                already = any(r.emoji == "✅" and r.me for r in msg.reactions)
+                already = any(str(r.emoji) == str(target_emoji) and r.me for r in msg.reactions)
                 if not already:
                     try:
-                        await msg.add_reaction("✅")
+                        await msg.add_reaction(target_emoji)
                     except Exception as e:
                         print(f"[BACKFILL] ❌ Không thả được reaction msg {msg.id}: {e}")
                     # Đổi tên kênh +1, fetch lại channel để lấy tên mới nhất

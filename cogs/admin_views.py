@@ -16,6 +16,8 @@ from discord.ui import Button, TextInput, Select
 from core.data import (
     ADMIN_IDS,
     get_cfg_font, set_cfg_font,
+    get_cfg_legit_emoji, set_cfg_legit_emoji,
+    get_cfg_vouch_emoji, set_cfg_vouch_emoji,
     save_cfg, load_data, get_buy_roles, save_buy_roles,
     get_price_sections, save_price_sections,
     parse_amount, fmt_amount,
@@ -226,6 +228,29 @@ class PriceManagerView(View):
     async def preview(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message(embed=build_sv_embed())
 
+class EmojiConfigModal(Modal):
+    """Modal đổi emoji bot thả khi +1legit / done (vouch) — thay ✅ mặc định bằng bất kỳ
+    emoji nào (unicode hoặc custom server emoji dạng <:name:id>)."""
+    def __init__(self, cfg_key: str, title: str, current: str):
+        super().__init__(title=f"😀 {title}")
+        self.cfg_key = cfg_key
+        self.emoji_input = TextInput(
+            label="Emoji (unicode hoặc <:tên:id>)",
+            default=current,
+            placeholder="vd: ✅  hoặc  <:check:123456789012345678>",
+            max_length=100,
+        )
+        self.add_item(self.emoji_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        value = self.emoji_input.value.strip()
+        if not value:
+            return await interaction.response.send_message("❌ Emoji không được để trống.", ephemeral=True)
+        save_cfg(self.cfg_key, value)
+        await interaction.response.send_message(f"✅ Đã cài emoji → {value}")
+
 # ══════════════════════════════════════════
 # SETTINGS VIEW
 # ══════════════════════════════════════════
@@ -344,6 +369,22 @@ class SettingsView(View):
             "*(Khi bật: tin admin gửi trong ticket sẽ bị xoá và gửi lại y hệt qua webhook "
             "tên **\"Ruby bot\"**, dùng avatar của chính bot.)*",
             ephemeral=True,
+        )
+
+    @discord.ui.button(label="😀 Legit Emoji",     style=discord.ButtonStyle.secondary, row=4)
+    async def legit_emoji(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(
+            EmojiConfigModal("cfg_legit_emoji", "Legit Emoji", get_cfg_legit_emoji())
+        )
+
+    @discord.ui.button(label="📸 Vouch Emoji",     style=discord.ButtonStyle.secondary, row=4)
+    async def vouch_emoji(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        await interaction.response.send_modal(
+            EmojiConfigModal("cfg_vouch_emoji", "Vouch Emoji", get_cfg_vouch_emoji())
         )
 
 

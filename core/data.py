@@ -164,6 +164,8 @@ def _default_data(guild_id: int) -> dict:
         "cfg_counter_channel": COUNTER_CHANNEL_ID,
         "cfg_legit_channel":   LEGIT_CHANNEL_ID,
         "cfg_proof_channel":   PROOF_CHANNEL_ID,
+        "cfg_legit_emoji":     "✅",   # Emoji bot thả khi +1legit — đổi qua .st
+        "cfg_vouch_emoji":     "✅",   # Emoji bot thả khi done (vouch) — đổi qua .st
         "cfg_ai_channel":      0,
         "cfg_stock_category":  STOCK_CATEGORY_ID,
         "cfg_sold_category":   SOLD_CATEGORY_ID,
@@ -416,9 +418,17 @@ def get_cfg_counter_channel() -> int: return load_data().get("cfg_counter_channe
 def get_cfg_legit_channel()   -> int: return load_data().get("cfg_legit_channel", LEGIT_CHANNEL_ID)
 def get_cfg_proof_channel()   -> int: return load_data().get("cfg_proof_channel", PROOF_CHANNEL_ID)
 def get_cfg_ai_channel()      -> int: return load_data().get("cfg_ai_channel", 0)
+def get_cfg_legit_emoji()     -> str: return load_data().get("cfg_legit_emoji", "✅")
+def get_cfg_vouch_emoji()     -> str: return load_data().get("cfg_vouch_emoji", "✅")
 
 def set_cfg_font(font: str):
     data = load_data(); data["cfg_font"] = font; save_data(data)
+
+def set_cfg_legit_emoji(emoji: str):
+    save_cfg("cfg_legit_emoji", emoji.strip())
+
+def set_cfg_vouch_emoji(emoji: str):
+    save_cfg("cfg_vouch_emoji", emoji.strip())
 
 def save_cfg(key: str, value):
     data = load_data(); data[key] = value; save_data(data)
