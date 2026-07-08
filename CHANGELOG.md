@@ -1,5 +1,13 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+─────────────────────────────────────
+[v4.11.0] — 2026-07-08
+✨ Tính năng mới
+core/data.py — Thêm cfg_legit_emoji/cfg_vouch_emoji theo guild (mặc định ✅)
+cogs/admin_views.py — Thêm EmojiConfigModal + 2 nút trong .st để đổi emoji legit/vouch (hỗ trợ unicode và custom emoji <:name:id>)
+bot.py — _handle_legit/_handle_vouch/_backfill_legit dùng emoji đã cấu hình thay vì hardcode ✅
+─────────────────────────────────────
+
 ## [v4.10.3] — 2026-07-08
 
 ### 🐛 Sửa lỗi
