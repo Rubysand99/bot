@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.11.0"
-BOT_UPDATED = "2026-07-08"
+BOT_VERSION = "4.11.1"
+BOT_UPDATED = "2026-07-09"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
 TOKEN = os.getenv("TOKEN")
@@ -232,43 +232,43 @@ def _parse_emoji(emoji_str: str):
         return "✅"
 
 async def _handle_legit(message: discord.Message):
-    from core.data import get_cfg_legit_channel, get_cfg_legit_emoji
-    IGNORED = {628400349979344919}
-    if message.author.id in IGNORED: return
-    legit_ch = get_cfg_legit_channel()
-    if legit_ch:
-        if message.channel.id != legit_ch: return
-    else:
-        if "legit" not in message.channel.name.lower(): return
-    if not _re.match(r"^\+1\s*legit\b", message.content.strip(), _re.IGNORECASE): return
-    ch      = message.channel
-    name    = ch.name
-    match   = _re.search(r"-(\d+)$", name)
-    new_num = (int(match.group(1)) + 1) if match else 1
-    base    = name[:match.start()] if match else name
     try:
+        from core.data import get_cfg_legit_channel, get_cfg_legit_emoji
+        IGNORED = {628400349979344919}
+        if message.author.id in IGNORED: return
+        legit_ch = get_cfg_legit_channel()
+        if legit_ch:
+            if message.channel.id != legit_ch: return
+        else:
+            if "legit" not in message.channel.name.lower(): return
+        if not _re.match(r"^\+1\s*legit\b", message.content.strip(), _re.IGNORECASE): return
+        ch      = message.channel
+        name    = ch.name
+        match   = _re.search(r"-(\d+)$", name)
+        new_num = (int(match.group(1)) + 1) if match else 1
+        base    = name[:match.start()] if match else name
         await ch.edit(name=f"{base}-{new_num}", reason=f"+1 legit bởi {message.author}")
         await message.add_reaction(_parse_emoji(get_cfg_legit_emoji()))
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[LEGIT] ❌ Lỗi: {e}")
 
 async def _handle_vouch(message: discord.Message):
-    from core.data import get_cfg_proof_channel, get_cfg_vouch_emoji
-    IGNORED = {628400349979344919}
-    if message.author.id in IGNORED: return
-    proof_ch = get_cfg_proof_channel()
-    if not proof_ch or message.channel.id != proof_ch: return
-    if not _re.match(r"^done\b", message.content.strip(), _re.IGNORECASE): return
-    ch      = message.channel
-    name    = ch.name
-    match   = _re.search(r"-(\d+)$", name)
-    new_num = (int(match.group(1)) + 1) if match else 1
-    base    = name[:match.start()] if match else name
     try:
+        from core.data import get_cfg_proof_channel, get_cfg_vouch_emoji
+        IGNORED = {628400349979344919}
+        if message.author.id in IGNORED: return
+        proof_ch = get_cfg_proof_channel()
+        if not proof_ch or message.channel.id != proof_ch: return
+        if not _re.match(r"^done\b", message.content.strip(), _re.IGNORECASE): return
+        ch      = message.channel
+        name    = ch.name
+        match   = _re.search(r"-(\d+)$", name)
+        new_num = (int(match.group(1)) + 1) if match else 1
+        base    = name[:match.start()] if match else name
         await ch.edit(name=f"{base}-{new_num}", reason=f"+1 vouch bởi {message.author}")
         await message.add_reaction(_parse_emoji(get_cfg_vouch_emoji()))
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[VOUCH] ❌ Lỗi: {e}")
 
 
 
