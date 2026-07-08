@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.11.1"
+BOT_VERSION = "4.11.0"
 BOT_UPDATED = "2026-07-09"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
@@ -240,14 +240,19 @@ async def _handle_legit(message: discord.Message):
         if legit_ch:
             if message.channel.id != legit_ch: return
         else:
-            if "legit" not in message.channel.name.lower(): return
+            cname = message.channel.name.lower()
+            if "legit" not in cname and "vouch" not in cname: return
         if not _re.match(r"^\+1\s*legit\b", message.content.strip(), _re.IGNORECASE): return
-        ch      = message.channel
-        name    = ch.name
-        match   = _re.search(r"-(\d+)$", name)
-        new_num = (int(match.group(1)) + 1) if match else 1
-        base    = name[:match.start()] if match else name
-        await ch.edit(name=f"{base}-{new_num}", reason=f"+1 legit bởi {message.author}")
+
+        ch    = message.channel
+        name  = ch.name
+        match = _re.search(r"-(\d+)$", name)
+        if match:
+            new_num = int(match.group(1)) + 1
+            base    = name[:match.start()]
+            await ch.edit(name=f"{base}-{new_num}", reason=f"+1 legit bởi {message.author}")
+        # Không có số ở cuối tên kênh → chỉ thả emoji, không đổi tên
+
         await message.add_reaction(_parse_emoji(get_cfg_legit_emoji()))
     except Exception as e:
         print(f"[LEGIT] ❌ Lỗi: {e}")
@@ -258,14 +263,22 @@ async def _handle_vouch(message: discord.Message):
         IGNORED = {628400349979344919}
         if message.author.id in IGNORED: return
         proof_ch = get_cfg_proof_channel()
-        if not proof_ch or message.channel.id != proof_ch: return
+        if proof_ch:
+            if message.channel.id != proof_ch: return
+        else:
+            cname = message.channel.name.lower()
+            if "vouch" not in cname and "proof" not in cname: return
         if not _re.match(r"^done\b", message.content.strip(), _re.IGNORECASE): return
-        ch      = message.channel
-        name    = ch.name
-        match   = _re.search(r"-(\d+)$", name)
-        new_num = (int(match.group(1)) + 1) if match else 1
-        base    = name[:match.start()] if match else name
-        await ch.edit(name=f"{base}-{new_num}", reason=f"+1 vouch bởi {message.author}")
+
+        ch    = message.channel
+        name  = ch.name
+        match = _re.search(r"-(\d+)$", name)
+        if match:
+            new_num = int(match.group(1)) + 1
+            base    = name[:match.start()]
+            await ch.edit(name=f"{base}-{new_num}", reason=f"+1 vouch bởi {message.author}")
+        # Không có số ở cuối tên kênh → chỉ thả emoji, không đổi tên
+
         await message.add_reaction(_parse_emoji(get_cfg_vouch_emoji()))
     except Exception as e:
         print(f"[VOUCH] ❌ Lỗi: {e}")
