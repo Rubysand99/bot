@@ -1,5 +1,13 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.11.2] — 2026-07-09
+
+### ✨ Tính năng mới
+- `core/data.py` — Thêm field `_pending_renames` vào global data để lưu bền hàng đợi rename legit/vouch
+- `bot.py` — Hàng đợi retry rename (khi bị Discord rate limit) giờ lưu qua Mongo thay vì RAM, resume lại đúng số mục tiêu cuối cùng khi bot restart (`_resume_pending_renames`, gọi từ `on_ready`)
+
+---
+
 ─────────────────────────────────────
 [v4.11.0] — 2026-07-08
 ✨ Tính năng mới
