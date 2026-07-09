@@ -324,6 +324,15 @@ async def _giveaway_timer_task(bot, channel_id: int, message_id: int, winners_co
     channel = await get_or_fetch_channel(bot, channel_id)
     if not channel:
         return
+    # FIX: Task này được tạo bằng asyncio.create_task() (ở resume_active_giveaways lúc
+    # bot khởi động, TRƯỚC khi context được set cho guild nào) rồi await asyncio.sleep()
+    # rất lâu (đến hàng giờ/ngày) — context lúc tạo task được "đóng băng" cho suốt vòng đời
+    # task nên mãi mãi là None. Set lại NGAY TẠI ĐÂY (đã biết chắc channel.guild) để
+    # end_giveaway() → send_log()/load_data() bên dưới nhận đúng guild, không rơi vào
+    # nhánh "không có guild context" (xem CHANGELOG — cùng nhóm bug với v4.10.3).
+    if channel.guild:
+        from core.data import set_current_guild
+        set_current_guild(channel.guild.id)
     gw["ended"] = True
     await end_giveaway(message_id, channel, winners_count, gw.get("prize", "phần thưởng"), gw.get("host", 0))
 
