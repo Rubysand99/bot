@@ -1,5 +1,12 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.11.3] — 2026-07-09
+
+### 🐛 Sửa lỗi
+- `cogs/giveaway.py` — `_giveaway_timer_task`: thêm `set_current_guild(channel.guild.id)` ngay sau khi fetch được channel. Task này chạy qua `asyncio.create_task()` và có thể `sleep()` hàng giờ/ngày (đặc biệt khi resume lúc khởi động, trước vòng lặp set context cho từng guild trong `on_ready`) nên guild context bị "đóng băng" là None suốt đời task, khiến `end_giveaway()` → `send_log()`/`load_data()` không xác định được guild, mất log GIVEAWAY_END và có thể mất luôn các thao tác dùng data theo guild khác trong luồng kết thúc giveaway
+
+---
+
 ## [v4.11.2] — 2026-07-09
 
 ### ✨ Tính năng mới
