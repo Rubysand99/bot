@@ -194,6 +194,10 @@ def _default_data_global() -> dict:
         "_id": "main",
         "_tempbans": {},
         "_ip_records": {},
+        # {channel_id (str): {"base": str, "target_num": int}} — hàng đợi đổi tên kênh
+        # legit/vouch bị Discord rate limit (2 lần/10 phút), resume lại sau khi bot restart.
+        # Xem bot.py: _queue_or_rename / _apply_rename_with_retry / _resume_pending_renames
+        "_pending_renames": {},
     }
 
 # ══════════════════════════════════════════
