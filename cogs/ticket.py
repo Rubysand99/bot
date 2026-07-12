@@ -26,10 +26,8 @@ from core.data import (
     save_seller_category,
     remove_seller_category, get_all_seller_categories,
     get_or_fetch_channel,
-    get_all_ticket_type_roles, set_ticket_type_role,
     BUILDER_BASE_ROLE_ID as _BUILDER_ROLE_ID,
-    set_ticket_role_id, get_all_ticket_role_ids,
-    get_ticket_role_ids,
+    get_ticket_role_ids, set_ticket_role_ids, get_all_ticket_multi_roles,
     GuildContextView as View,
     set_current_guild,
 )
@@ -1536,11 +1534,23 @@ class TicketCog(commands.Cog):
     @commands.command(name="setrole")
     async def setrole_cmd(self, ctx, ticket_key: str = None, *, value: str = None):
         """
-        Gán role (hoặc group cũ) cho từng loại ticket.
+        Gán role cho từng loại ticket. Ghi thẳng vào hệ thống multi-role
+        (field `ticket_multi_roles`) — cùng field mà UI `.st` dùng, và là
+        field DUY NHẤT được đọc lúc tạo ticket để cấp quyền.
 
-        Dùng @role  → gán role ID cụ thể (ưu tiên, ghi đè group cũ).
-        Dùng group  → gán group string cũ: seller / builder / admin / none
-        Dùng reset  → xóa cả role ID lẫn group.
+        [FIX v4.11.4] Trước bản này .setrole ghi vào field `ticket_role_ids`
+        / `ticket_type_roles` — 2 field không hề được đọc ở đâu khi cấp
+        quyền ticket thật (xem ticket.py dòng ~606-815, chỉ đọc
+        `ticket_multi_roles`). Lệnh từng báo "✅ thành công" nhưng vô tác dụng.
+
+        Dùng @role      → thêm role vào danh sách multi-role của key đó.
+        Dùng seller     → thêm role seller đang cấu hình (get_cfg_seller_role).
+        Dùng builder    → thêm role builder mặc định (BUILDER_BASE_ROLE_ID).
+        Dùng admin      → không cần gán gì, admin luôn có quyền sẵn (bỏ qua).
+        Dùng none/reset → xóa toàn bộ danh sách role của key đó.
+
+        ⚠️ Danh sách rỗng KHÔNG có nghĩa "chỉ admin" — ticket sẽ tự fallback
+        về role support/seller/builder mặc định (xem _build_ticket_overwrites_multi).
 
         Keys hợp lệ: order_donut, order_kingmc, order_onemc, order_ff, order_build, acc_pre, giveaway, support
 
@@ -1553,7 +1563,6 @@ class TicketCog(commands.Cog):
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
 
         VALID_KEYS = ["order_donut", "order_kingmc", "order_onemc", "order_ff", "order_build", "acc_pre", "giveaway", "support"]
-        VALID_GROUPS = ["seller", "builder", "admin", "none"]
         KEY_LABELS = {
             "order_donut":  "🍩 Mua/Bán DonutSMP",
             "order_kingmc": "👑 Mua/Bán KingMC",
@@ -1570,9 +1579,9 @@ class TicketCog(commands.Cog):
             return await ctx.reply(
                 "❌ Thiếu thông tin!\n"
                 "**Cú pháp:**\n"
-                "`.setrole <key> @role` — gán role Discord cụ thể\n"
-                "`.setrole <key> seller|builder|admin` — dùng group cũ\n"
-                "`.setrole <key> reset` — xóa cấu hình\n\n"
+                "`.setrole <key> @role` — thêm role vào multi-role\n"
+                "`.setrole <key> seller|builder` — thêm role seller/builder mặc định\n"
+                "`.setrole <key> reset` — xóa toàn bộ role đã gán\n\n"
                 f"**Keys hợp lệ:**\n{keys_str}"
             )
 
@@ -1584,23 +1593,34 @@ class TicketCog(commands.Cog):
             return await ctx.reply("❌ Thiếu giá trị! Ví dụ: `.setrole order_donut @DonutStaff`")
 
         label = KEY_LABELS.get(ticket_key, ticket_key)
+        value_l = value.strip().lower()
 
-        # Reset cả 2 hệ thống
-        if value.strip().lower() == "reset":
-            set_ticket_role_id(ticket_key, None)
-            set_ticket_type_role(ticket_key, None)
-            return await ctx.reply(f"✅ Đã xóa cấu hình role cho **{label}** (`{ticket_key}`).")
+        if value_l in ("reset", "none"):
+            set_ticket_role_ids(ticket_key, [])
+            return await ctx.reply(
+                f"✅ Đã xóa toàn bộ role gán cho **{label}** (`{ticket_key}`).\n"
+                "-# Ticket loại này sẽ dùng fallback mặc định (support/seller/builder)."
+            )
 
-        # Group string cũ (seller / builder / admin / none)
-        if value.strip().lower() in VALID_GROUPS:
-            group = value.strip().lower()
-            g = None if group == "none" else group
-            set_ticket_type_role(ticket_key, g)
-            set_ticket_role_id(ticket_key, None)   # xóa role ID nếu có
-            embed = discord.Embed(title="⚙️ Đã Gán Group Ticket", color=0xF1C40F, timestamp=datetime.now(timezone.utc))
-            embed.add_field(name="🏷️ Loại ticket", value=label,              inline=True)
-            embed.add_field(name="👥 Group",        value=f"`{group}`",       inline=True)
-            embed.add_field(name="🔑 Key",          value=f"`{ticket_key}`",  inline=True)
+        if value_l == "admin":
+            return await ctx.reply(
+                "ℹ️ Không cần gán gì — admin (`ADMIN_IDS`) luôn có quyền full trên mọi ticket, "
+                "bất kể cấu hình role. Dùng `.setrole {} reset` nếu muốn xóa role khác đang gán.".format(ticket_key)
+            )
+
+        if value_l in ("seller", "builder"):
+            role_id = get_cfg_seller_role() if value_l == "seller" else BUILDER_BASE_ROLE_ID
+            role = ctx.guild.get_role(role_id)
+            if not role:
+                return await ctx.reply(f"❌ Không tìm thấy role `{value_l}` (ID `{role_id}`) trong server.")
+            current = get_ticket_role_ids(ticket_key)
+            if role.id not in current:
+                current.append(role.id)
+            set_ticket_role_ids(ticket_key, current)
+            embed = discord.Embed(title="⚙️ Đã Gán Role Ticket", color=0xF1C40F, timestamp=datetime.now(timezone.utc))
+            embed.add_field(name="🏷️ Loại ticket", value=label,             inline=True)
+            embed.add_field(name="👥 Role",         value=role.mention,      inline=True)
+            embed.add_field(name="🔑 Key",          value=f"`{ticket_key}`", inline=True)
             embed.set_footer(text=f"Cài bởi {_uname_plain(ctx.author)}")
             return await ctx.reply(embed=embed)
 
@@ -1622,8 +1642,10 @@ class TicketCog(commands.Cog):
                 "Hoặc mention trực tiếp `@Role`."
             )
 
-        set_ticket_role_id(ticket_key, role.id)
-        set_ticket_type_role(ticket_key, None)   # xóa group cũ nếu có
+        current = get_ticket_role_ids(ticket_key)
+        if role.id not in current:
+            current.append(role.id)
+        set_ticket_role_ids(ticket_key, current)
 
         embed = discord.Embed(title="⚙️ Đã Gán Role Ticket", color=0x57F287, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="🏷️ Loại ticket", value=label,             inline=True)
@@ -1634,7 +1656,7 @@ class TicketCog(commands.Cog):
 
     @commands.command(name="listroles")
     async def listroles_cmd(self, ctx):
-        """Xem role / group đang gán cho từng loại ticket."""
+        """Xem role đang gán cho từng loại ticket (đọc đúng field dùng để cấp quyền thật)."""
         if not is_staff_member(ctx.author):
             return await ctx.reply("❌ Bạn không có quyền.")
 
@@ -1648,30 +1670,29 @@ class TicketCog(commands.Cog):
             "giveaway":     "🎁 Nhận Giveaway",
             "support":      "🆘 Hỗ Trợ",
         }
-        all_ids    = get_all_ticket_role_ids()
-        all_groups = get_all_ticket_type_roles()
+        all_multi = get_all_ticket_multi_roles()
 
         lines = []
         for key, label in KEY_LABELS.items():
-            rid   = all_ids.get(key)
-            group = all_groups.get(key)
-            if rid:
-                role = ctx.guild.get_role(int(rid))
-                val  = (role.mention if role else f"`ID:{rid}` *(không tìm thấy)*") + "  *(role ID)*"
-            elif group:
-                val = f"`{group}` *(group)*"
+            role_ids = all_multi.get(key) or []
+            if role_ids:
+                mentions = []
+                for rid in role_ids:
+                    role = ctx.guild.get_role(int(rid))
+                    mentions.append(role.mention if role else f"`ID:{rid}` *(không tìm thấy)*")
+                val = ", ".join(mentions)
             else:
-                val = "*(chưa gán — dùng fallback mặc định)*"
+                val = "*(chưa gán — dùng fallback mặc định: support/seller/builder)*"
             lines.append(f"{label}\n╰ {val}")
 
         embed = discord.Embed(
-            title="📋 Role / Group Từng Loại Ticket",
+            title="📋 Role Từng Loại Ticket",
             description="\n\n".join(lines),
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc),
         )
         embed.set_footer(
-            text="Role ID ưu tiên hơn group  •  Dùng .setrole <key> @role|group|reset để chỉnh"
+            text="Dùng .setrole <key> @role|seller|builder|reset để chỉnh"
         )
         await ctx.reply(embed=embed)
 

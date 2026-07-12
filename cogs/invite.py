@@ -24,7 +24,7 @@ from core.data import (
     get_pending_joins, save_pending_joins,
     get_ip_records,
     atomic_register_ip, get_ip_users_mongo,
-    set_current_guild,
+    set_current_guild, get_or_fetch_channel,
 )
 from verify_server import (
     create_token, build_verify_url, VERIFY_CALLBACKS,
@@ -1151,7 +1151,7 @@ class InviteCog(commands.Cog):
         if not ch_id:
             return await ctx.reply("❌ Chưa cài kênh log `invite`. Dùng `.setlog` trước.")
 
-        log_channel = self.bot.get_channel(ch_id) or await self.bot.fetch_channel(ch_id)
+        log_channel = await get_or_fetch_channel(self.bot, ch_id)
         if not log_channel:
             return await ctx.reply(f"❌ Không tìm được kênh log `{ch_id}`.")
 

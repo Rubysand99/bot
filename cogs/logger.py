@@ -276,7 +276,7 @@ class LoggerCog(commands.Cog):
                 continue
             save_cfg("_daily_report_date", today_str)
             self._last_report_date[guild.id] = today_str
-            await self._send_daily_report()
+            await self._send_daily_report(guild)
 
     @daily_report_task.before_loop
     async def before_daily_report(self):
@@ -285,7 +285,7 @@ class LoggerCog(commands.Cog):
         # _data_cache nạp xong (init_data_cache() hoàn tất muộn hơn wait_until_ready()).
         await wait_data_cache_ready()
 
-    async def _send_daily_report(self):
+    async def _send_daily_report(self, guild: discord.Guild):
         """Build và gửi embed báo cáo 24h qua vào kênh general log.
         Báo cáo này vẫn dùng embed vì cần layout đẹp để đọc tổng kết."""
         now       = datetime.now(timezone.utc)
@@ -309,10 +309,19 @@ class LoggerCog(commands.Cog):
         ticket_amount = sum(t.get("amount", 0) for t in day_recs)
 
         # ── Giveaway: kết thúc trong 24h qua ──
+        # [FIX v4.11.4] load_giveaways_data() trả về giveaway của MỌI guild
+        # (cache không tách theo guild, chỉ tách theo message_id) — phải tự lọc
+        # theo guild hiện tại qua channel_id, nếu không report của 2 guild sẽ
+        # cùng hiện một con số gộp.
         gw_data    = load_giveaways_data()
-        gw_running = sum(1 for gw in gw_data.values() if not gw.get("ended"))
-        gw_ended   = 0
+        gw_of_guild = []
         for gw in gw_data.values():
+            ch = self.bot.get_channel(gw.get("channel_id"))
+            if ch is not None and ch.guild.id == guild.id:
+                gw_of_guild.append(gw)
+        gw_running = sum(1 for gw in gw_of_guild if not gw.get("ended"))
+        gw_ended   = 0
+        for gw in gw_of_guild:
             end_time = gw.get("end_time", 0)
             if gw.get("ended") and end_time:
                 try:
@@ -388,7 +397,7 @@ class LoggerCog(commands.Cog):
         """Admin gọi thủ công báo cáo ngay lập tức."""
         if ctx.author.id not in ADMIN_IDS:
             return
-        await self._send_daily_report()
+        await self._send_daily_report(ctx.guild)
         await ctx.message.add_reaction("✅")
 
     # ── LỆNH CÀI KÊNH LOG ──

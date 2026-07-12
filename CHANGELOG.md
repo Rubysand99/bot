@@ -1,5 +1,21 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.11.4] — 2026-07-12
+
+### 🐛 Sửa lỗi
+- `cogs/ticket.py` — **`.setrole`/`.listroles` ghi/đọc field Mongo chết** (`ticket_role_ids`, `ticket_type_roles`) **không hề được đọc khi cấp quyền ticket thật** (logic cấp quyền chỉ đọc `ticket_multi_roles` qua `get_ticket_role_ids()`). Lệnh báo "✅ thành công" nhưng role gán qua `.setrole` không có tác dụng gì — ticket luôn rơi về fallback mặc định (support/seller/builder). Viết lại để `.setrole` ghi thẳng vào `ticket_multi_roles` (cùng field UI `.st` dùng), `.listroles` đọc đúng field đó
+- `cogs/logger.py` — `_send_daily_report()` đếm giveaway running/ended từ `load_giveaways_data()` **không lọc theo guild** (cache giveaway tách theo `message_id`, không tách theo guild) → mọi guild nhận cùng một con số gộp trong report hằng ngày. Giờ nhận `guild` làm tham số, lọc giveaway theo `channel.guild.id` trước khi đếm
+- `cogs/invite.py` — `.backfillip`: thay `self.bot.get_channel(ch_id) or await self.bot.fetch_channel(ch_id)` (có thể ném exception chưa bắt nếu kênh log bị xoá) bằng `get_or_fetch_channel()` sẵn có (có try/except, trả `None` an toàn)
+- `bot.py` — Bump `BOT_VERSION` "4.11.2" → "4.11.4" (entry v4.11.3 trước đó bị bỏ sót bump)
+
+### ♻️ Thay đổi
+- Xoá `deploy.sh` — không phải script deploy tái sử dụng, mà là log lệnh Termux của 1 session ngày 2026-05-30 (v4.0.0) bị lỡ commit vào repo, nhúng sẵn bản `admin.py` cũ thiếu toàn bộ tính năng seller-stats/DM-escalation từ v4.7+. Nguy cơ cao nếu chạy nhầm (tự `git push` bản cũ đè lên `origin main`)
+
+### ✅ Đã kiểm tra, không cần sửa
+- `verify_server.py` lấy IP qua `X-Forwarded-For` hop đầu tiên (`.split(",")[0]`) — xác nhận qua tài liệu chính thức Railway (Central Station, 3/2026): edge proxy của Railway **chèn IP thật vào đầu chuỗi**, hop đầu đáng tin cậy cho kiến trúc Railway cụ thể. Giữ nguyên code
+
+---
+
 ## [v4.11.3] — 2026-07-09
 
 ### 🐛 Sửa lỗi
