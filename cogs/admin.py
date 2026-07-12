@@ -29,6 +29,7 @@ from core.data import (
     GuildContextView as View, GuildContextModal as Modal,
 )
 from cogs.seller import is_active_seller
+from cogs.ticket import get_panel_buttons_cfg, PANEL_BUTTON_DEFS
 
 from cogs.admin_views import (
     SettingsView, SetupMainView, PriceManagerView,
@@ -72,6 +73,11 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🔤 Font server",       value=FONT_LABELS.get(data.get("cfg_font","normal"),"normal"), inline=True)
         shop_status = "🟢 Bật" if get_cfg_shop_orders_enabled() else "🔴 Tắt"
         embed.add_field(name="🧪 Shop Orders (thử nghiệm)", value=shop_status, inline=True)
+        relay_status = "🟢 Bật" if data.get("cfg_ticket_relay", True) else "🔴 Tắt"
+        embed.add_field(name="🪄 Relay Tin Admin (Ticket)", value=relay_status, inline=True)
+        panel_cfg = get_panel_buttons_cfg()
+        panel_on  = sum(1 for v in panel_cfg.values() if v)
+        embed.add_field(name="🔘 Panel Buttons", value=f"{panel_on}/{len(PANEL_BUTTON_DEFS)} bật — `.panelbtn` để chỉnh", inline=True)
         embed.set_footer(text=f"Nhấn nút bên dưới để thay đổi  •  Yêu cầu bởi {ctx.author}")
 
         view = SettingsView(ctx.guild)

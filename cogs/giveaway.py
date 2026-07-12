@@ -16,7 +16,7 @@ from discord.ui import Button, Select
 from core.data import (
     ADMIN_IDS, load_giveaways_data, save_giveaways_data,
     _uname, _uname_plain, get_or_fetch_channel,
-    GuildContextView as View,
+    GuildContextView as View, GuildContextModal as Modal,
 )
 
 # ── State in-memory ──
@@ -291,7 +291,7 @@ class GiveawayConfirmView(View):
         await interaction.response.edit_message(content="🚫 Đã huỷ giveaway.", embed=None, view=None)
 
 
-class GiveawayModal(discord.ui.Modal, title="🎉 Tạo Giveaway"):
+class GiveawayModal(Modal, title="🎉 Tạo Giveaway"):
     duration = discord.ui.TextInput(label="Thời gian", placeholder="Ví dụ: 30s / 10m / 1h / 2d", min_length=2, max_length=10)
     winners_count = discord.ui.TextInput(label="Số người trúng thưởng", placeholder="Ví dụ: 1", min_length=1, max_length=2)
     prize = discord.ui.TextInput(label="Phần thưởng", placeholder="Ví dụ: 100m ingame, Elytra...", min_length=1, max_length=200)
@@ -301,14 +301,14 @@ class GiveawayModal(discord.ui.Modal, title="🎉 Tạo Giveaway"):
         dur  = self.duration.value.strip()
         unit = dur[-1].lower()
         try: val = int(dur[:-1])
-        except: return await interaction.response.send_message("❌ Thời gian không hợp lệ! Dùng: `30s`, `10m`, `1h`, `2d`", ephemeral=True)
+        except Exception: return await interaction.response.send_message("❌ Thời gian không hợp lệ! Dùng: `30s`, `10m`, `1h`, `2d`", ephemeral=True)
         seconds = {"s": val, "m": val*60, "h": val*3600, "d": val*86400}.get(unit)
         if not seconds:
             return await interaction.response.send_message("❌ Đơn vị thời gian không hợp lệ!", ephemeral=True)
         try:
             w_count = int(self.winners_count.value.strip())
             if w_count < 1: raise ValueError
-        except:
+        except Exception:
             return await interaction.response.send_message("❌ Số người trúng thưởng phải là số nguyên dương!", ephemeral=True)
 
         end_time     = datetime.now(timezone.utc).timestamp() + seconds
@@ -391,7 +391,7 @@ class GiveawayCog(commands.Cog):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try:
             ref = int(gw_id)
-        except:
+        except Exception:
             return await interaction.response.send_message("❌ GW ID không hợp lệ!", ephemeral=True)
 
         found_mid, gw = None, None
@@ -423,7 +423,7 @@ class GiveawayCog(commands.Cog):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try:
             ref = int(gw_id)
-        except:
+        except Exception:
             return await interaction.response.send_message("❌ GW ID không hợp lệ!", ephemeral=True)
 
         gw = None
@@ -451,7 +451,7 @@ class GiveawayCog(commands.Cog):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try:
             ref = int(gw_id)
-        except:
+        except Exception:
             return await interaction.response.send_message("❌ GW ID không hợp lệ!", ephemeral=True)
 
         gw = None
@@ -769,7 +769,7 @@ class GwStatusView(View):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try:
             mid = int(interaction.data["values"][0])
-        except:
+        except Exception:
             return await interaction.response.send_message("❌ ID không hợp lệ.", ephemeral=True)
 
         gw = active_giveaways.get(mid)
@@ -802,7 +802,7 @@ class GwStatusView(View):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try:
             mid = int(interaction.data["values"][0])
-        except:
+        except Exception:
             return await interaction.response.send_message("❌ ID không hợp lệ.", ephemeral=True)
 
         gw = active_giveaways.pop(mid, None)

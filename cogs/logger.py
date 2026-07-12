@@ -263,9 +263,10 @@ class LoggerCog(commands.Cog):
             return
         today_str = now.strftime("%Y-%m-%d")
 
-        from core.data import set_current_guild, save_cfg
+        from core.data import set_current_guild, save_cfg, cleanup_resolved_sold_price
         for guild in self.bot.guilds:
             set_current_guild(guild.id)  # task nền không có context tự nhiên như lệnh/nút bấm
+            cleanup_resolved_sold_price()  # dọn resolved_sold_price cũ hơn 7 ngày (v4.11.5)
 
             if self._last_report_date.get(guild.id) == today_str:
                 continue

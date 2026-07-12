@@ -11,7 +11,7 @@ import os
 import asyncio
 import logging
 import contextvars
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from motor.motor_asyncio import AsyncIOMotorClient
 import discord
 
@@ -462,19 +462,6 @@ def save_panel_channel_id(channel_id: int):
 # ── Bật/tắt từng nút trong panel ticket (.st) — mặc định TẤT CẢ đều bật ──
 PANEL_BUTTON_KEYS = ["donut", "kingmc", "ff", "accpre", "build", "giveaway", "support"]
 
-def get_panel_buttons_config() -> dict:
-    """{"donut": True, "kingmc": False, ...} — key vắng mặt coi như bật (default)."""
-    return load_data().get("panel_buttons", {})
-
-def is_panel_button_enabled(key: str) -> bool:
-    return get_panel_buttons_config().get(key, True)
-
-def set_panel_button_enabled(key: str, enabled: bool):
-    data = load_data()
-    cfg = data.setdefault("panel_buttons", {})
-    cfg[key] = enabled
-    save_data(data)
-
 def get_qr_path():
     return load_data().get("qr_path", None)
 
@@ -638,6 +625,34 @@ def mark_pending_sold_resolved(channel_id: int, amount: int, resolved_by: int, o
 
 def get_resolved_sold_price(channel_id: int) -> dict | None:
     return load_data().get("resolved_sold_price", {}).get(str(channel_id))
+
+# [FIX v4.11.5] Comment phía trên ghi "tự dọn sau 7 ngày" từ trước nhưng
+# chưa từng có code dọn thật — dict lớn dần vô hạn. Gọi hàm này 1 lần/ngày
+# từ nơi đã có guild context sẵn (daily_report_task trong logger.py).
+def cleanup_resolved_sold_price(max_age_days: int = 7) -> int:
+    """Xóa các entry resolved_sold_price cũ hơn max_age_days. Trả về số entry đã xóa."""
+    data = load_data()
+    resolved = data.get("resolved_sold_price", {})
+    if not resolved:
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    to_delete = []
+    for ch_id, rec in resolved.items():
+        try:
+            t = datetime.fromisoformat(rec.get("time", ""))
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            if t < cutoff:
+                to_delete.append(ch_id)
+        except Exception:
+            to_delete.append(ch_id)   # time không đọc được → coi như rác, dọn luôn
+    if not to_delete:
+        return 0
+    for ch_id in to_delete:
+        del resolved[ch_id]
+    data["resolved_sold_price"] = resolved
+    save_data(data)
+    return len(to_delete)
 
 async def get_ticket_number(guild_id: int) -> str:
     """FIX: async + Lock đảm bảo không bao giờ tạo 2 ticket trùng số.

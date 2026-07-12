@@ -2,9 +2,6 @@
 cogs/admin_views.py — UI Views, Modals, Selects cho AdminCog.
 Tách từ admin.py để giảm kích thước file.
 """
-"""
-cogs/admin.py — Settings, setup server, sv/giaset, lệnh mod, slash mod commands.
-"""
 
 import re as _re
 import asyncio
@@ -13,6 +10,7 @@ from datetime import datetime, timezone
 import discord
 from discord.ui import Button, TextInput, Select
 
+from cogs.logger import send_log
 from core.data import (
     ADMIN_IDS,
     get_cfg_font, set_cfg_font,
@@ -363,12 +361,27 @@ class SettingsView(View):
         data = load_data()
         new_val = not data.get("cfg_ticket_relay", True)
         save_cfg("cfg_ticket_relay", new_val)
-        status = "🟢 BẬT" if new_val else "🔴 TẮT"
-        await interaction.response.send_message(
+        status = "🟢 Bật" if new_val else "🔴 Tắt"
+
+        embed = interaction.message.embeds[0]
+        for i, field in enumerate(embed.fields):
+            if field.name == "🪄 Relay Tin Admin (Ticket)":
+                embed.set_field_at(i, name=field.name, value=status, inline=True)
+                break
+        button.style = discord.ButtonStyle.success if new_val else discord.ButtonStyle.secondary
+        await interaction.response.edit_message(embed=embed, view=self)
+
+        await interaction.followup.send(
             f"⚙️ Đã **{status}** tính năng Relay Tin Admin trong Ticket.\n"
             "*(Khi bật: tin admin gửi trong ticket sẽ bị xoá và gửi lại y hệt qua webhook "
             "tên **\"Ruby bot\"**, dùng avatar của chính bot.)*",
             ephemeral=True,
+        )
+        await send_log(
+            interaction.client, "SETTINGS", f"Relay Tin Admin (Ticket) → {status}",
+            fields=[("👤 Admin", f"{interaction.user}", True)],
+            user=interaction.user,
+            guild_id=interaction.guild_id,
         )
 
     @discord.ui.button(label="😀 Legit Emoji",     style=discord.ButtonStyle.secondary, row=4)
@@ -1407,7 +1420,7 @@ class AssignRoleModal(Modal):
         # Resolve member
         raw_m = self.member_input.value.strip().lstrip("<@!").rstrip(">")
         try: member = guild.get_member(int(raw_m)) or await guild.fetch_member(int(raw_m))
-        except: member = None
+        except Exception: member = None
         if not member:
             return await interaction.response.send_message(f"❌ Không tìm thấy member `{self.member_input.value}`.")
         # Resolve role

@@ -1,5 +1,27 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.11.5] — 2026-07-13
+
+### ✨ Tính năng mới
+- `.st` — Thêm 2 field trạng thái vào embed: **🪄 Relay Tin Admin (Ticket)** (🟢/🔴) và **🔘 Panel Buttons** (`X/7 bật`). Nút toggle relay giờ cập nhật ngay field trong embed khi bấm (giống pattern nút Shop Orders), thay vì chỉ báo qua tin nhắn ephemeral riêng
+
+### 🐛 Sửa lỗi
+- `cogs/giveaway.py` — Thay 7 `except:` trần còn sót (dòng 304/311/394/426/454/772/805) bằng `except Exception:` — bare except nuốt cả `asyncio.CancelledError`/`KeyboardInterrupt`
+- `core/data.py` — Thêm `cleanup_resolved_sold_price()`, gọi mỗi ngày từ `daily_report_task` (đã có guild context sẵn) — dọn entry cũ hơn 7 ngày, đúng như comment cũ đã hứa nhưng chưa từng code
+
+### ♻️ Thay đổi
+- Xoá `data/words_vi.txt` — dữ liệu chết cho game "Nối Từ" đã gỡ từ v3.7.0, không còn ai import
+- Xoá 3 hàm chết trong `core/data.py`: `get_panel_buttons_config`/`is_panel_button_enabled`/`set_panel_button_enabled` (field `panel_buttons`) — không ai dùng, bị hệ thống mới trong `ticket.py` (field `cfg_panel_buttons`) thay thế từ lâu mà không dọn
+- Dọn docstring trùng lặp đầu `admin_views.py` (sót lại từ lúc tách file khỏi `admin.py`)
+- Viết lại hoàn toàn README.md — bản cũ ghi version v3.9.5 và biến môi trường `ADMIN_IDS` không còn tồn tại trong code
+
+### 📝 Đính chính audit trước (không phải bug thật, đã re-verify trước khi sửa)
+- `GiveawayModal`, `AIConfirmView`, `ConfirmView` (invite.py) **đã** dùng `GuildContextView`/`GuildContextModal` qua alias `as View`/`as Modal` — audit trước đọc nhầm tên alias thành `discord.ui.View/Modal` thô
+- `mod.py` — `_auto_unban` (tempban mới) **đã** truyền `guild_id=guild.id` cho `send_log()` từ trước — không thiếu như audit trước ghi nhận
+- `admin_views.py`/`ticket.py` — 2 chỗ từng bị nghi bare `except:` thực ra đã là `except Exception:` sẵn — chỉ `giveaway.py` có bug thật (đã sửa ở trên)
+
+---
+
 ## [v4.11.4] — 2026-07-12
 
 ### 🐛 Sửa lỗi
