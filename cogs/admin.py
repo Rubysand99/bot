@@ -39,8 +39,8 @@ from cogs.admin_views import (
     MkChannelView,
 )
 
-BOT_VERSION = "4.5.0"
-BOT_UPDATED = "2026-06-14"
+BOT_VERSION = "4.12.0"
+BOT_UPDATED = "2026-07-20"
 
 try:
     import bot as _bot_module

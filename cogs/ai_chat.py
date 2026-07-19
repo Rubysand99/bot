@@ -7,15 +7,28 @@ Kênh AI tự động trả lời mọi tin nhắn.
 import os
 import json
 import re
+import logging
 from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
 
-from core.data import ADMIN_IDS, get_cfg_ai_channel, _uname_plain
+from core.data import (
+    ADMIN_IDS, get_cfg_ai_channel, _uname_plain,
+    load_global_data, save_global_data,
+    set_current_guild, reset_current_guild,
+)
+from core.rag import search_rag, save_qa_to_rag, get_relevant_context
 from cogs.logger import send_log
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# ─────────────────────────────────────────────
+# FORUM HỎI-ĐÁP ADMIN — khi AI không chắc câu trả lời
+# ─────────────────────────────────────────────
+AI_ASK_ADMIN_PENDING_FORUM_ID  = int(os.getenv("AI_ASK_ADMIN_PENDING_FORUM_ID", "0"))
+AI_ASK_ADMIN_RESOLVED_FORUM_ID = int(os.getenv("AI_ASK_ADMIN_RESOLVED_FORUM_ID", "0"))
+UNSURE_MARKER = "[[CAN_HOI_ADMIN]]"
 
 GROQ_MODELS = [
     "llama-3.1-8b-instant",      # primary — 500k token/ngày
@@ -26,7 +39,12 @@ GROQ_MODELS = [
 GROQ_SYSTEM = (
     "Bạn là trợ lý AI của TuyTam Store — một cửa hàng game. "
     "Hãy trả lời ngắn gọn, thân thiện, bằng tiếng Việt. "
-    "Nếu không biết thông tin cụ thể về cửa hàng, hãy hướng dẫn user mở ticket để được hỗ trợ."
+    "Nếu câu hỏi cần thông tin CỤ THỂ về cửa hàng (giá cả, chính sách, quy định, "
+    "khuyến mãi...) mà bạn KHÔNG có dữ liệu chắc chắn, hãy trả lời tạm hợp lý nhất "
+    f"có thể rồi thêm chính xác chuỗi {UNSURE_MARKER} vào cuối câu trả lời (không giải "
+    "thích gì thêm về chuỗi này). Nếu có phần \"Thông tin đã xác nhận trước đó\" được "
+    "cung cấp bên dưới, ưu tiên dùng thông tin đó thay vì đoán — và KHÔNG thêm marker "
+    "nếu đã dùng thông tin đó để trả lời chắc chắn."
 )
 
 AI_HISTORY_LIMIT = 10
@@ -416,7 +434,7 @@ async def _run_action(ctx, action: dict) -> str:
     return f"🤔 **{reason}**\nThử mô tả rõ hơn hoặc dùng lệnh trực tiếp."
 
 
-async def _call_groq(user_id: int, user_message: str) -> str:
+async def _call_groq(user_id: int, user_message: str, extra_context: str | None = None) -> str:
     if not GROQ_API_KEY:
         return "❌ Chưa cài `GROQ_API_KEY` trong biến môi trường."
 
@@ -436,7 +454,13 @@ async def _call_groq(user_id: int, user_message: str) -> str:
         history = entry["messages"]
     entry["last_used"] = now
 
-    messages = [{"role": "system", "content": GROQ_SYSTEM}] + history
+    # Nếu RAG tìm được Q&A liên quan đủ tin cậy, nhét vào system prompt CHỈ cho
+    # lượt gọi này (không lưu vào history, tránh phình context các lượt sau)
+    system_content = GROQ_SYSTEM
+    if extra_context:
+        system_content += "\n\nThông tin đã xác nhận trước đó (ưu tiên dùng):\n" + extra_context
+
+    messages = [{"role": "system", "content": system_content}] + history
     last_err = "Unknown error"
 
     import aiohttp
@@ -477,8 +501,16 @@ async def handle_ai_message(message: discord.Message):
     # Bỏ qua nếu là lệnh bot (bắt đầu bằng prefix . / / hoặc !)
     if message.content and message.content[0] in ('.', '/', '!'):
         return
+
+    # Tra RAG trước — nếu có Q&A tương tự đã được admin xác nhận, AI sẽ ưu tiên dùng
+    rag_context = await get_relevant_context(message.guild.id, message.content)
+
     async with message.channel.typing():
-        reply = await _call_groq(message.author.id, message.content)
+        raw_reply = await _call_groq(message.author.id, message.content, extra_context=rag_context)
+
+    is_unsure = UNSURE_MARKER in raw_reply
+    reply = raw_reply.replace(UNSURE_MARKER, "").strip()
+
     if len(reply) <= 2000:
         await message.reply(reply, mention_author=False)
     else:
@@ -486,15 +518,188 @@ async def handle_ai_message(message: discord.Message):
             await message.channel.send(chunk)
 
     bot_ref = message._state._get_client()
+
+    if is_unsure:
+        await create_pending_question(
+            bot_ref,
+            guild_id=message.guild.id,
+            user=message.author,
+            question=message.content,
+            ai_draft=reply,
+        )
+
     await send_log(
         bot_ref, "AI_USED", "AI Chat",
         fields=[
             ("👤 User",    f"{message.author.mention} (`{message.author.id}`)", True),
             ("💬 Tin nhắn", f"`{message.content[:200]}`",                       False),
             ("🤖 Phản hồi", f"`{reply[:200]}`",                                 False),
+            ("📚 Dùng RAG", "✅ Có" if rag_context else "Không",                True),
+            ("❓ Cần admin", "✅ Có" if is_unsure else "Không",                 True),
         ],
         user=message.author,
     )
+
+
+# ─────────────────────────────────────────────
+# FORUM PENDING — AI không chắc, chờ admin trả lời
+# ─────────────────────────────────────────────
+async def create_pending_question(bot, guild_id: int, user: discord.abc.User,
+                                    question: str, ai_draft: str) -> None:
+    if not AI_ASK_ADMIN_PENDING_FORUM_ID:
+        return
+    forum = bot.get_channel(AI_ASK_ADMIN_PENDING_FORUM_ID)
+    if not isinstance(forum, discord.ForumChannel):
+        logging.getLogger("ai").warning("[AI] ⚠️ AI_ASK_ADMIN_PENDING_FORUM_ID không phải Forum Channel.")
+        return
+
+    guild = bot.get_guild(guild_id)
+    embed = discord.Embed(
+        title="🤔 AI chưa chắc câu trả lời này",
+        color=0xF0A500,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(name="👤 Người hỏi", value=f"{user} (`{user.id}`)", inline=False)
+    embed.add_field(name="🏠 Server", value=guild.name if guild else str(guild_id), inline=True)
+    embed.add_field(name="💬 Câu hỏi", value=question[:1000], inline=False)
+    embed.add_field(name="🤖 AI đã trả lời tạm", value=ai_draft[:1000], inline=False)
+    embed.set_footer(text="Reply trong post này để giải đáp — sẽ tự chuyển sang forum Đã xử lý")
+
+    thread_name = question.strip()[:90] or f"Câu hỏi từ {user}"
+    result = await forum.create_thread(name=thread_name, embed=embed)
+    thread = result.thread
+
+    gdata = load_global_data()
+    pending = gdata.setdefault("ai_pending_questions", {})
+    pending[str(thread.id)] = {
+        "guild_id": guild_id,
+        "user_id": user.id,
+        "question": question,
+        "ai_draft": ai_draft,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_global_data(gdata)
+
+
+# ─────────────────────────────────────────────
+# FORUM RESOLVED — admin đã trả lời, lưu vào RAG
+# ─────────────────────────────────────────────
+async def create_resolved_post(bot, guild_id: int, user_id: int, question: str,
+                                 ai_draft: str, admin_answer: str, answered_by: int) -> int | None:
+    if not AI_ASK_ADMIN_RESOLVED_FORUM_ID:
+        return None
+    forum = bot.get_channel(AI_ASK_ADMIN_RESOLVED_FORUM_ID)
+    if not isinstance(forum, discord.ForumChannel):
+        return None
+
+    guild = bot.get_guild(guild_id)
+    embed = discord.Embed(
+        title="✅ Đã giải đáp",
+        color=0x57F287,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(name="🏠 Server", value=guild.name if guild else str(guild_id), inline=True)
+    embed.add_field(name="💬 Câu hỏi", value=question[:1000], inline=False)
+    embed.add_field(name="🤖 AI đã nghĩ", value=ai_draft[:1000], inline=False)
+    embed.add_field(name="✅ Giải đáp của admin", value=admin_answer[:1000], inline=False)
+    embed.set_footer(text="Nhắn tin mới trong post này để SỬA câu trả lời — AI sẽ cập nhật theo")
+
+    thread_name = question.strip()[:90] or "Đã giải đáp"
+    result = await forum.create_thread(name=thread_name, embed=embed)
+    thread = result.thread
+
+    gdata = load_global_data()
+    resolved = gdata.setdefault("ai_resolved_threads", {})
+    resolved[str(thread.id)] = {
+        "guild_id": guild_id,
+        "user_id": user_id,
+        "question": question,
+        "ai_draft": ai_draft,
+        "starter_message_id": thread.id,  # trong forum, id tin nhắn mở đầu == id thread
+    }
+    save_global_data(gdata)
+
+    await save_qa_to_rag(doc_id=str(thread.id), guild_id=guild_id, question=question, answer=admin_answer)
+    return thread.id
+
+
+async def _handle_pending_reply(bot, message: discord.Message) -> bool:
+    """Admin reply trong post PENDING -> tạo post RESOLVED + lưu RAG + archive post cũ.
+    Trả về True nếu đã xử lý (để listener chính không xử lý tiếp)."""
+    gdata = load_global_data()
+    pending = gdata.get("ai_pending_questions", {})
+    entry = pending.get(str(message.channel.id))
+    if not entry:
+        return False
+
+    token = set_current_guild(entry["guild_id"])
+    try:
+        resolved_id = await create_resolved_post(
+            bot,
+            guild_id=entry["guild_id"],
+            user_id=entry["user_id"],
+            question=entry["question"],
+            ai_draft=entry["ai_draft"],
+            admin_answer=message.content,
+            answered_by=message.author.id,
+        )
+        if resolved_id:
+            await message.add_reaction("✅")
+            try:
+                await message.channel.send(
+                    f"✅ Đã lưu vào forum **Đã xử lý** và dạy AI. Post này sẽ đóng lại."
+                )
+                await message.channel.edit(archived=True, locked=True)
+            except discord.HTTPException:
+                pass
+
+        # Xoá khỏi hàng đợi pending
+        pending.pop(str(message.channel.id), None)
+        gdata["ai_pending_questions"] = pending
+        save_global_data(gdata)
+    finally:
+        reset_current_guild(token)
+    return True
+
+
+async def _handle_resolved_edit(bot, message: discord.Message) -> bool:
+    """Admin nhắn tin MỚI trong post RESOLVED (không phải tin mở đầu) -> coi là
+    sửa câu trả lời, cập nhật embed gốc + ghi đè lại vector trong RAG."""
+    gdata = load_global_data()
+    resolved = gdata.get("ai_resolved_threads", {})
+    entry = resolved.get(str(message.channel.id))
+    if not entry:
+        return False
+
+    token = set_current_guild(entry["guild_id"])
+    try:
+        new_answer = message.content.strip()
+        if not new_answer:
+            return True
+
+        ok = await save_qa_to_rag(
+            doc_id=str(message.channel.id),
+            guild_id=entry["guild_id"],
+            question=entry["question"],
+            answer=new_answer,
+        )
+
+        try:
+            starter = await message.channel.fetch_message(message.channel.id)
+            if starter.embeds:
+                embed = starter.embeds[0]
+                for i, field in enumerate(embed.fields):
+                    if field.name == "✅ Giải đáp của admin":
+                        embed.set_field_at(i, name=field.name, value=new_answer[:1000], inline=field.inline)
+                        break
+                await starter.edit(embed=embed)
+        except discord.HTTPException:
+            pass
+
+        await message.add_reaction("✅" if ok else "⚠️")
+    finally:
+        reset_current_guild(token)
+    return True
 
 
 class AICog(commands.Cog):
@@ -541,6 +746,19 @@ class AICog(commands.Cog):
             return
         if message.author.id not in ADMIN_IDS:
             return
+
+        # Reply trong forum PENDING (câu hỏi AI không chắc) hoặc RESOLVED (sửa đáp án)
+        if isinstance(message.channel, discord.Thread):
+            if message.channel.parent_id == AI_ASK_ADMIN_PENDING_FORUM_ID:
+                if await _handle_pending_reply(self.bot, message):
+                    return
+            elif message.channel.parent_id == AI_ASK_ADMIN_RESOLVED_FORUM_ID:
+                # Tin nhắn ĐẦU TIÊN trong thread (id == thread.id) là embed do bot gửi,
+                # không phải admin -> bỏ qua, chỉ xử lý các tin nhắn SAU đó
+                if message.id != message.channel.id:
+                    if await _handle_resolved_edit(self.bot, message):
+                        return
+
         if message.author.id not in _pending_actions:
             return
         pending = _pending_actions[message.author.id]

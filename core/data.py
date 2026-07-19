@@ -148,6 +148,12 @@ def _get_mongo():
         _col_giveaway = _db["giveaways"]
     return _col_data, _col_giveaway
 
+def get_db():
+    """Trả về database 'tuytam_bot' để module khác (vd core/rag.py) mở collection
+    riêng mà KHÔNG cần tạo AsyncIOMotorClient mới (tránh tốn connection pool)."""
+    _get_mongo()  # đảm bảo _mongo_client đã khởi tạo
+    return _mongo_client["tuytam_bot"]
+
 # ══════════════════════════════════════════
 # DEFAULT DATA (theo từng guild)
 # ══════════════════════════════════════════
