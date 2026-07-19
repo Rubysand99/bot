@@ -452,7 +452,7 @@ async def _backfill_legit():
 # MAIN
 # ══════════════════════════════════════════
 async def main():
-    from verify_server import start_verify_server
+    from cogs.verify_server import start_verify_server
     import os
     port = int(os.getenv("PORT", 8080))
 
