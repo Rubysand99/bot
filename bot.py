@@ -70,7 +70,6 @@ COGS = [
     "cogs.mod",
     "cogs.seller",
     "cogs.shop_orders",
-    "cogs.verify_server",
 ]
 
 async def load_cogs():
@@ -452,7 +451,7 @@ async def _backfill_legit():
 # MAIN
 # ══════════════════════════════════════════
 async def main():
-    from cogs.verify_server import start_verify_server
+    from verify_server import start_verify_server
     import os
     port = int(os.getenv("PORT", 8080))
 
