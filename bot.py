@@ -70,6 +70,7 @@ COGS = [
     "cogs.mod",
     "cogs.seller",
     "cogs.shop_orders",
+    "cogs.verify_server",
 ]
 
 async def load_cogs():
