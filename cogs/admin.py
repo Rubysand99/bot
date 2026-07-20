@@ -39,7 +39,7 @@ from cogs.admin_views import (
     MkChannelView,
 )
 
-BOT_VERSION = "4.12.0"
+BOT_VERSION = "4.13.0"
 BOT_UPDATED = "2026-07-20"
 
 try:
@@ -397,6 +397,10 @@ class AdminCog(commands.Cog):
                     ("ℹ️ Cách dùng",
                      "Nhắn tin trong kênh AI được cài → bot tự trả lời\n"
                      "Cài kênh AI qua `.st` → AI Channel", False),
+                    ("🔍 Tìm tin nhắn cũ (admin)",
+                     "`.aisearchch add/remove/list [#kênh]` — Bật/tắt tự động index 1 kênh\n"
+                     "`.aiindex [limit]` — Quét & index lịch sử kênh hiện tại (mặc định 1000, tối đa 3000)\n"
+                     "`.aisearch <câu hỏi>` — Tìm tin nhắn cũ theo NGHĨA, không theo từ khoá", False),
                 ]
             },
             "seller": {
@@ -499,7 +503,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick` `.gwreset`", inline=True)
         embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.timeout` `.tempban`\n`.warn` `.modlog` `.xoa` `.automod`", inline=True)
-        embed.add_field(name="🤖 AI Chat",   value="`.aireset` `.mychat`", inline=True)
+        embed.add_field(name="🤖 AI Chat",   value="`.aireset` `.mychat` `.aisearch`", inline=True)
         embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo` `.baocao`", inline=True)
         embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel`", inline=True)
         embed.add_field(name="🏪 Seller",    value="`.seller add/remove/list/panel`\n`.myseller`", inline=True)
