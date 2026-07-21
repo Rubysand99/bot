@@ -75,6 +75,35 @@ async def get_embedding(text: str, input_type: str = "document") -> list[float] 
         return None
 
 
+async def get_embeddings_batch(texts: list[str], input_type: str = "document") -> list[list[float]] | None:
+    """Embed NHIỀU đoạn text trong 1 lần gọi API — dùng cho backfill (vd message_search.py),
+    giảm hẳn số lượt gọi Voyage so với embed từng câu một. Trả về list embedding ĐÚNG
+    THỨ TỰ với texts đầu vào. Bên gọi tự chia batch vừa phải (vd 50 tin/lần) — hàm này
+    không tự giới hạn kích thước batch."""
+    if not VOYAGE_API_KEY:
+        log.error("[RAG] ❌ Thiếu VOYAGE_API_KEY — bỏ qua embedding.")
+        return None
+    if not texts:
+        return []
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                VOYAGE_URL,
+                headers={"Authorization": f"Bearer {VOYAGE_API_KEY}", "Content-Type": "application/json"},
+                json={"input": texts, "model": VOYAGE_MODEL, "input_type": input_type},
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status != 200:
+                    err = await resp.text()
+                    log.error(f"[RAG] ❌ Voyage API lỗi {resp.status}: {err[:200]}")
+                    return None
+                data = await resp.json()
+                return [item["embedding"] for item in data["data"]]
+    except Exception as e:
+        log.error(f"[RAG] ❌ Lỗi gọi batch embedding API: {e}")
+        return None
+
+
 # ══════════════════════════════════════════
 # LƯU / CẬP NHẬT Q&A
 # ══════════════════════════════════════════
