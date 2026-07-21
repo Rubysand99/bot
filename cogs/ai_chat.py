@@ -24,11 +24,21 @@ from cogs.logger import send_log
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # ─────────────────────────────────────────────
-# FORUM HỎI-ĐÁP ADMIN — khi AI không chắc câu trả lời
+# FORUM HỎI-ĐÁP ADMIN — kích hoạt khi RAG KHÔNG tìm được câu trả lời liên quan
+# (không còn dựa vào AI tự đánh giá "chắc/không chắc" — model nhỏ tự đánh giá
+# không đáng tin, xem CHANGELOG v4.13.1)
 # ─────────────────────────────────────────────
 AI_ASK_ADMIN_PENDING_FORUM_ID  = int(os.getenv("AI_ASK_ADMIN_PENDING_FORUM_ID", "0"))
 AI_ASK_ADMIN_RESOLVED_FORUM_ID = int(os.getenv("AI_ASK_ADMIN_RESOLVED_FORUM_ID", "0"))
-UNSURE_MARKER = "[[CAN_HOI_ADMIN]]"
+
+# Khi admin reply trong forum Pending chỉ bằng 1 trong các từ này (không phân biệt
+# hoa/thường, có thể kèm dấu câu cuối), coi như "không muốn trả lời" — bot tự thay
+# bằng câu từ chối lịch sự thay vì lưu nguyên văn "kbt" làm câu trả lời cho khách.
+NO_ANSWER_SHORTHANDS = {"kbt", "ko bt", "k bt", "không biết", "khong biet", "k biết", "no"}
+DEFAULT_NO_ANSWER_REPLY = (
+    "Mình chưa có thông tin cụ thể về vấn đề này. Bạn vui lòng mở ticket để "
+    "được admin hỗ trợ trực tiếp nhé!"
+)
 
 GROQ_MODELS = [
     "llama-3.1-8b-instant",      # primary — 500k token/ngày
@@ -39,13 +49,18 @@ GROQ_MODELS = [
 GROQ_SYSTEM = (
     "Bạn là trợ lý AI của TuyTam Store — một cửa hàng game. "
     "Hãy trả lời ngắn gọn, thân thiện, bằng tiếng Việt. "
-    "Nếu câu hỏi cần thông tin CỤ THỂ về cửa hàng (giá cả, chính sách, quy định, "
-    "khuyến mãi...) mà bạn KHÔNG có dữ liệu chắc chắn, hãy trả lời tạm hợp lý nhất "
-    f"có thể rồi thêm chính xác chuỗi {UNSURE_MARKER} vào cuối câu trả lời (không giải "
-    "thích gì thêm về chuỗi này). Nếu có phần \"Thông tin đã xác nhận trước đó\" được "
-    "cung cấp bên dưới, ưu tiên dùng thông tin đó thay vì đoán — và KHÔNG thêm marker "
-    "nếu đã dùng thông tin đó để trả lời chắc chắn."
+    "Nếu có phần \"Thông tin đã xác nhận trước đó\" được cung cấp bên dưới, ưu tiên "
+    "dùng thông tin đó thay vì đoán."
 )
+
+
+def normalize_admin_answer(content: str) -> str:
+    """Nếu admin reply chỉ là 1 shorthand kiểu 'kbt'/'không biết' -> thay bằng câu
+    từ chối chuẩn, tránh lưu nguyên văn shorthand vào RAG làm khách hoang mang."""
+    cleaned = content.strip().lower().rstrip("!.?~ ")
+    if cleaned in NO_ANSWER_SHORTHANDS:
+        return DEFAULT_NO_ANSWER_REPLY
+    return content
 
 AI_HISTORY_LIMIT = 10
 DANGEROUS_ACTIONS = {"mod_ban", "mod_kick", "mod_mute"}  # Lệnh cần confirm trước khi chạy
@@ -506,10 +521,13 @@ async def handle_ai_message(message: discord.Message):
     rag_context = await get_relevant_context(message.guild.id, message.content)
 
     async with message.channel.typing():
-        raw_reply = await _call_groq(message.author.id, message.content, extra_context=rag_context)
+        reply = await _call_groq(message.author.id, message.content, extra_context=rag_context)
+    reply = reply.strip()
 
-    is_unsure = UNSURE_MARKER in raw_reply
-    reply = raw_reply.replace(UNSURE_MARKER, "").strip()
+    # RAG KHÔNG tìm được gì liên quan đủ tin cậy -> LUÔN gửi cho admin xử lý,
+    # không dựa vào AI tự đánh giá "chắc/không chắc" nữa (không đáng tin với
+    # model nhỏ — xem CHANGELOG v4.13.1)
+    needs_admin = rag_context is None
 
     if len(reply) <= 2000:
         await message.reply(reply, mention_author=False)
@@ -519,7 +537,7 @@ async def handle_ai_message(message: discord.Message):
 
     bot_ref = message._state._get_client()
 
-    if is_unsure:
+    if needs_admin:
         await create_pending_question(
             bot_ref,
             guild_id=message.guild.id,
@@ -535,7 +553,7 @@ async def handle_ai_message(message: discord.Message):
             ("💬 Tin nhắn", f"`{message.content[:200]}`",                       False),
             ("🤖 Phản hồi", f"`{reply[:200]}`",                                 False),
             ("📚 Dùng RAG", "✅ Có" if rag_context else "Không",                True),
-            ("❓ Cần admin", "✅ Có" if is_unsure else "Không",                 True),
+            ("❓ Cần admin", "✅ Có" if needs_admin else "Không",                True),
         ],
         user=message.author,
     )
@@ -640,7 +658,7 @@ async def _handle_pending_reply(bot, message: discord.Message) -> bool:
             user_id=entry["user_id"],
             question=entry["question"],
             ai_draft=entry["ai_draft"],
-            admin_answer=message.content,
+            admin_answer=normalize_admin_answer(message.content),
             answered_by=message.author.id,
         )
         if resolved_id:
@@ -673,7 +691,7 @@ async def _handle_resolved_edit(bot, message: discord.Message) -> bool:
 
     token = set_current_guild(entry["guild_id"])
     try:
-        new_answer = message.content.strip()
+        new_answer = normalize_admin_answer(message.content.strip())
         if not new_answer:
             return True
 

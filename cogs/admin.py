@@ -39,7 +39,7 @@ from cogs.admin_views import (
     MkChannelView,
 )
 
-BOT_VERSION = "4.13.0"
+BOT_VERSION = "4.13.1"
 BOT_UPDATED = "2026-07-20"
 
 try:
