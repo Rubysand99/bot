@@ -129,6 +129,21 @@ def get_all_log_channels() -> dict[str, int]:
 # FORMAT PLAIN TEXT LOG
 # ══════════════════════════════════════════
 
+import re as _re_log
+
+def _depinged(value: str) -> str:
+    """Vô hiệu hoá mention user/role còn sót lại trong giá trị field log (chèn
+    zero-width space sau '<@' / '<@&' để Discord không nhận diện là mention thật
+    nữa — KHÔNG áp dụng cho mention kênh <#...> vì kênh không gây ping).
+    Đây là lớp phòng vệ cuối — nguồn sửa đúng là đổi .mention -> _uname_plain()
+    ngay tại nơi tạo field (xem CHANGELOG v4.16.0), lớp này chỉ để chắc chắn
+    không sót trường hợp nào trong tương lai."""
+    zwsp = "\u200b"
+    value = _re_log.sub(r"<@&(\d+)>", f"<@&{zwsp}" + r"\1>", value)   # role mention
+    value = _re_log.sub(r"<@!?(\d+)>", f"<@{zwsp}" + r"\1>", value)   # user mention
+    return value
+
+
 def _fmt_log_text(
     event_type: str,
     title: str,
@@ -157,7 +172,7 @@ def _fmt_log_text(
 
     # Dòng 2: description (nếu có, cắt ngắn)
     if description:
-        short_desc = description[:200].replace("\n", " ")
+        short_desc = _depinged(description[:200].replace("\n", " "))
         lines.append(f"> {short_desc}")
 
     # Dòng 3+: fields gộp trên cùng 1 dòng (ngắn gọn)
@@ -165,7 +180,7 @@ def _fmt_log_text(
         field_parts = []
         for f in fields:
             name  = f[0]
-            value = str(f[1])[:80]  # giới hạn độ dài value
+            value = _depinged(str(f[1])[:80])  # giới hạn độ dài value
             field_parts.append(f"**{name}:** {value}")
         # Tối đa 3 field/dòng
         for i in range(0, len(field_parts), 3):

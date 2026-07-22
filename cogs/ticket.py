@@ -640,7 +640,7 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
                 ("🏷️ Loại",      type_label,                    True),
                 ("🌐 Server",     server_label,                  True),
                 ("📦 Item",       item_label,                    True),
-                ("👤 Người tạo", interaction.user.mention,       True),
+                ("👤 Người tạo", _uname_plain(interaction.user),  True),
                 ("🕐 Thời gian", created_at,                    True),
             ],
             user=interaction.user,
@@ -730,7 +730,7 @@ async def create_accpre_ticket(interaction: discord.Interaction, trade_type: str
             fields=[
                 ("🎫 Kênh",       channel.mention,               True),
                 ("🏷️ Loại",      type_label,                    True),
-                ("👤 Người tạo", interaction.user.mention,       True),
+                ("👤 Người tạo", _uname_plain(interaction.user),  True),
                 ("🕐 Thời gian", created_at,                    True),
             ],
             user=interaction.user,
@@ -785,7 +785,7 @@ async def create_build_ticket(interaction: discord.Interaction, trade_type: str)
             fields=[
                 ("🎫 Kênh",       channel.mention,               True),
                 ("🏷️ Loại",      type_label,                    True),
-                ("👤 Người tạo", interaction.user.mention,       True),
+                ("👤 Người tạo", _uname_plain(interaction.user),  True),
                 ("🕐 Thời gian", created_at,                    True),
             ],
             user=interaction.user,
@@ -843,7 +843,7 @@ async def create_direct_order_ticket(interaction: discord.Interaction, server_ke
             fields=[
                 ("🎫 Kênh",       channel.mention,         True),
                 ("🖥️ Server",    server_label,             True),
-                ("👤 Người tạo", interaction.user.mention, True),
+                ("👤 Người tạo", _uname_plain(interaction.user), True),
                 ("🕐 Thời gian", created_at,               True),
             ],
             user=interaction.user,
@@ -1337,7 +1337,7 @@ class TicketCog(commands.Cog):
         await send_to_queue(self.bot, buyer, ctx.channel, amount)
 
         log_fields = [
-            ("👤 Buyer",        buyer.mention,        True),
+            ("👤 Buyer",        _uname_plain(buyer),  True),
             ("💵 Đơn này",      fmt_amount(amount),   True),
             ("💰 Tổng chung",   fmt_amount(new_total), True),
         ]
@@ -1345,7 +1345,7 @@ class TicketCog(commands.Cog):
             log_fields.append((f"📊 {server_label}", fmt_amount(srv_total), True))
         log_fields += [
             ("🎫 Ticket",        ctx.channel.mention, True),
-            ("✍️ Xác nhận bởi", ctx.author.mention,  True),
+            ("✍️ Xác nhận bởi", _uname_plain(ctx.author),  True),
         ]
         await send_log(
             ctx.bot, "TICKET_DONE", f"Hoàn Thành Đơn — {ctx.channel.name}",
@@ -1412,11 +1412,11 @@ class TicketCog(commands.Cog):
         await send_log(
             self.bot, "TICKET_DONE", f"Hoàn Thành Đơn — {interaction.channel.name}",
             fields=[
-                ("👤 Buyer",       buyer.mention,         True),
+                ("👤 Buyer",       _uname_plain(buyer),   True),
                 ("💵 Đơn này",     fmt_amount(parsed),    True),
                 ("💰 Tổng",        fmt_amount(new_total), True),
                 ("🎫 Ticket",      interaction.channel.mention, True),
-                ("✍️ Xác nhận",    interaction.user.mention,   True),
+                ("✍️ Xác nhận",    _uname_plain(interaction.user),   True),
             ],
             user=interaction.user,
         )

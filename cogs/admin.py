@@ -17,7 +17,7 @@ from cogs.logger import send_log
 from core.data import (
     ADMIN_IDS, ADMIN_TUYTAM_ID, ADMIN_RUBY_ID,
     get_cfg_stock_category, get_cfg_sold_category,
-    get_cfg_font,
+    get_cfg_font, _uname_plain, is_staff_member,
     load_data, get_price_sections,
     can_use_dangerous_cmd, parse_amount, fmt_amount,
     get_or_fetch_channel,
@@ -48,6 +48,10 @@ try:
     BOT_UPDATED = getattr(_bot_module, "BOT_UPDATED", BOT_UPDATED)
 except Exception:
     pass
+
+# Nạp cog 1 lần duy nhất lúc bot khởi động (không reload theo từng lệnh) nên
+# dùng làm mốc tính uptime cho .botinfo là đủ chính xác.
+_BOT_START_TS = datetime.now(timezone.utc)
 
 class AdminCog(commands.Cog):
     def __init__(self, bot):
@@ -246,13 +250,47 @@ class AdminCog(commands.Cog):
     @commands.command(name="botinfo")
     async def botinfo_cmd(self, ctx):
         import platform
+
+        # Uptime
+        delta = datetime.now(timezone.utc) - _BOT_START_TS
+        days, rem = divmod(int(delta.total_seconds()), 86400)
+        hours, rem = divmod(rem, 3600)
+        minutes, _ = divmod(rem, 60)
+        uptime_str = (f"{days}n " if days else "") + f"{hours}g {minutes}p"
+
+        # MongoDB health-check (ping nhẹ, không tính là lỗi nếu chậm — chỉ báo mất kết nối)
+        mongo_status = "🟢 OK"
+        try:
+            from core.data import _get_mongo
+            col, _ = _get_mongo()
+            await asyncio.wait_for(col.database.command("ping"), timeout=3)
+        except Exception:
+            mongo_status = "🔴 Mất kết nối"
+
+        # RAM (bỏ qua êm nếu chưa cài psutil — không chặn lệnh)
+        ram_str = "N/A"
+        try:
+            import psutil
+            proc = psutil.Process()
+            ram_mb = proc.memory_info().rss / (1024 * 1024)
+            ram_str = f"{ram_mb:.0f} MB"
+        except Exception:
+            pass
+
+        lat = round(self.bot.latency * 1000)
+        lat_icon = "🟢" if lat < 100 else ("🟡" if lat < 200 else "🔴")
+
         embed = discord.Embed(title=f"🤖  {self.bot.user.name}", color=0x5865F2, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="🆔 ID",        value=f"`{self.bot.user.id}`",                             inline=True)
-        embed.add_field(name="🌐 Servers",   value=f"**{len(self.bot.guilds)}**",                       inline=True)
-        embed.add_field(name="🏓 Latency",   value=f"**{round(self.bot.latency*1000)}ms**",             inline=True)
-        embed.add_field(name="🐍 Python",    value=f"`{platform.python_version()}`",                   inline=True)
-        embed.add_field(name="📦 discord.py",value=f"`{discord.__version__}`",                         inline=True)
-        embed.add_field(name="📋 Version",   value=f"`v{BOT_VERSION}`",                                inline=True)
+        embed.add_field(name="📋 Version",    value=f"`v{BOT_VERSION}` ({BOT_UPDATED})",     inline=True)
+        embed.add_field(name="⏱️ Uptime",     value=uptime_str,                              inline=True)
+        embed.add_field(name="🏓 Latency",    value=f"{lat_icon} **{lat}ms**",                inline=True)
+        embed.add_field(name="🗄️ MongoDB",    value=mongo_status,                             inline=True)
+        embed.add_field(name="💾 RAM",        value=ram_str,                                  inline=True)
+        embed.add_field(name="🌐 Servers",    value=f"**{len(self.bot.guilds)}**",            inline=True)
+        embed.add_field(name="⚙️ Cogs",       value=f"**{len(self.bot.cogs)}**",              inline=True)
+        embed.add_field(name="📜 Lệnh",       value=f"**{len(self.bot.commands)}** prefix",   inline=True)
+        embed.add_field(name="🐍 Python",     value=f"`{platform.python_version()}`",         inline=True)
+        embed.add_field(name="📦 discord.py", value=f"`{discord.__version__}`",               inline=True)
         if self.bot.user.avatar: embed.set_thumbnail(url=self.bot.user.avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System")
         await ctx.reply(embed=embed)
@@ -597,11 +635,33 @@ class AdminCog(commands.Cog):
     async def userinfo_cmd(self, ctx, member: discord.Member = None):
         m     = member or ctx.author
         roles = [r.mention for r in m.roles if r.name != "@everyone"]
+        account_age_days = (datetime.now(timezone.utc) - m.created_at).days
+
+        badges = []
+        if m.id in ADMIN_IDS:
+            badges.append("👑 Admin")
+        if is_staff_member(m):
+            badges.append("🛡️ Staff")
+        if m.id == ctx.guild.owner_id:
+            badges.append("🏠 Owner")
+
         embed = discord.Embed(title=f"👤  {m}", color=m.color if m.color.value else 0x5865F2, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="🆔 ID",         value=f"`{m.id}`",                                                         inline=True)
         embed.add_field(name="🤖 Bot",        value="✅" if m.bot else "❌",                                               inline=True)
         embed.add_field(name="📅 Tạo acc",    value=f"<t:{int(m.created_at.timestamp())}:D>",                             inline=True)
         embed.add_field(name="📥 Vào server", value=f"<t:{int(m.joined_at.timestamp())}:D>" if m.joined_at else "N/A",   inline=True)
+        embed.add_field(name="🎖️ Role cao nhất", value=m.top_role.mention if m.top_role.name != "@everyone" else "Không có", inline=True)
+        embed.add_field(name="🚀 Boost server", value=f"<t:{int(m.premium_since.timestamp())}:R>" if m.premium_since else "Không", inline=True)
+        if m.is_timed_out():
+            embed.add_field(name="🔇 Timeout", value=f"Đến <t:{int(m.timed_out_until.timestamp())}:R>", inline=True)
+        if badges:
+            embed.add_field(name="🏷️ Danh hiệu", value="  ".join(badges), inline=True)
+        if account_age_days < 7:
+            embed.add_field(
+                name="⚠️ Cảnh báo",
+                value=f"Tài khoản mới tạo **{account_age_days} ngày trước** — cẩn thận invite ảo/spam.",
+                inline=False,
+            )
         embed.add_field(name="🏷️ Roles",      value=" ".join(roles[-10:]) if roles else "Không có",                      inline=False)
         embed.set_thumbnail(url=m.display_avatar.url)
         await ctx.reply(embed=embed)
@@ -610,13 +670,33 @@ class AdminCog(commands.Cog):
     async def serverinfo_cmd(self, ctx):
         g    = ctx.guild
         bots = sum(1 for m in g.members if m.bot)
+        boost_bar = "🚀" * g.premium_tier if g.premium_tier else "—"
+        verif_labels = {
+            discord.VerificationLevel.none:   "Không",
+            discord.VerificationLevel.low:    "Thấp",
+            discord.VerificationLevel.medium: "Trung bình",
+            discord.VerificationLevel.high:   "Cao",
+            discord.VerificationLevel.highest: "Rất cao",
+        }
+        threads = sum(1 for t in g.threads) if hasattr(g, "threads") else 0
+
         embed = discord.Embed(title=f"🏠  {g.name}", color=0x5865F2, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="🆔 ID",         value=f"`{g.id}`",                                              inline=True)
         embed.add_field(name="👑 Owner",      value=g.owner.mention if g.owner else "N/A",                    inline=True)
         embed.add_field(name="📅 Tạo lúc",   value=f"<t:{int(g.created_at.timestamp())}:D>",                 inline=True)
         embed.add_field(name="👥 Thành viên", value=f"👤 {g.member_count - bots}  🤖 {bots}",                 inline=True)
-        embed.add_field(name="💬 Kênh",      value=f"📝 {len(g.text_channels)}  🔊 {len(g.voice_channels)}", inline=True)
+        embed.add_field(
+            name="💬 Kênh",
+            value=f"📝 {len(g.text_channels)}  🔊 {len(g.voice_channels)}  🗂️ {len(g.forums)}  🧵 {threads}",
+            inline=True,
+        )
+        embed.add_field(name="📁 Category",   value=f"**{len(g.categories)}**",                               inline=True)
+        embed.add_field(name="🏷️ Roles",      value=f"**{len(g.roles) - 1}**",                                inline=True)
+        embed.add_field(name="😀 Emoji",      value=f"**{len(g.emojis)}** / {g.emoji_limit}",                 inline=True)
+        embed.add_field(name="🚀 Boost",      value=f"{boost_bar}  Level {g.premium_tier} ({g.premium_subscription_count} boost)", inline=True)
+        embed.add_field(name="🛡️ Xác minh",   value=verif_labels.get(g.verification_level, "?"),              inline=True)
         if g.icon: embed.set_thumbnail(url=g.icon.url)
+        if g.banner: embed.set_image(url=g.banner.url)
         await ctx.reply(embed=embed)
 
     @commands.command(name="giaset2", aliases=["priceset2"])
@@ -787,7 +867,7 @@ class _SoldPriceModal(Modal, title="💰 Nhập giá đơn sold"):
                 ("👤 Seller",  f"<@{seller_id}>",              True),
                 ("💰 Giá",     fmt_amount(amount),              True),
                 ("🎫 Kênh cũ", f"`{pending['old_name']}`",       True),
-                ("✍️ Điền bởi", interaction.user.mention,        True),
+                ("✍️ Điền bởi", _uname_plain(interaction.user),   True),
             ],
             user=interaction.user, guild_id=pending.get("guild_id"))
 
@@ -981,7 +1061,7 @@ async def handle_sold(bot, message: discord.Message):
         )
         await message.add_reaction("✅")
         await send_log(bot, "INFO", f"Kênh sold: `{old_name}` → `{new_name}`",
-            fields=[("Seller", message.author.mention, True), ("Kênh mới", f"<#{channel.id}>", True), ("Category", sold_category.name, True)],
+            fields=[("Seller", _uname_plain(message.author), True), ("Kênh mới", f"<#{channel.id}>", True), ("Category", sold_category.name, True)],
             guild_id=message.guild.id)
     except discord.Forbidden:
         await message.add_reaction("⚠️")
@@ -1002,7 +1082,7 @@ async def handle_sold(bot, message: discord.Message):
         add_seller_sale(seller_id, amount, old_name, channel.id)
         await send_log(bot, "INFO", "💰 Sold-stock — đã ghi nhận thống kê",
             fields=[
-                ("👤 Seller",  message.author.mention,  True),
+                ("👤 Seller",  _uname_plain(message.author),  True),
                 ("💰 Giá",     fmt_amount(amount),       True),
                 ("🎫 Kênh cũ", f"`{old_name}`",          True),
             ],
@@ -1014,7 +1094,7 @@ async def handle_sold(bot, message: discord.Message):
 
     if not ADMIN_TUYTAM_ID:
         await send_log(bot, "INFO", "⚠️ Sold-stock — không parse được giá & chưa cài ADMIN_TUYTAM_ID",
-            fields=[("👤 Seller", message.author.mention, True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
+            fields=[("👤 Seller", _uname_plain(message.author), True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
             user=message.author, guild_id=message.guild.id)
         return
 
@@ -1024,7 +1104,7 @@ async def handle_sold(bot, message: discord.Message):
         bot.add_view(_SoldPriceView(channel.id), message_id=msg_id)
     else:
         await send_log(bot, "INFO", "⚠️ Không gửi được DM hỏi giá cho admin TuyTam (DM tắt)",
-            fields=[("👤 Seller", message.author.mention, True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
+            fields=[("👤 Seller", _uname_plain(message.author), True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
             user=message.author, guild_id=message.guild.id)
 
     # Sau 24h nếu chưa xử lý → escalate sang Ruby

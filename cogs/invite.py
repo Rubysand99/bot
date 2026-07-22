@@ -18,7 +18,7 @@ from discord.ext import commands
 
 from cogs.logger import send_log
 from core.data import (
-    ADMIN_IDS, load_data, save_data, _uname,
+    ADMIN_IDS, load_data, save_data, _uname, _uname_plain,
     load_global_data, save_global_data,
     get_member_inviters, save_member_inviters,
     get_pending_joins, save_pending_joins,
@@ -617,27 +617,44 @@ class InviteCog(commands.Cog):
         board = []
         for uid_str, c in counts.items():
             total, unverify, verify, fake, left, net = _calc_net(c)
-            board.append((int(uid_str), net, total, fake, left))
+            board.append((int(uid_str), net, total, unverify, verify, fake, left))
         board.sort(key=lambda x: x[1], reverse=True)
-        board = board[:top]
 
         if not board:
             return await ctx.reply(f"❌ Chưa có dữ liệu invite nào ({title_label}).")
 
-        medals = ["🥇", "🥈", "🥉"]
-        lines  = []
-        for i, (uid, net, total, fake, left) in enumerate(board):
-            icon   = medals[i] if i < 3 else f"`{i+1}.`"
-            m      = ctx.guild.get_member(uid)
-            name   = _uname(m) if m else f"ID:{uid}"
-            lines.append(f"{icon} **{name}** — **{net}** net (`{total}` tổng, `{fake}` fake, `{left}` rời)")
+        server_total_net = sum(x[1] for x in board)
+        board = board[:top]
+
+        def _name(uid):
+            m = ctx.guild.get_member(uid)
+            return _uname_plain(m) if m else f"ID:{uid}"
 
         embed = discord.Embed(
-            title       = f"🏆 Bảng xếp hạng Invite — {title_label} — Top {top}",
-            description = "\n".join(lines),
+            title       = f"🏆 Bảng xếp hạng Invite — {title_label}",
+            description = f"👥 **{len(counts)}** người có invite  •  📈 Tổng net server: **{server_total_net}**",
             color       = 0xF1C40F,
             timestamp   = now,
         )
+
+        medals = ["🥇", "🥈", "🥉"]
+        for i, (uid, net, total, unverify, verify, fake, left) in enumerate(board[:3]):
+            embed.add_field(
+                name=f"{medals[i]} {_name(uid)} — {net} net",
+                value=(
+                    f"✅ {verify} verify  •  ⏳ {unverify} chờ  •  "
+                    f"🚫 {fake} fake  •  🚪 {left} rời  •  Σ {total} tổng"
+                ),
+                inline=False,
+            )
+
+        if len(board) > 3:
+            rest_lines = [
+                f"`{i+4}.` **{_name(uid)}** — **{net}** net (`{total}` tổng, `{fake}` fake, `{left}` rời)"
+                for i, (uid, net, total, unverify, verify, fake, left) in enumerate(board[3:])
+            ]
+            embed.add_field(name=f"📄 Hạng 4–{len(board)}", value="\n".join(rest_lines)[:1024], inline=False)
+
         embed.set_footer(text="TuyTam Store  •  .invitetop [số] [MM/YYYY] [alltime]")
         await ctx.reply(embed=embed)
 
@@ -1327,14 +1344,26 @@ class InviteCog(commands.Cog):
         }
 
         embeds = []
+        total_ips = len(dupes)
+        total_acc = sum(len(uids) for uids in dupes.values())
+        total_vpn = len(vpn_users_raw)
+
+        # ── Trang 0: Tóm tắt tổng quan ──
+        summary = discord.Embed(
+            title="🌐 IP & VPN — Tóm tắt",
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc),
+        )
+        summary.add_field(name="🚨 IP dùng chung", value=f"**{total_ips}** IP  •  **{total_acc}** tài khoản", inline=True)
+        summary.add_field(name="🛡️ VPN/Proxy", value=f"**{total_vpn}** tài khoản", inline=True)
+        summary.set_footer(text="TuyTam Store  •  Chỉ admin thấy  •  Dùng nút ◀ ▶ để xem chi tiết")
+        embeds.append(summary)
 
         if dupes:
             sorted_dupes = sorted(dupes.items(), key=lambda x: len(x[1]), reverse=True)
 
             PAGE_SIZE = 5
             pages     = [sorted_dupes[i:i+PAGE_SIZE] for i in range(0, len(sorted_dupes), PAGE_SIZE)]
-            total_ips = len(sorted_dupes)
-            total_acc = sum(len(uids) for uids in dupes.values())
 
             for page_idx, page in enumerate(pages):
                 embed = discord.Embed(
@@ -1342,8 +1371,6 @@ class InviteCog(commands.Cog):
                     color     = 0xE74C3C,
                     timestamp = datetime.now(timezone.utc),
                 )
-                if len(pages) > 1:
-                    embed.set_author(name=f"Trang {page_idx+1}/{len(pages)}")
                 embed.set_footer(text="TuyTam Store  •  Chỉ admin thấy")
 
                 for ip_display, uids in page:
@@ -1355,7 +1382,7 @@ class InviteCog(commands.Cog):
                     lines = []
                     for uid in uids:
                         m        = ctx.guild.get_member(uid) if ctx.guild else None
-                        name     = str(m) if m else f"ID:{uid}"
+                        name     = _uname_plain(m) if m else f"ID:{uid}"
                         is_prim  = "✅" if uid == primary_id else "❌"
                         lines.append(f"{is_prim} `{uid}` {name}")
                     embed.add_field(
@@ -1373,19 +1400,17 @@ class InviteCog(commands.Cog):
 
             for page_idx, page in enumerate(vpn_pages):
                 vembed = discord.Embed(
-                    title     = f"🛡️ Tài khoản dùng VPN/Proxy — {len(vpn_items)} tài khoản",
+                    title     = f"🛡️ Tài khoản dùng VPN/Proxy — {total_vpn} tài khoản",
                     color     = 0xF39C12,
                     timestamp = datetime.now(timezone.utc),
                 )
-                if len(vpn_pages) > 1:
-                    vembed.set_author(name=f"Trang {page_idx+1}/{len(vpn_pages)}")
                 vembed.set_footer(text="TuyTam Store  •  Chỉ admin thấy")
 
                 lines = []
                 for uid_str, info in page:
                     uid  = int(uid_str)
                     m    = ctx.guild.get_member(uid) if ctx.guild else None
-                    name = str(m) if m else f"ID:{uid}"
+                    name = _uname_plain(m) if m else f"ID:{uid}"
                     lines.append(
                         f"`{uid}` **{name}** — ||`{info.get('ip','?')}`|| "
                         f"({info.get('isp','?')}, {info.get('country','?')})"
@@ -1393,11 +1418,11 @@ class InviteCog(commands.Cog):
                 vembed.description = "\n".join(lines) or "*(trống)*"
                 embeds.append(vembed)
 
-        if not embeds:
+        if total_ips == 0 and total_vpn == 0:
             return await ctx.reply("✅ Không có IP nào dùng chung, và không có tài khoản VPN nào được ghi nhận.")
 
-        for e in embeds:
-            await ctx.send(embed=e)
+        view = IpStatsView(embeds, author_id=ctx.author.id) if len(embeds) > 1 else None
+        await ctx.reply(embed=embeds[0], view=view)
 
     @commands.command(name="testip")
     async def testip_cmd(self, ctx):
@@ -1551,6 +1576,49 @@ class InviteCog(commands.Cog):
                 f"✅ Đã reset toàn bộ invite {month_label} của server.\n*(All-time vẫn giữ nguyên)*",
                 ephemeral=True,
             )
+
+
+class IpStatsView(discord.ui.View):
+    """Phân trang đơn giản (◀ ▶) cho .ipstats — trang 0 là tóm tắt, các trang sau
+    là chi tiết IP trùng / VPN. Thay cho việc gửi nhiều embed rời rạc như trước."""
+
+    def __init__(self, embeds: list[discord.Embed], author_id: int | None = None):
+        super().__init__(timeout=120)
+        self.embeds    = embeds
+        self.page      = 0
+        self.author_id = author_id
+        self._sync_labels()
+
+    def _sync_labels(self):
+        for item in self.children:
+            if isinstance(item, discord.ui.Button) and item.custom_id == "ipstats_page":
+                item.label = f"{self.page + 1}/{len(self.embeds)}"
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if self.author_id and interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Chỉ người chạy lệnh mới bấm được.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._guard(interaction):
+            return
+        self.page = (self.page - 1) % len(self.embeds)
+        self._sync_labels()
+        await interaction.response.edit_message(embed=self.embeds[self.page], view=self)
+
+    @discord.ui.button(label="1/1", style=discord.ButtonStyle.secondary, disabled=True, custom_id="ipstats_page")
+    async def page_label(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._guard(interaction):
+            return
+        self.page = (self.page + 1) % len(self.embeds)
+        self._sync_labels()
+        await interaction.response.edit_message(embed=self.embeds[self.page], view=self)
 
 
 async def setup(bot: commands.Bot):

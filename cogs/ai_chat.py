@@ -15,6 +15,14 @@ v4.14.0 — Function calling (xem CHANGELOG):
   hàng của CHÍNH người hỏi qua QUERY_TOOL_SCHEMAS.
 - Thêm lệnh `.ai <yêu cầu>` cho admin — điều khiển bot bằng ngôn ngữ tự nhiên qua
   ADMIN_TOOL_SCHEMAS, có xác nhận cho hành động nguy hiểm (AIConfirmView).
+
+v4.15.0 — Multi-agent (ý #8, xem core/ai_agents.py):
+- `.ai` giờ có 1 bước router NHẸ (không tool) phân loại yêu cầu vào đúng agent
+  (support/ops/report) trước khi chạy tool-calling thật, thay vì luôn nhồi hết
+  QUERY + ADMIN tool vào 1 lần gọi như trước — dễ mở rộng thêm agent mới (vd #17
+  Báo cáo, hiện để stub tools=[] chờ triển khai) mà không phải sửa ai_chat.py.
+- `run_ai_tools_agent()` đổi signature: nhận thẳng `system_prompt` + `tools` thay
+  vì cờ `is_admin` — mọi agent dùng chung 1 vòng lặp tool-calling.
 """
 
 import os
@@ -34,6 +42,7 @@ from core.rag import save_qa_to_rag, get_relevant_context
 from core.ai_tools import (
     QUERY_TOOL_SCHEMAS, ADMIN_TOOL_SCHEMAS, DANGEROUS_TOOLS, TOOL_HANDLERS,
 )
+from core.ai_agents import AGENTS, route_agent
 from cogs.logger import send_log
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -63,23 +72,9 @@ GROQ_MODELS = [
     "openai/gpt-oss-120b",
 ]
 
-GROQ_SYSTEM = (
-    "Bạn là trợ lý AI của TuyTam Store — một cửa hàng game. "
-    "Hãy trả lời ngắn gọn, thân thiện, bằng tiếng Việt. "
-    "Nếu có phần \"Thông tin đã xác nhận trước đó\" được cung cấp bên dưới, ưu tiên "
-    "dùng thông tin đó thay vì đoán. "
-    "Nếu người dùng hỏi về ticket/gói seller/invite/lịch sử mua hàng của CHÍNH họ, "
-    "hãy dùng tool tương ứng để tra cứu thay vì đoán."
-)
-
-GROQ_ADMIN_SYSTEM = (
-    "Bạn là AI điều khiển bot Discord TuyTam Store cho admin. Phân tích yêu cầu của "
-    "admin (kể cả sai chính tả, thiếu dấu, viết tắt) và gọi tool phù hợp nhất. "
-    "Nếu yêu cầu THIẾU thông tin bắt buộc (vd thiếu lý do ban, thiếu tên kênh...), "
-    "ĐỪNG gọi tool — hãy hỏi lại admin bằng 1 câu ngắn gọn tiếng Việt. "
-    "Nếu yêu cầu không rõ hành động nào, trả lời ngắn gọn rằng bạn không hiểu và "
-    "gợi ý admin mô tả rõ hơn hoặc dùng lệnh trực tiếp."
-)
+# System prompt của từng agent giờ nằm trong core/ai_agents.py (AGENTS registry) —
+# xem ý #8 Multi-agent. GROQ_SYSTEM ở đây chỉ còn dùng cho hàm _call_groq() legacy.
+GROQ_SYSTEM = AGENTS["support"]["system"]
 
 AI_HISTORY_LIMIT = 10
 _ai_chat_history: dict = {}   # user_id → {"messages": [...], "last_used": float timestamp}
@@ -178,18 +173,16 @@ async def _call_groq_tools(messages: list, tools: list | None = None) -> dict:
     return {"role": "assistant", "content": f"⚠️ AI tạm thời không khả dụng ({last_err}). Vui lòng thử lại sau ít phút."}
 
 
-async def run_ai_tools_agent(ctx, is_admin: bool, user_content: str, history: list | None = None):
-    """Vòng lặp tool-calling chính. Trả về tuple (final_text, pending_confirm):
+async def run_ai_tools_agent(ctx, system_prompt: str, tools: list, user_content: str,
+                               history: list | None = None):
+    """Vòng lặp tool-calling chính, dùng chung cho MỌI agent (v4.15.0, ý #8
+    Multi-agent — xem core/ai_agents.py). Trả về tuple (final_text, pending_confirm):
     - pending_confirm là None nếu AI đã trả lời xong (final_text = câu trả lời).
     - pending_confirm là {"name": tool_name, "params": {...}} nếu gặp tool nguy hiểm
       cần admin xác nhận trước — final_text khi đó là None.
     `ctx` cần có .guild/.author/.channel/.message (dùng message thật hoặc commands.Context).
     """
-    tools = list(QUERY_TOOL_SCHEMAS)
-    if is_admin:
-        tools += ADMIN_TOOL_SCHEMAS
-
-    messages = [{"role": "system", "content": GROQ_ADMIN_SYSTEM if is_admin else GROQ_SYSTEM}]
+    messages = [{"role": "system", "content": system_prompt}]
     messages += (history or [])
     messages.append({"role": "user", "content": user_content})
 
@@ -270,7 +263,10 @@ async def handle_ai_message(message: discord.Message):
         )
 
     async with message.channel.typing():
-        reply, pending = await run_ai_tools_agent(message, is_admin=False, user_content=user_content, history=history)
+        support = AGENTS["support"]
+        reply, pending = await run_ai_tools_agent(
+            message, support["system"], support["tools"], user_content, history=history
+        )
 
     # Query tools không nằm trong DANGEROUS_TOOLS nên pending sẽ luôn None ở nhánh
     # khách hàng, nhưng vẫn xử lý phòng hờ nếu sau này thêm tool mới.
@@ -313,7 +309,7 @@ async def handle_ai_message(message: discord.Message):
     await send_log(
         bot_ref, "AI_USED", "AI Chat",
         fields=[
-            ("👤 User",    f"{message.author.mention} (`{message.author.id}`)", True),
+            ("👤 User",    f"{_uname_plain(message.author)} (`{message.author.id}`)", True),
             ("💬 Tin nhắn", f"`{message.content[:200]}`",                       False),
             ("🤖 Phản hồi", f"`{reply[:200]}`",                                 False),
             ("📚 Dùng RAG", "✅ Có" if rag_context else "Không",                True),
@@ -516,7 +512,19 @@ class AICog(commands.Cog):
             return await ctx.reply("❓ Dùng: `.ai <yêu cầu>` — vd `.ai tạo kênh test riêng tư`")
 
         async with ctx.typing():
-            reply, pending = await run_ai_tools_agent(ctx, is_admin=True, user_content=prompt, history=[])
+            # Router (#8 Multi-agent) — phân loại yêu cầu vào đúng agent trước khi
+            # chạy tool-calling, tránh nhồi hết 15+ admin tool vào 1 lần gọi.
+            agent_name = await route_agent(_call_groq_tools, prompt)
+            agent = AGENTS.get(agent_name, AGENTS["ops"])
+            if not agent["tools"]:
+                return await ctx.reply(
+                    f"🚧 Yêu cầu này thuộc nhóm **{agent['label']}**, nhưng nhóm này "
+                    f"chưa được triển khai. Vui lòng thử lại với yêu cầu điều hành "
+                    f"server hoặc tra cứu ticket/seller/invite."
+                )
+            reply, pending = await run_ai_tools_agent(
+                ctx, agent["system"], agent["tools"], prompt, history=[]
+            )
 
         if pending:
             tool_name, params = pending["name"], pending["params"]

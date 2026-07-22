@@ -23,7 +23,7 @@ import discord
 from discord.ext import commands
 
 from core.data import (
-    ADMIN_IDS, fmt_amount, is_staff_member, get_or_fetch_channel,
+    ADMIN_IDS, fmt_amount, is_staff_member, get_or_fetch_channel, _uname_plain,
     get_cfg_shop_orders_enabled,
     get_shop_orders_config, save_shop_orders_config,
     get_cfg_queue_channel, save_cfg_queue_channel,
@@ -125,7 +125,7 @@ class QueueOrderView(GuildContextView):
 
         await send_log(
             interaction.client, "SHOP_QUEUE_DONE", "Đơn hàng đợi đã hoàn thành",
-            fields=[("🧑 Seller", interaction.user.mention, True)],
+            fields=[("🧑 Seller", _uname_plain(interaction.user), True)],
             user=interaction.user, guild_id=interaction.guild_id,
         )
 

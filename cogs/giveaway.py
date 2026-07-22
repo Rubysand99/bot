@@ -205,7 +205,7 @@ class GiveawayView(View):
 
         await interaction.response.send_message(msg_reply, ephemeral=True)
         await send_log(interaction.client, "GIVEAWAY_JOIN", f"Tham gia GW #{gw.get('gw_id','?')} — {gw['prize']}",
-            fields=[("User", interaction.user.mention, True), ("Tổng tham gia", str(len(entries)), True)])
+            fields=[("User", _uname_plain(interaction.user), True), ("Tổng tham gia", str(len(entries)), True)])
 
 
 class GiveawayConfirmView(View):
@@ -283,7 +283,7 @@ class GiveawayConfirmView(View):
 
         _gw_tasks[mid] = asyncio.create_task(_giveaway_timer_task(interaction.client, self.channel.id, mid, self.w_count, self.seconds))
         await send_log(interaction.client, "GIVEAWAY_START", f"Tạo GW #{gw_id} — {self.prize}",
-            fields=[("Host", self.host.mention, True), ("Thời gian", f"{self.seconds}s", True), ("Số winner", str(self.w_count), True), ("Kênh", self.channel.mention, True)])
+            fields=[("Host", _uname_plain(self.host), True), ("Thời gian", f"{self.seconds}s", True), ("Số winner", str(self.w_count), True), ("Kênh", self.channel.mention, True)])
 
     @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.danger, custom_id="gw_cancel")
     async def cancel(self, interaction: discord.Interaction, button: Button):
@@ -407,7 +407,7 @@ class GiveawayCog(commands.Cog):
 
         await interaction.response.send_message(f"✅ Đang kết thúc GW #{ref}...", ephemeral=True)
         await send_log(interaction.client, "GIVEAWAY_END", f"Kết thúc sớm GW #{ref} — {gw.get('prize','')}",
-            fields=[("Admin", interaction.user.mention, True)])
+            fields=[("Admin", _uname_plain(interaction.user), True)])
         channel = await get_or_fetch_channel(self.bot, gw["channel_id"])
         if channel:
             task = _gw_tasks.pop(found_mid, None)
@@ -439,10 +439,14 @@ class GiveawayCog(commands.Cog):
             return await interaction.response.send_message("❌ Không có ai tham gia để reroll.", ephemeral=True)
         count      = min(gw.get("winners", 1), len(entries))
         winner_ids = random.sample(entries, count)
-        mentions   = ", ".join(f"<@{uid}>" for uid in winner_ids)
+        mentions      = ", ".join(f"<@{uid}>" for uid in winner_ids)
+        plain_winners = ", ".join(
+            _uname_plain(interaction.guild.get_member(uid)) if interaction.guild and interaction.guild.get_member(uid) else f"ID:{uid}"
+            for uid in winner_ids
+        )
         await interaction.response.send_message(f"🔄 Reroll GW #{ref}! Winner mới: {mentions} 🎉", ephemeral=True)
         await send_log(interaction.client, "GIVEAWAY_REROLL", f"Reroll GW #{ref}",
-            fields=[("Admin", interaction.user.mention, True), ("Winner mới", mentions, True)])
+            fields=[("Admin", _uname_plain(interaction.user), True), ("Winner mới", plain_winners, True)])
 
     @app_commands.command(name="gwlist", description="Xem danh sách người tham gia giveaway")
     @app_commands.describe(gw_id="ID giveaway (GW #?)")
@@ -517,7 +521,7 @@ class GiveawayCog(commands.Cog):
 
         await ctx.reply(f"✅ Đã chọn <@{uid}> làm winner **GW #{ref}**. Bot sẽ công bố khi hết giờ.")
         await send_log(ctx.bot, "GIVEAWAY_END", f"Pick GW #{ref} — {found_gw.get('prize','')}",
-            fields=[("Admin", ctx.author.mention, True), ("Winner (chờ công bố)", f"<@{uid}>", True)])
+            fields=[("Admin", _uname_plain(ctx.author), True), ("Winner (chờ công bố)", f"<@{uid}>", True)])
 
     @commands.command(name="gwreset")
     async def gwreset(self, ctx, gw_id: str = None):
@@ -790,7 +794,7 @@ class GwStatusView(View):
         await end_giveaway(mid, channel, gw["winners"], gw.get("prize", "phần thưởng"), gw.get("host", 0))
         await send_log(self.bot, "GIVEAWAY_END",
             f"Kết thúc sớm GW #{gw.get('gw_id','?')} — {gw.get('prize','')}",
-            fields=[("Admin", interaction.user.mention, True)])
+            fields=[("Admin", _uname_plain(interaction.user), True)])
         self._rebuild(self.page)
         await interaction.followup.send(
             f"✅ Đã kết thúc **GW #{gw.get('gw_id','?')}** — {gw.get('prize','')}",
@@ -815,7 +819,7 @@ class GwStatusView(View):
         save_giveaways_data(active_giveaways)
         await send_log(self.bot, "GIVEAWAY_END",
             f"Xoá GW #{gw.get('gw_id','?')} — {gw.get('prize','')}",
-            fields=[("Admin", interaction.user.mention, True)])
+            fields=[("Admin", _uname_plain(interaction.user), True)])
         self._rebuild(self.page)
         await interaction.response.send_message(
             f"🗑️ Đã xoá **GW #{gw.get('gw_id','?')}** — {gw.get('prize','')} khỏi data.",

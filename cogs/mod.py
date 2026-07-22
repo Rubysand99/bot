@@ -514,7 +514,7 @@ class ModCog(commands.Cog):
         embed.set_footer(text="⚡ Discord native timeout — tự hết hạn, không cần role Muted")
         await ctx.reply(embed=embed)
         await send_log(self.bot, "INFO", f"Timeout — {member}",
-            fields=[("👤", member.mention, True), ("⏱️", _fmt_duration(td), True),
+            fields=[("👤", _uname_plain(member), True), ("⏱️", _fmt_duration(td), True),
                     ("📝", reason, True), ("🛡️", str(ctx.author), True)],
             user=ctx.author, color=0x9B59B6)
         try:
@@ -558,7 +558,7 @@ class ModCog(commands.Cog):
         _add_mod_log("untimeout", member.id, str(member), str(ctx.author), "Gỡ timeout thủ công")
         await ctx.reply(f"✅ Đã gỡ timeout cho {member.mention}.")
         await send_log(self.bot, "INFO", f"Untimeout — {member}",
-            fields=[("👤", member.mention, True), ("🛡️", str(ctx.author), True)],
+            fields=[("👤", _uname_plain(member), True), ("🛡️", str(ctx.author), True)],
             user=ctx.author, color=0x57F287)
 
     @app_commands.command(name="untimeout", description="Gỡ timeout thành viên")
@@ -668,8 +668,8 @@ class ModCog(commands.Cog):
             fields=[
                 ("🗑️ Số lượng", str(count),          True),
                 ("📌 Kênh",     ctx.channel.mention,  True),
-                ("🛡️ Mod",      ctx.author.mention,   True),
-                ("👤 Lọc user", member.mention if member else "Tất cả", True),
+                ("🛡️ Mod",      _uname_plain(ctx.author),   True),
+                ("👤 Lọc user", _uname_plain(member) if member else "Tất cả", True),
             ],
             user=ctx.author, color=0x99AAB5)
 
@@ -693,7 +693,7 @@ class ModCog(commands.Cog):
         await interaction.followup.send(f"🗑️ Đã xoá **{count}** tin nhắn{suffix}.", ephemeral=True)
         await send_log(self.bot, "INFO", "Xoá Tin Nhắn Hàng Loạt",
             fields=[("🗑️ Số lượng", str(count), True), ("📌 Kênh", interaction.channel.mention, True),
-                    ("🛡️ Mod", interaction.user.mention, True)],
+                    ("🛡️ Mod", _uname_plain(interaction.user), True)],
             user=interaction.user, color=0x99AAB5)
 
     # ══════════════════════════════════════
@@ -752,7 +752,7 @@ class ModCog(commands.Cog):
             embed.add_field(name="⚡ Warn tiếp theo sẽ", value=f"`{next_action}`", inline=True)
         await ctx.reply(embed=embed)
         await send_log(self.bot, "INFO", f"Warn #{count} — {member}",
-            fields=[("👤", member.mention, True), ("📝", reason, True),
+            fields=[("👤", _uname_plain(member), True), ("📝", reason, True),
                     ("⚠️ Tổng", str(count), True), ("🛡️", str(ctx.author), True)],
             user=ctx.author, color=0xFEE75C)
         try:
@@ -1167,7 +1167,7 @@ class ModCog(commands.Cog):
                 pass
             if am.get("log_violations"):
                 await send_log(self.bot, "INFO", f"Auto-Mod — {message.author}",
-                    fields=[("👤 User",    message.author.mention,          True),
+                    fields=[("👤 User",    _uname_plain(message.author),    True),
                             ("📝 Lý do",   reason,                          True),
                             ("📌 Kênh",    message.channel.mention,         True),
                             ("💬 Nội dung", f"`{message.content[:200]}`",   False)],
@@ -1186,7 +1186,7 @@ class ModCog(commands.Cog):
                 pass
             if am.get("log_violations"):
                 await send_log(self.bot, "INFO", f"Anti-Spam Text — {message.author}",
-                    fields=[("👤", message.author.mention, True), ("📌", message.channel.mention, True)],
+                    fields=[("👤", _uname_plain(message.author), True), ("📌", message.channel.mention, True)],
                     user=message.author, color=0xFEE75C, guild_id=message.guild.id)
             return
 
@@ -1224,7 +1224,7 @@ class ModCog(commands.Cog):
                 if am.get("log_violations"):
                     await send_log(self.bot, "INFO", f"Anti-Spam Ảnh — {message.author}",
                         fields=[
-                            ("👤", message.author.mention,  True),
+                            ("👤", _uname_plain(message.author),  True),
                             ("📌", message.channel.mention, True),
                             ("⏱️ Timeout", "5 phút",        True),
                         ],
