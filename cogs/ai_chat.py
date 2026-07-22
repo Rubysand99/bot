@@ -1,12 +1,24 @@
 """
-cogs/ai_chat.py — AI Chat tích hợp Groq (llama-3.x, gemma2).
-Lệnh: .ai, .aireset, .mychat
-Kênh AI tự động trả lời mọi tin nhắn.
+cogs/ai_chat.py — AI Chat tích hợp Groq (gpt-oss).
+Lệnh: .ai (admin — điều khiển bot bằng ngôn ngữ tự nhiên), .aireset, .mychat
+Kênh AI tự động trả lời mọi tin nhắn (khách hàng).
+
+v4.14.0 — Function calling (xem CHANGELOG):
+- GROQ_MODELS đổi sang openai/gpt-oss-20b / openai/gpt-oss-120b — Groq đã deprecate
+  llama-3.1-8b-instant + llama-3.3-70b-versatile (shutdown 16/08/2026), gemma2-9b-it
+  đã chết từ 08/10/2025 (fallback cũ trong code thực ra không hoạt động từ lâu).
+- Xoá AI_EXEC_SYSTEM/_call_groq_exec/_call_groq_clarify/_call_groq_fill/_run_action —
+  hệ thống prompt-JSON tự chế cũ CHƯA TỪNG được gọi ở đâu (dead code, không có lệnh
+  nào trigger) và một số action trỏ tới lệnh KHÔNG TỒN TẠI (ticketpanel/gend/greroll).
+  Thay bằng native tool calling của Groq — xem core/ai_tools.py.
+- AI trong kênh chat khách giờ có thể tự tra cứu ticket/seller/invite/lịch sử mua
+  hàng của CHÍNH người hỏi qua QUERY_TOOL_SCHEMAS.
+- Thêm lệnh `.ai <yêu cầu>` cho admin — điều khiển bot bằng ngôn ngữ tự nhiên qua
+  ADMIN_TOOL_SCHEMAS, có xác nhận cho hành động nguy hiểm (AIConfirmView).
 """
 
 import os
 import json
-import re
 import logging
 from datetime import datetime, timezone
 
@@ -18,7 +30,10 @@ from core.data import (
     load_global_data, save_global_data,
     set_current_guild, reset_current_guild,
 )
-from core.rag import search_rag, save_qa_to_rag, get_relevant_context
+from core.rag import save_qa_to_rag, get_relevant_context
+from core.ai_tools import (
+    QUERY_TOOL_SCHEMAS, ADMIN_TOOL_SCHEMAS, DANGEROUS_TOOLS, TOOL_HANDLERS,
+)
 from cogs.logger import send_log
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -31,27 +46,45 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 AI_ASK_ADMIN_PENDING_FORUM_ID  = int(os.getenv("AI_ASK_ADMIN_PENDING_FORUM_ID", "0"))
 AI_ASK_ADMIN_RESOLVED_FORUM_ID = int(os.getenv("AI_ASK_ADMIN_RESOLVED_FORUM_ID", "0"))
 
-# Khi admin reply trong forum Pending chỉ bằng 1 trong các từ này (không phân biệt
+# Khi admin reply trong post Pending chỉ bằng 1 trong các từ này (không phân biệt
 # hoa/thường, có thể kèm dấu câu cuối), coi như "không muốn trả lời" — bot tự thay
-# bằng câu từ chối lịch sự thay vì lưu nguyên văn "kbt" làm câu trả lời cho khách.
+# bằng câu từ chối chuẩn thay vì lưu nguyên văn "kbt" làm câu trả lời cho khách.
 NO_ANSWER_SHORTHANDS = {"kbt", "ko bt", "k bt", "không biết", "khong biet", "k biết", "no"}
 DEFAULT_NO_ANSWER_REPLY = (
     "Mình chưa có thông tin cụ thể về vấn đề này. Bạn vui lòng mở ticket để "
     "được admin hỗ trợ trực tiếp nhé!"
 )
 
+# Model chính = gpt-oss-20b (nhanh, rẻ, đủ tốt cho tool calling + chat thường).
+# Fallback = gpt-oss-120b (mạnh hơn khi model chính hết quota/lỗi).
+# Cả 2 đều hỗ trợ native tool calling — xem https://console.groq.com/docs/tool-use/overview
 GROQ_MODELS = [
-    "llama-3.1-8b-instant",      # primary — 500k token/ngày
-    "llama-3.3-70b-versatile",   # fallback 1 — 100k token/ngày
-    "gemma2-9b-it",              # fallback 2 — 500k token/ngày
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
 ]
 
 GROQ_SYSTEM = (
     "Bạn là trợ lý AI của TuyTam Store — một cửa hàng game. "
     "Hãy trả lời ngắn gọn, thân thiện, bằng tiếng Việt. "
     "Nếu có phần \"Thông tin đã xác nhận trước đó\" được cung cấp bên dưới, ưu tiên "
-    "dùng thông tin đó thay vì đoán."
+    "dùng thông tin đó thay vì đoán. "
+    "Nếu người dùng hỏi về ticket/gói seller/invite/lịch sử mua hàng của CHÍNH họ, "
+    "hãy dùng tool tương ứng để tra cứu thay vì đoán."
 )
+
+GROQ_ADMIN_SYSTEM = (
+    "Bạn là AI điều khiển bot Discord TuyTam Store cho admin. Phân tích yêu cầu của "
+    "admin (kể cả sai chính tả, thiếu dấu, viết tắt) và gọi tool phù hợp nhất. "
+    "Nếu yêu cầu THIẾU thông tin bắt buộc (vd thiếu lý do ban, thiếu tên kênh...), "
+    "ĐỪNG gọi tool — hãy hỏi lại admin bằng 1 câu ngắn gọn tiếng Việt. "
+    "Nếu yêu cầu không rõ hành động nào, trả lời ngắn gọn rằng bạn không hiểu và "
+    "gợi ý admin mô tả rõ hơn hoặc dùng lệnh trực tiếp."
+)
+
+AI_HISTORY_LIMIT = 10
+_ai_chat_history: dict = {}   # user_id → {"messages": [...], "last_used": float timestamp}
+AI_HISTORY_TTL = 7200  # 2 giờ — dọn history không hoạt động
+MAX_TOOL_ROUNDS = 4     # số vòng lặp tool-calling tối đa trước khi ép trả lời cuối
 
 
 def normalize_admin_answer(content: str) -> str:
@@ -62,113 +95,18 @@ def normalize_admin_answer(content: str) -> str:
         return DEFAULT_NO_ANSWER_REPLY
     return content
 
-AI_HISTORY_LIMIT = 10
-DANGEROUS_ACTIONS = {"mod_ban", "mod_kick", "mod_mute"}  # Lệnh cần confirm trước khi chạy
-_ai_chat_history: dict = {}   # user_id → {"messages": [...], "last_used": float timestamp}
-AI_HISTORY_TTL = 7200  # 2 giờ — dọn history không hoạt động
-_pending_actions: dict = {}   # user_id → {"action": ..., "params": ..., "missing": [...], "ctx_channel": int}
-_pending_confirm: dict = {}   # user_id → action dict chờ xác nhận nguy hiểm
-
-# System prompt để AI kiểm tra thiếu thông tin & hỏi lại
-AI_CLARIFY_SYSTEM = """Bạn là AI kiểm tra xem một yêu cầu Discord có đủ thông tin để thực thi không.
-
-CHỈ trả về JSON thuần, không markdown, không backtick.
-
-Với mỗi action, kiểm tra params còn thiếu:
-
-channel_create cần: name (tên kênh), type (text/voice), privacy (public/private)
-role_create cần: name (tên role)
-role_add/role_remove cần: role_name, user_id
-mod_ban/kick/warn cần: user_id, reason
-mod_mute cần: user_id, duration, reason
-purge cần: amount
-giveaway_end/reroll cần: message_id
-
-Nếu ĐỦ thông tin:
-{"status": "ready", "params": {...params đầy đủ...}}
-
-Nếu THIẾU thông tin:
-{"status": "need_info", "missing": ["field1", "field2"], "question": "câu hỏi ngắn gọn tiếng Việt để hỏi admin"}
-
-Ví dụ:
-- action=channel_create, params={name:"test"} → {"status": "need_info", "missing": ["type", "privacy"], "question": "Kênh `test` là text hay voice? Public hay private?"}
-- action=channel_create, params={name:"test", type:"text", privacy:"public"} → {"status": "ready", "params": {name:"test", type:"text", privacy:"public"}}
-- action=mod_ban, params={user_id:"MENTIONED_USER", reason:"spam"} → {"status": "ready", "params": {user_id:"MENTIONED_USER", reason:"spam"}}"""
-
-
-AI_FILL_SYSTEM = """Bạn phân tích câu trả lời của admin để điền vào các field còn thiếu.
-
-CHỈ trả về JSON thuần, không markdown, không backtick.
-
-Input: {"missing_fields": [...], "answer": "câu trả lời của admin"}
-Output: {"field1": "giá trị", "field2": "giá trị", ...}
-
-Quy tắc:
-- type: "text"/"voice" (từ: text, văn bản, chữ → "text"; voice, giọng nói, âm thanh → "voice")  
-- privacy: "public"/"private" (từ: công khai, mọi người → "public"; riêng tư, private, ẩn → "private")
-- duration: giữ nguyên chuỗi gốc (10m, 1h, 1d...)
-- reason: giữ nguyên câu
-- amount: parse số (50k→50000, 1tr→1000000)"""
-
 
 # ─────────────────────────────────────────────
-# AI EXECUTOR — phân tích intent & chạy lệnh
-# ─────────────────────────────────────────────
-
-AI_EXEC_SYSTEM = """Bạn là AI điều khiển bot Discord TuyTam Store. Phân tích yêu cầu của admin (kể cả sai chính tả, thiếu dấu, viết tắt) và trả về JSON.
-
-CHỈ trả về JSON thuần, không markdown, không backtick, không giải thích.
-
-Tự suy luận intent từ ngôn ngữ tự nhiên và map sang action phù hợp nhất:
-
-NHÓM TICKET:
-- "đóng/đóg/dong/close ticket" → {"action": "ticket_close", "params": {}}
-- "tạo ticket panel" → {"action": "ticket_panel", "params": {}}
-
-NHÓM CHANNEL:
-- "tạo kênh/channel [tên]" → {"action": "channel_create", "params": {"name": "tên", "type": "text"}}
-- "tạo voice/kênh voice [tên]" → {"action": "channel_create", "params": {"name": "tên", "type": "voice"}}
-- "xoá kênh/channel này" → {"action": "channel_delete", "params": {}}
-- "đổi tên kênh [tên mới]" → {"action": "channel_rename", "params": {"name": "tên mới"}}
-
-NHÓM ROLE:
-- "tạo role [tên]" → {"action": "role_create", "params": {"name": "tên"}}
-- "xoá role [tên]" → {"action": "role_delete", "params": {"name": "tên"}}
-- "thêm role [tên] cho @user" → {"action": "role_add", "params": {"role_name": "tên", "user_id": "MENTIONED_USER"}}
-- "xoá role [tên] của @user" → {"action": "role_remove", "params": {"role_name": "tên", "user_id": "MENTIONED_USER"}}
-
-
-NHÓM MOD:
-- "ban @user [lý do]" → {"action": "mod_ban", "params": {"user_id": "MENTIONED_USER", "reason": "lý do"}}
-- "kick @user [lý do]" → {"action": "mod_kick", "params": {"user_id": "MENTIONED_USER", "reason": "lý do"}}
-- "mute @user [thời gian] [lý do]" → {"action": "mod_mute", "params": {"user_id": "MENTIONED_USER", "duration": "10m", "reason": "lý do"}}
-- "warn @user [lý do]" → {"action": "mod_warn", "params": {"user_id": "MENTIONED_USER", "reason": "lý do"}}
-- "xoá [số] tin nhắn" → {"action": "purge", "params": {"amount": số}}
-
-NHÓM GIVEAWAY:
-- "kết thúc/end giveaway [id]" → {"action": "giveaway_end", "params": {"message_id": "id"}}
-- "reroll giveaway [id]" → {"action": "giveaway_reroll", "params": {"message_id": "id"}}
-
-KHÔNG HIỂU: {"action": "unknown", "params": {"reason": "mô tả ngắn lý do"}}
-
-QUY TẮC:
-- Số tiền: "50k"=50000, "1tr"=1000000, "100đ"=100
-- user_id: nếu có @mention → "MENTIONED_USER", không có → ""
-- confirm_msg: mô tả ngắn gọn hành động bằng tiếng Việt
-
-Format: {"action": "...", "params": {...}, "confirm_msg": "..."}"""
-
-
-
-# ─────────────────────────────────────────────
-# CONFIRM VIEW — cho lệnh nguy hiểm
+# CONFIRM VIEW — cho tool nguy hiểm (DANGEROUS_TOOLS)
 # ─────────────────────────────────────────────
 class AIConfirmView(discord.ui.View):
-    """Yêu cầu admin xác nhận trước khi chạy lệnh nguy hiểm (ban/kick/mute)."""
-    def __init__(self, ctx, action: dict):
+    """Yêu cầu admin xác nhận trước khi chạy tool nguy hiểm (ban/kick/mute/xoá...)."""
+    def __init__(self, ctx, tool_name: str, params: dict):
         super().__init__(timeout=30)
-        self.ctx    = ctx
-        self.action = action
+        self.ctx = ctx
+        self.tool_name = tool_name
+        self.params = params
+        self.message = None
 
     @discord.ui.button(label="✅ Xác nhận", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -177,8 +115,9 @@ class AIConfirmView(discord.ui.View):
         self.stop()
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(content="⚙️ Đang thực thi...", view=self)
-        result = await _run_action(self.ctx, self.action)
+        await interaction.response.edit_message(content="⚙️ Đang thực thi...", embed=None, view=self)
+        handler = TOOL_HANDLERS.get(self.tool_name)
+        result = await handler(self.ctx, self.params) if handler else f"❌ Không tìm thấy tool `{self.tool_name}`."
         await interaction.followup.send(result)
 
     @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.secondary)
@@ -186,310 +125,43 @@ class AIConfirmView(discord.ui.View):
         if interaction.user.id != self.ctx.author.id:
             return await interaction.response.send_message("❌ Chỉ người ra lệnh mới huỷ được.", ephemeral=True)
         self.stop()
-        await interaction.response.edit_message(content="🚫 Đã huỷ.", view=None)
+        await interaction.response.edit_message(content="🚫 Đã huỷ.", embed=None, view=None)
 
     async def on_timeout(self):
+        if not self.message:
+            return
         try:
-            await self.message.edit(content="⏰ Hết thời gian xác nhận — đã huỷ.", view=None)
+            await self.message.edit(content="⏰ Hết thời gian xác nhận — đã huỷ.", embed=None, view=None)
         except Exception:
             pass
 
 
-async def _call_groq_exec(prompt: str) -> dict:
-    """Gọi Groq với system prompt executor, trả về dict JSON."""
+# ─────────────────────────────────────────────
+# GROQ TOOL CALLING — low-level API call + agent loop
+# ─────────────────────────────────────────────
+async def _call_groq_tools(messages: list, tools: list | None = None) -> dict:
+    """Gọi Groq chat completions, trả về message dict của assistant
+    (có thể chứa "tool_calls" nếu model quyết định gọi tool)."""
     if not GROQ_API_KEY:
-        return {"action": "unknown", "params": {"reason": "Chưa cài GROQ_API_KEY"}, "confirm_msg": ""}
+        return {"role": "assistant", "content": "❌ Chưa cài `GROQ_API_KEY` trong biến môi trường."}
 
     import aiohttp
-    messages = [
-        {"role": "system", "content": AI_EXEC_SYSTEM},
-        {"role": "user", "content": prompt},
-    ]
+    body_base = {"messages": messages, "max_tokens": 1024, "temperature": 0.4}
+    if tools:
+        body_base["tools"] = tools
+        body_base["tool_choice"] = "auto"
 
-    for model in GROQ_MODELS:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                    json={"model": model, "messages": messages, "max_tokens": 256, "temperature": 0.1},
-                    timeout=aiohttp.ClientTimeout(total=20),
-                ) as resp:
-                    if resp.status == 429:
-                        continue
-                    if resp.status != 200:
-                        continue
-                    data = await resp.json()
-                    raw = data["choices"][0]["message"]["content"].strip()
-                    # Strip markdown nếu có
-                    raw = re.sub(r"```json|```", "", raw).strip()
-                    return json.loads(raw)
-        except Exception:
-            continue
-
-    return {"action": "unknown", "params": {"reason": "AI tạm thời không khả dụng"}, "confirm_msg": ""}
-
-
-async def _call_groq_clarify(action: str, params: dict) -> dict:
-    """Kiểm tra params đủ chưa, nếu thiếu trả về câu hỏi."""
-    if not GROQ_API_KEY:
-        return {"status": "ready", "params": params}
-    import aiohttp
-    prompt = json.dumps({"action": action, "params": params}, ensure_ascii=False)
-    messages = [
-        {"role": "system", "content": AI_CLARIFY_SYSTEM},
-        {"role": "user", "content": prompt},
-    ]
-    for model in GROQ_MODELS:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                    json={"model": model, "messages": messages, "max_tokens": 256, "temperature": 0.1},
-                    timeout=aiohttp.ClientTimeout(total=20),
-                ) as resp:
-                    if resp.status not in (200,): continue
-                    data = await resp.json()
-                    raw  = re.sub(r"```json|```", "", data["choices"][0]["message"]["content"]).strip()
-                    return json.loads(raw)
-        except Exception:
-            continue
-    return {"status": "ready", "params": params}
-
-
-async def _call_groq_fill(missing_fields: list, answer: str) -> dict:
-    """Parse câu trả lời của admin để điền vào fields còn thiếu."""
-    if not GROQ_API_KEY:
-        return {}
-    import aiohttp
-    prompt = json.dumps({"missing_fields": missing_fields, "answer": answer}, ensure_ascii=False)
-    messages = [
-        {"role": "system", "content": AI_FILL_SYSTEM},
-        {"role": "user", "content": prompt},
-    ]
-    for model in GROQ_MODELS:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                    json={"model": model, "messages": messages, "max_tokens": 128, "temperature": 0.1},
-                    timeout=aiohttp.ClientTimeout(total=20),
-                ) as resp:
-                    if resp.status not in (200,): continue
-                    data = await resp.json()
-                    raw  = re.sub(r"```json|```", "", data["choices"][0]["message"]["content"]).strip()
-                    return json.loads(raw)
-        except Exception:
-            continue
-    return {}
-
-
-async def _run_action(ctx, action: dict) -> str:
-    """Thực thi action từ AI, trả về message kết quả."""
-    act    = action.get("action", "unknown")
-    params = action.get("params", {})
-    mentioned_user = ctx.message.mentions[0] if ctx.message.mentions else None
-
-    def resolve_user():
-        if params.get("user_id") == "MENTIONED_USER" and mentioned_user:
-            return mentioned_user
-        return None
-
-    async def invoke_cmd(name: str, *args):
-        """Helper: invoke lệnh bot theo tên."""
-        cmd = ctx.bot.get_command(name)
-        if not cmd:
-            return False, f"❌ Không tìm thấy lệnh `{name}`."
-        try:
-            ctx.message.content = f".{name} " + " ".join(str(a) for a in args)
-            new_ctx = await ctx.bot.get_context(ctx.message)
-            await cmd.invoke(new_ctx)
-            return True, None
-        except Exception as e:
-            return False, f"❌ Lỗi `{name}`: {e}"
-
-    # ── TICKET ──
-    if act == "ticket_close":
-        ok, err = await invoke_cmd("done")
-        return "✅ Đã đóng ticket." if ok else err
-
-    if act == "ticket_panel":
-        ok, err = await invoke_cmd("ticketpanel")
-        return "✅ Đã tạo ticket panel." if ok else err
-
-    # ── CHANNEL ──
-    if act == "channel_create":
-        name     = params.get("name", "kênh-mới").lower().replace(" ", "-")
-        ch_type  = params.get("type", "text")
-        privacy  = params.get("privacy", "public")
-        overwrites = {}
-        if privacy == "private":
-            overwrites = {
-                ctx.guild.default_role: discord.PermissionOverwrite(view_channel=False),
-                ctx.guild.me: discord.PermissionOverwrite(view_channel=True),
-            }
-        try:
-            if ch_type == "voice":
-                ch = await ctx.guild.create_voice_channel(name, category=ctx.channel.category, overwrites=overwrites)
-            else:
-                ch = await ctx.guild.create_text_channel(name, category=ctx.channel.category, overwrites=overwrites)
-            label = f"{'🔒 private' if privacy == 'private' else '🌐 public'} {'voice' if ch_type == 'voice' else 'text'}"
-            return f"✅ Đã tạo channel {ch.mention} ({label})."
-        except Exception as e:
-            return f"❌ Lỗi tạo channel: {e}"
-
-    if act == "channel_delete":
-        try:
-            ch_name = ctx.channel.name
-            await ctx.channel.delete(reason=f"Xoá bởi AI — admin {ctx.author}")
-            return f"✅ Đã xoá channel `{ch_name}`."
-        except Exception as e:
-            return f"❌ Lỗi xoá channel: {e}"
-
-    if act == "channel_rename":
-        name = params.get("name", "")
-        if not name:
-            return "❌ Thiếu tên mới."
-        try:
-            old = ctx.channel.name
-            await ctx.channel.edit(name=name.lower().replace(" ", "-"))
-            return f"✅ Đổi tên channel `{old}` → `{name}`."
-        except Exception as e:
-            return f"❌ Lỗi đổi tên: {e}"
-
-    # ── ROLE ──
-    if act == "role_create":
-        name = params.get("name", "")
-        if not name:
-            return "❌ Thiếu tên role."
-        try:
-            role = await ctx.guild.create_role(name=name, reason=f"Tạo bởi AI — admin {ctx.author}")
-            return f"✅ Đã tạo role `{role.name}`."
-        except Exception as e:
-            return f"❌ Lỗi tạo role: {e}"
-
-    if act == "role_delete":
-        name = params.get("name", "")
-        role = discord.utils.get(ctx.guild.roles, name=name)
-        if not role:
-            return f"❌ Không tìm thấy role `{name}`."
-        try:
-            await role.delete(reason=f"Xoá bởi AI — admin {ctx.author}")
-            return f"✅ Đã xoá role `{name}`."
-        except Exception as e:
-            return f"❌ Lỗi xoá role: {e}"
-
-    if act == "role_add":
-        user = resolve_user()
-        if not user:
-            return "❌ Cần mention @user."
-        role_name = params.get("role_name", "")
-        role = discord.utils.get(ctx.guild.roles, name=role_name)
-        if not role:
-            return f"❌ Không tìm thấy role `{role_name}`."
-        try:
-            await user.add_roles(role, reason=f"Thêm bởi AI — admin {ctx.author}")
-            return f"✅ Đã thêm role `{role.name}` cho {user.display_name}."
-        except Exception as e:
-            return f"❌ Lỗi thêm role: {e}"
-
-    if act == "role_remove":
-        user = resolve_user()
-        if not user:
-            return "❌ Cần mention @user."
-        role_name = params.get("role_name", "")
-        role = discord.utils.get(ctx.guild.roles, name=role_name)
-        if not role:
-            return f"❌ Không tìm thấy role `{role_name}`."
-        try:
-            await user.remove_roles(role, reason=f"Xoá bởi AI — admin {ctx.author}")
-            return f"✅ Đã xoá role `{role.name}` của {user.display_name}."
-        except Exception as e:
-            return f"❌ Lỗi xoá role: {e}"
-
-    # ── PURGE ──
-    if act == "purge":
-        amount = int(params.get("amount", 10))
-        try:
-            deleted = await ctx.channel.purge(limit=amount)
-            return f"✅ Đã xoá {len(deleted)} tin nhắn."
-        except Exception as e:
-            return f"❌ Lỗi purge: {e}"
-
-
-    # ── POINT ──
-    # ── MOD ──
-    if act in ("mod_ban", "mod_kick", "mod_mute", "mod_warn"):
-        user = resolve_user()
-        if not user:
-            return "❌ Cần mention @user."
-        reason = params.get("reason", "Không có lý do")
-        cmd_map = {"mod_ban": "ban", "mod_kick": "kick", "mod_mute": "mute", "mod_warn": "warn"}
-        if act == "mod_mute":
-            ok, err = await invoke_cmd(cmd_map[act], user.id, params.get("duration", "10m"), reason)
-        else:
-            ok, err = await invoke_cmd(cmd_map[act], user.id, reason)
-        if not ok: return err
-        labels = {"mod_ban": "Ban", "mod_kick": "Kick", "mod_mute": "Mute", "mod_warn": "Warn"}
-        return f"✅ {labels[act]} {user.display_name} — lý do: {reason}."
-
-    # ── GIVEAWAY ──
-    if act in ("giveaway_end", "giveaway_reroll"):
-        msg_id = params.get("message_id", "")
-        cmd_map = {"giveaway_end": "gend", "giveaway_reroll": "greroll"}
-        ok, err = await invoke_cmd(cmd_map[act], msg_id)
-        if not ok: return err
-        labels = {"giveaway_end": "Kết thúc", "giveaway_reroll": "Reroll"}
-        return f"✅ {labels[act]} giveaway."
-
-    # ── UNKNOWN ──
-    reason = params.get("reason", "Không hiểu yêu cầu")
-    return f"🤔 **{reason}**\nThử mô tả rõ hơn hoặc dùng lệnh trực tiếp."
-
-
-async def _call_groq(user_id: int, user_message: str, extra_context: str | None = None) -> str:
-    if not GROQ_API_KEY:
-        return "❌ Chưa cài `GROQ_API_KEY` trong biến môi trường."
-
-    import time as _time
-    now = _time.time()
-
-    # Dọn TTL — xóa history cũ hơn AI_HISTORY_TTL
-    stale = [uid for uid, v in _ai_chat_history.items() if now - v.get("last_used", 0) > AI_HISTORY_TTL]
-    for uid in stale:
-        del _ai_chat_history[uid]
-
-    entry = _ai_chat_history.setdefault(user_id, {"messages": [], "last_used": now})
-    history = entry["messages"]
-    history.append({"role": "user", "content": user_message})
-    if len(history) > AI_HISTORY_LIMIT * 2:
-        entry["messages"] = history[-(AI_HISTORY_LIMIT * 2):]
-        history = entry["messages"]
-    entry["last_used"] = now
-
-    # Nếu RAG tìm được Q&A liên quan đủ tin cậy, nhét vào system prompt CHỈ cho
-    # lượt gọi này (không lưu vào history, tránh phình context các lượt sau)
-    system_content = GROQ_SYSTEM
-    if extra_context:
-        system_content += "\n\nThông tin đã xác nhận trước đó (ưu tiên dùng):\n" + extra_context
-
-    messages = [{"role": "system", "content": system_content}] + history
     last_err = "Unknown error"
-
-    import aiohttp
     for model in GROQ_MODELS:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                    json={"model": model, "messages": messages, "max_tokens": 1024, "temperature": 0.7},
+                    json={"model": model, **body_base},
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status == 429:
-                        print(f"[AI] ⚠️ Model {model} hết quota, thử model tiếp...")
                         last_err = f"Model `{model}` hết quota"
                         continue
                     if resp.status != 200:
@@ -497,16 +169,79 @@ async def _call_groq(user_id: int, user_message: str, extra_context: str | None 
                         print(f"[AI] ⚠️ Model {model} lỗi {resp.status}: {err[:200]}")
                         last_err = f"Lỗi {resp.status}"
                         continue
-                    data  = await resp.json()
-                    reply = data["choices"][0]["message"]["content"]
-            _ai_chat_history[user_id]["messages"].append({"role": "assistant", "content": reply})
-            _ai_chat_history[user_id]["last_used"] = _time.time()
-            return reply
+                    data = await resp.json()
+                    return data["choices"][0]["message"]
         except Exception as e:
             last_err = str(e)
             continue
 
-    return f"⚠️ AI tạm thời không khả dụng ({last_err}). Vui lòng thử lại sau ít phút."
+    return {"role": "assistant", "content": f"⚠️ AI tạm thời không khả dụng ({last_err}). Vui lòng thử lại sau ít phút."}
+
+
+async def run_ai_tools_agent(ctx, is_admin: bool, user_content: str, history: list | None = None):
+    """Vòng lặp tool-calling chính. Trả về tuple (final_text, pending_confirm):
+    - pending_confirm là None nếu AI đã trả lời xong (final_text = câu trả lời).
+    - pending_confirm là {"name": tool_name, "params": {...}} nếu gặp tool nguy hiểm
+      cần admin xác nhận trước — final_text khi đó là None.
+    `ctx` cần có .guild/.author/.channel/.message (dùng message thật hoặc commands.Context).
+    """
+    tools = list(QUERY_TOOL_SCHEMAS)
+    if is_admin:
+        tools += ADMIN_TOOL_SCHEMAS
+
+    messages = [{"role": "system", "content": GROQ_ADMIN_SYSTEM if is_admin else GROQ_SYSTEM}]
+    messages += (history or [])
+    messages.append({"role": "user", "content": user_content})
+
+    for _ in range(MAX_TOOL_ROUNDS):
+        msg = await _call_groq_tools(messages, tools)
+        tool_calls = msg.get("tool_calls")
+        if not tool_calls:
+            return (msg.get("content") or "").strip(), None
+
+        # Tool nguy hiểm -> KHÔNG chạy ngay, trả về cho caller để hiện confirm view
+        for call in tool_calls:
+            name = call.get("function", {}).get("name")
+            if name in DANGEROUS_TOOLS:
+                try:
+                    params = json.loads(call["function"].get("arguments") or "{}")
+                except Exception:
+                    params = {}
+                return None, {"name": name, "params": params}
+
+        # Tool an toàn -> chạy hết, feed kết quả lại cho model rồi lặp tiếp
+        messages.append(msg)
+        for call in tool_calls:
+            name = call.get("function", {}).get("name")
+            try:
+                params = json.loads(call["function"].get("arguments") or "{}")
+            except Exception:
+                params = {}
+            handler = TOOL_HANDLERS.get(name)
+            result = await handler(ctx, params) if handler else f"Không tìm thấy tool `{name}`."
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call.get("id", ""),
+                "name": name,
+                "content": result,
+            })
+
+    return "🤔 Yêu cầu cần quá nhiều bước xử lý, bạn thử mô tả đơn giản/cụ thể hơn nhé.", None
+
+
+async def _call_groq(user_id: int, user_message: str, extra_context: str | None = None) -> str:
+    """Chat thường (không tool) — giữ lại cho tương thích, hiện KHÔNG còn dùng trực
+    tiếp trong handle_ai_message (đã chuyển sang run_ai_tools_agent), nhưng vẫn hữu
+    ích nếu cần gọi Groq thuần text ở nơi khác."""
+    if not GROQ_API_KEY:
+        return "❌ Chưa cài `GROQ_API_KEY` trong biến môi trường."
+
+    system_content = GROQ_SYSTEM
+    if extra_context:
+        system_content += "\n\nThông tin đã xác nhận trước đó (ưu tiên dùng):\n" + extra_context
+    messages = [{"role": "system", "content": system_content}, {"role": "user", "content": user_message}]
+    msg = await _call_groq_tools(messages, tools=None)
+    return (msg.get("content") or "").strip()
 
 
 async def handle_ai_message(message: discord.Message):
@@ -517,16 +252,45 @@ async def handle_ai_message(message: discord.Message):
     if message.content and message.content[0] in ('.', '/', '!'):
         return
 
+    now = datetime.now(timezone.utc).timestamp()
+    # Dọn TTL — xóa history cũ hơn AI_HISTORY_TTL
+    stale = [uid for uid, v in _ai_chat_history.items() if now - v.get("last_used", 0) > AI_HISTORY_TTL]
+    for uid in stale:
+        del _ai_chat_history[uid]
+
+    entry = _ai_chat_history.setdefault(message.author.id, {"messages": [], "last_used": now})
+    history = entry["messages"]
+
     # Tra RAG trước — nếu có Q&A tương tự đã được admin xác nhận, AI sẽ ưu tiên dùng
     rag_context = await get_relevant_context(message.guild.id, message.content)
+    user_content = message.content
+    if rag_context:
+        user_content = (
+            f"{message.content}\n\n[Thông tin đã xác nhận trước đó — ưu tiên dùng]: {rag_context}"
+        )
 
     async with message.channel.typing():
-        reply = await _call_groq(message.author.id, message.content, extra_context=rag_context)
-    reply = reply.strip()
+        reply, pending = await run_ai_tools_agent(message, is_admin=False, user_content=user_content, history=history)
+
+    # Query tools không nằm trong DANGEROUS_TOOLS nên pending sẽ luôn None ở nhánh
+    # khách hàng, nhưng vẫn xử lý phòng hờ nếu sau này thêm tool mới.
+    if pending is not None:
+        reply = "🤔 Yêu cầu này cần admin xử lý, bạn vui lòng mở ticket nhé."
+
+    reply = (reply or "").strip()
+    if not reply:
+        reply = DEFAULT_NO_ANSWER_REPLY
+
+    # Lưu vào history (KHÔNG lưu rag_context/tool messages vào history lâu dài,
+    # chỉ lưu câu hỏi gốc + câu trả lời cuối, tránh phình context các lượt sau)
+    history.append({"role": "user", "content": message.content})
+    history.append({"role": "assistant", "content": reply})
+    if len(history) > AI_HISTORY_LIMIT * 2:
+        entry["messages"] = history[-(AI_HISTORY_LIMIT * 2):]
+    entry["last_used"] = now
 
     # RAG KHÔNG tìm được gì liên quan đủ tin cậy -> LUÔN gửi cho admin xử lý,
-    # không dựa vào AI tự đánh giá "chắc/không chắc" nữa (không đáng tin với
-    # model nhỏ — xem CHANGELOG v4.13.1)
+    # không dựa vào AI tự đánh giá "chắc/không chắc" nữa (xem CHANGELOG v4.13.1)
     needs_admin = rag_context is None
 
     if len(reply) <= 2000:
@@ -742,6 +506,36 @@ class AICog(commands.Cog):
             if stale:
                 print(f"[AI] 🧹 Đã dọn {len(stale)} history cũ")
 
+    @commands.command(name="ai")
+    async def ai_command(self, ctx, *, prompt: str = None):
+        """Admin điều khiển bot bằng ngôn ngữ tự nhiên qua tool calling.
+        VD: .ai tạo kênh test riêng tư | .ai ban @user spam | .ai đóng ticket này"""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin dùng được lệnh này.")
+        if not prompt:
+            return await ctx.reply("❓ Dùng: `.ai <yêu cầu>` — vd `.ai tạo kênh test riêng tư`")
+
+        async with ctx.typing():
+            reply, pending = await run_ai_tools_agent(ctx, is_admin=True, user_content=prompt, history=[])
+
+        if pending:
+            tool_name, params = pending["name"], pending["params"]
+            embed = discord.Embed(
+                title="⚠️ Xác nhận hành động nguy hiểm",
+                description=(
+                    f"**Yêu cầu:** {prompt}\n**Tool:** `{tool_name}`\n**Params:** `{params}`\n\n"
+                    f"⏰ Tự động huỷ sau 30 giây."
+                ),
+                color=0xED4245,
+                timestamp=datetime.now(timezone.utc),
+            )
+            embed.set_footer(text=f"Bởi {_uname_plain(ctx.author)}")
+            view = AIConfirmView(ctx, tool_name, params)
+            view.message = await ctx.reply(embed=embed, view=view)
+            return
+
+        await ctx.reply((reply or "✅ Đã xử lý.")[:2000])
+
     @commands.command(name="aireset", aliases=["airst"])
     async def ai_reset(self, ctx):
         if ctx.author.id not in ADMIN_IDS:
@@ -759,7 +553,7 @@ class AICog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Bắt câu trả lời khi admin đang trong trạng thái pending."""
+        """Bắt câu trả lời khi admin reply trong forum Pending/Resolved."""
         if message.author.bot:
             return
         if message.author.id not in ADMIN_IDS:
@@ -776,77 +570,6 @@ class AICog(commands.Cog):
                 if message.id != message.channel.id:
                     if await _handle_resolved_edit(self.bot, message):
                         return
-
-        if message.author.id not in _pending_actions:
-            return
-        pending = _pending_actions[message.author.id]
-        # Chỉ xử lý nếu cùng channel và không phải lệnh bot
-        if message.channel.id != pending["ctx_channel"]:
-            return
-        if message.content.startswith((".","!","/")):
-            return
-
-        # Xoá pending ngay để tránh loop
-        del _pending_actions[message.author.id]
-
-        async with message.channel.typing():
-            filled = await _call_groq_fill(pending["missing"], message.content)
-
-        # Merge params
-        params = {**pending["params"], **filled}
-        action = {"action": pending["action"], "params": params, "confirm_msg": ""}
-
-        # Kiểm tra lại lần nữa xem đã đủ chưa
-        async with message.channel.typing():
-            clarify = await _call_groq_clarify(pending["action"], params)
-
-        if clarify.get("status") == "need_info":
-            # Vẫn còn thiếu → hỏi tiếp
-            _pending_actions[message.author.id] = {
-                "action":      pending["action"],
-                "params":      params,
-                "missing":     clarify.get("missing", []),
-                "ctx_channel": message.channel.id,
-                "original":    pending["original"],
-            }
-            embed = discord.Embed(
-                title="🤖 AI cần thêm thông tin",
-                description=f"❓ {clarify.get('question', 'Vui lòng cung cấp thêm thông tin.')}",
-                color=0xF0A500,
-                timestamp=datetime.now(timezone.utc),
-            )
-            embed.set_footer(text="Trả lời trực tiếp vào đây (không cần gõ .ai)")
-            return await message.reply(embed=embed)
-
-        # Đủ rồi → kiểm tra nguy hiểm trước khi thực thi
-        action["params"] = clarify.get("params", params)
-        ctx = await self.bot.get_context(message)
-
-        if action.get("action") in DANGEROUS_ACTIONS:
-            confirm_msg = action.get("confirm_msg", "Thực hiện hành động này")
-            embed = discord.Embed(
-                title="⚠️ Xác nhận lệnh nguy hiểm",
-                description=f"**Yêu cầu:** {pending['original']}\n**Thực hiện:** {confirm_msg}\n\n⏰ Tự động huỷ sau 30 giây.",
-                color=0xED4245,
-                timestamp=datetime.now(timezone.utc),
-            )
-            embed.set_footer(text=f"Bởi {_uname_plain(message.author)}")
-            view = AIConfirmView(ctx, action)
-            view.message = await message.reply(embed=embed, view=view)
-            return
-
-        embed = discord.Embed(
-            title="🤖 AI → Bot",
-            description=f"**Yêu cầu:** {pending['original']}\n**Thực hiện:** Đang xử lý...",
-            color=0x5865F2,
-            timestamp=datetime.now(timezone.utc),
-        )
-        embed.set_footer(text=f"Bởi {_uname_plain(message.author)}")
-        await message.reply(embed=embed)
-
-        async with message.channel.typing():
-            result = await _run_action(ctx, action)
-        await message.channel.send(result)
 
     # ── SLASH COMMANDS ──
     @discord.app_commands.command(name="aireset", description="Xoá toàn bộ lịch sử AI (admin)")
