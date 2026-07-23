@@ -429,11 +429,17 @@ class AdminCog(commands.Cog):
             "ai": {
                 "emoji": "🤖", "title": "AI Chat",
                 "fields": [
+                    ("🛠️ Điều khiển bot bằng AI (admin)",
+                     "`.ai <yêu cầu>` — Ra lệnh cho bot bằng ngôn ngữ tự nhiên (tự nhận diện qua router: "
+                     "điều hành server / báo cáo / tra cứu tài khoản)\n"
+                     "Vd: `.ai tạo kênh test riêng tư`, `.ai ban @user spam`, `.ai đóng ticket này`\n"
+                     "Hành động nguy hiểm (ban/kick/mute/xoá kênh/xoá role/purge) sẽ hỏi xác nhận trước khi chạy", False),
                     ("📋 Lệnh",
                      "`.aireset` (alias `.airst`) — Xoá lịch sử chat AI trong kênh\n"
                      "`.mychat` — Xem lịch sử hội thoại AI của bạn", False),
-                    ("ℹ️ Cách dùng",
+                    ("ℹ️ Cách dùng (chat khách hàng)",
                      "Nhắn tin trong kênh AI được cài → bot tự trả lời\n"
+                     "Có thể hỏi AI tự tra cứu ticket/gói seller/invite/lịch sử mua hàng của CHÍNH bạn\n"
                      "Cài kênh AI qua `.st` → AI Channel", False),
                     ("🔍 Tìm tin nhắn cũ (admin)",
                      "`.aisearchch add/remove/list [#kênh]` — Bật/tắt tự động index 1 kênh\n"

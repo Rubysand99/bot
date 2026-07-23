@@ -1,5 +1,47 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.16.0] — 2026-07-23
+
+### 🐛 Sửa lỗi
+- **Log messages ping nhầm user thật** — `send_log()` gửi dạng plain text (không phải embed), nên mọi field trước đây dùng `.mention` (user/member) thực chất LÀ ping thật, không chỉ hiển thị. Đổi toàn bộ sang username (`_uname_plain()`) trong 7 file: `admin.py`, `ai_chat.py`, `giveaway.py`, `mod.py`, `shop_orders.py`, `ticket.py`. Mention kênh (`#channel`) giữ nguyên vì không gây ping
+- `cogs/logger.py` — thêm `_depinged()` làm lớp phòng vệ cuối: tự động vô hiệu hoá mention user/role còn sót lọt vào field log (chèn zero-width space sau `<@`/`<@&`), phòng trường hợp code sau này lỡ quên sửa
+
+### ✨ Tính năng mới
+- `.botinfo` — thêm uptime, health-check MongoDB (🟢/🔴), RAM đang dùng (`psutil`), số cogs/lệnh đã load
+- `.serverinfo` — thêm boost level + số boost, verification level, tổng role, tổng emoji, tách kênh theo loại (text/voice/forum/thread)
+- `.userinfo` — thêm role cao nhất, trạng thái boost server, trạng thái timeout, badge admin/staff/owner, cảnh báo tài khoản mới tạo <7 ngày (hữu ích soi invite ảo)
+- `.invitetop` — field riêng cho Top 3 (breakdown đầy đủ verify/chờ/fake/rời), dòng tổng kết net toàn server ở đầu embed
+- `.ipstats` — gộp thành 1 tin nhắn + nút ◀ ▶ phân trang (trang đầu là tóm tắt tổng quan), thay vì gửi nhiều embed rời rạc thành nhiều tin nhắn như trước
+
+### ♻️ Thay đổi
+- Thêm `psutil>=5.9.0` vào `requirements.txt` (cần cho RAM ở `.botinfo`)
+
+---
+
+## [v4.15.0] — 2026-07-22
+
+### ✨ Tính năng mới — Multi-agent (ý #8 trong roadmap AI)
+- `core/ai_agents.py` (mới) — đăng ký 3 "agent" AI chuyên biệt: `support` (tra cứu khách hàng), `ops` (điều hành server), `report` (báo cáo số liệu — stub, chờ ý #17). Mỗi agent chỉ mang system prompt + tool subset riêng thay vì nhồi hết tool vào 1 lần gọi model
+- `.ai` — thêm 1 bước router nhẹ (1 lần gọi Groq, không kèm tool, temperature=0) phân loại yêu cầu admin vào đúng agent trước khi chạy tool-calling thật, giúp model chọn tool chính xác hơn khi số lượng tool tăng
+
+### ♻️ Thay đổi
+- `cogs/ai_chat.py` — `run_ai_tools_agent()` đổi signature: nhận thẳng `system_prompt` + `tools` thay vì cờ `is_admin`, dùng chung 1 vòng lặp cho mọi agent
+
+---
+
+## [v4.14.0] — 2026-07-22
+
+### 🐛 Sửa lỗi
+- Groq đã deprecate `llama-3.1-8b-instant` + `llama-3.3-70b-versatile` (shutdown 16/08/2026); `gemma2-9b-it` (fallback thứ 2 trong `GROQ_MODELS`) đã ngừng hoạt động từ 08/10/2025 — nghĩa là fallback cuối cùng thực ra không hoạt động từ lâu. Đổi `GROQ_MODELS` sang `openai/gpt-oss-20b` (chính) / `openai/gpt-oss-120b` (fallback) — cả 2 đều hỗ trợ native tool calling
+- Xoá `AI_EXEC_SYSTEM`/`_call_groq_exec`/`_call_groq_clarify`/`_call_groq_fill`/`_run_action` trong `ai_chat.py` — hệ thống prompt-JSON tự chế cũ **chưa từng được gọi ở đâu** (dead code, không có lệnh nào trigger được nó) và một số action còn trỏ lệnh **không tồn tại** trong bot (`ticketpanel`, `gend`, `greroll`)
+
+### ✨ Tính năng mới — Function calling (ý #1 trong roadmap AI)
+- `core/ai_tools.py` (mới) — 19 tool cho AI dùng native tool calling của Groq: 4 query tool (khách hàng tự tra ticket/seller/invite/lịch sử mua hàng của chính họ) + 15 admin tool (kênh/role/mod/ticket/giveaway)
+- Lệnh mới `.ai <yêu cầu>` (admin) — điều khiển bot bằng ngôn ngữ tự nhiên qua tool calling, có xác nhận bằng nút bấm cho hành động nguy hiểm (ban/kick/mute/xoá kênh/xoá role/purge)
+- Kênh AI chat: khách hàng giờ có thể hỏi AI tự tra cứu ticket/seller/invite/lịch sử mua hàng của chính họ thay vì AI chỉ đoán
+
+---
+
 ## [v4.11.5] — 2026-07-13
 
 ### ✨ Tính năng mới
