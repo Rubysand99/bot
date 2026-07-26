@@ -20,11 +20,13 @@ from core.data import (
     get_cfg_font, _uname_plain, is_staff_member,
     load_data, get_price_sections,
     can_use_dangerous_cmd, parse_amount, fmt_amount,
-    get_or_fetch_channel,
-    add_seller_sale,
+    get_or_fetch_channel, set_current_guild,
+    add_seller_sale, add_user_spent,
     add_pending_sold_price, get_pending_sold_price, get_all_pending_sold_price,
     remove_pending_sold_price, set_pending_sold_dm, mark_pending_sold_escalated,
     mark_pending_sold_resolved, get_resolved_sold_price,
+    add_pending_sold_buyer, get_pending_sold_buyer, get_all_pending_sold_buyer,
+    remove_pending_sold_buyer, set_pending_sold_buyer_dm, mark_pending_sold_buyer_escalated,
     get_cfg_shop_orders_enabled, set_cfg_shop_orders_enabled,
     GuildContextView as View, GuildContextModal as Modal,
 )
@@ -800,6 +802,9 @@ class AdminCog(commands.Cog):
 STOCK_CATEGORY_ID = 1506520186063163423
 SOLD_CATEGORY_ID  = 1506652491779932240
 SOLD_ESCALATE_AFTER_SECONDS = 24 * 3600  # 24h không ai xử lý → escalate sang Ruby
+# Role "Đã Mua Hàng" — tặng cho buyer khi đơn được cộng tiền, dùng chung bởi
+# .done (cogs/ticket.py) và luồng sold-stock (_SoldBuyerModal bên dưới).
+DONE_ROLE_ID = 1515393691206811901
 
 # ══════════════════════════════════════════
 # SOLD-STOCK — parse giá từ tên kênh
@@ -854,18 +859,18 @@ class _SoldPriceModal(Modal, title="💰 Nhập giá đơn sold"):
                 "❌ Đơn này đã được xử lý hoặc không còn tồn tại.", ephemeral=True,
             )
 
+        # ⚠️ Interaction này chạy trong DM admin — interaction.guild_id LUÔN None nên
+        # GuildContextModal.interaction_check KHÔNG set được context. pending["guild_id"]
+        # (đọc từ global data, không cần context) mới là nguồn đúng để set context ở đây,
+        # TRƯỚC khi gọi add_seller_sale/add_pending_sold_buyer (data theo-guild).
+        guild_id = pending.get("guild_id")
+        if guild_id:
+            set_current_guild(guild_id)
+
         seller_id = pending["seller_id"]
         add_seller_sale(seller_id, amount, pending["channel_name"], self.channel_id)
         mark_pending_sold_resolved(self.channel_id, amount, interaction.user.id, pending["old_name"])
         remove_pending_sold_price(self.channel_id)
-
-        await interaction.response.edit_message(
-            content=(
-                f"✅ Đã ghi nhận **{fmt_amount(amount)}** cho <@{seller_id}> "
-                f"(kênh cũ: `{pending['old_name']}`)."
-            ),
-            embed=None, view=None,
-        )
 
         bot_ref = interaction.client
         await send_log(bot_ref, "INFO", "Sold-stock — điền giá thủ công",
@@ -875,10 +880,36 @@ class _SoldPriceModal(Modal, title="💰 Nhập giá đơn sold"):
                 ("🎫 Kênh cũ", f"`{pending['old_name']}`",       True),
                 ("✍️ Điền bởi", _uname_plain(interaction.user),   True),
             ],
-            user=interaction.user, guild_id=pending.get("guild_id"))
+            user=interaction.user, guild_id=guild_id)
 
         # Báo cho admin còn lại biết đơn đã được xử lý (nếu đã escalate sang cả 2)
         await _notify_other_admin(bot_ref, self.channel_id, interaction.user.id, amount, pending)
+
+        # Đã có giá — giờ hỏi tiếp admin buyer là tài khoản Discord nào để cộng tiền
+        # (giống lệnh .done), thay vì dừng lại ở đây như trước.
+        if guild_id:
+            add_pending_sold_buyer(
+                self.channel_id, seller_id, amount, pending["channel_name"], pending["old_name"], guild_id,
+            )
+            await interaction.response.edit_message(
+                content=(
+                    f"✅ Đã ghi nhận **{fmt_amount(amount)}** cho <@{seller_id}> "
+                    f"(kênh cũ: `{pending['old_name']}`).\n\n"
+                    f"👉 Bấm nút bên dưới để cho biết **tài khoản Discord nào đã mua** — "
+                    f"bot sẽ cộng tiền cho đúng người đó như lệnh `.done`."
+                ),
+                embed=None, view=_SoldBuyerView(self.channel_id),
+            )
+        else:
+            await interaction.response.edit_message(
+                content=(
+                    f"✅ Đã ghi nhận **{fmt_amount(amount)}** cho <@{seller_id}> "
+                    f"(kênh cũ: `{pending['old_name']}`).\n\n"
+                    f"⚠️ Không xác định được guild của đơn này nên bot KHÔNG hỏi buyer tiếp — "
+                    f"nếu cần cộng tiền cho khách, dùng lệnh `.done` trực tiếp trong ticket."
+                ),
+                embed=None, view=None,
+            )
 
 
 async def _notify_other_admin(bot, channel_id: int, resolved_by: int, amount: int, pending: dict):
@@ -949,6 +980,146 @@ async def _send_sold_price_dm(bot, target_user_id: int, channel_id: int, old_nam
         return None
 
 
+# ══════════════════════════════════════════
+# SOLD-STOCK — hỏi admin TuyTam/Ruby "tài khoản Discord nào mua" để cộng tiền
+# cho buyer (giống lệnh .done: add_user_spent + auto_give_buy_roles + role "Đã Mua Hàng")
+# ══════════════════════════════════════════
+class _SoldBuyerModal(Modal, title="🧑 Người mua đơn sold"):
+    buyer_input = TextInput(
+        label="ID hoặc @mention người mua",
+        placeholder="vd: 123456789012345678 hoặc @tên",
+        max_length=100,
+    )
+
+    def __init__(self, channel_id: int):
+        super().__init__()
+        self.channel_id = channel_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        pending = get_pending_sold_buyer(self.channel_id)
+        if not pending:
+            return await interaction.response.edit_message(
+                content="ℹ️ Đơn này đã được xử lý hoặc không còn tồn tại.", embed=None, view=None,
+            )
+
+        # Bóc ID từ dạng "<@123>", "<@!123>" hoặc số thuần
+        raw = self.buyer_input.value.strip()
+        digits = _re.sub(r"[^0-9]", "", raw)
+        if not digits:
+            return await interaction.response.send_message(
+                f"❌ Không đọc được ID từ `{raw}`. Nhập ID số hoặc @mention người mua.",
+                ephemeral=True,
+            )
+        buyer_id = int(digits)
+
+        # ⚠️ Chạy trong DM admin — set_current_guild() thủ công từ guild_id đã lưu trong
+        # pending (đọc từ global data, không cần context) TRƯỚC khi gọi add_user_spent/
+        # auto_give_buy_roles (data + role theo-guild).
+        guild_id = pending["guild_id"]
+        set_current_guild(guild_id)
+
+        bot_ref = interaction.client
+        guild = bot_ref.get_guild(guild_id)
+        if not guild:
+            return await interaction.response.send_message(
+                "❌ Bot không thấy server của đơn này (có thể đã rời server).", ephemeral=True,
+            )
+
+        try:
+            buyer = guild.get_member(buyer_id) or await guild.fetch_member(buyer_id)
+        except discord.NotFound:
+            buyer = None
+        except discord.HTTPException:
+            buyer = None
+
+        if not buyer:
+            return await interaction.response.send_message(
+                f"❌ Không tìm thấy thành viên `{buyer_id}` trong server. Kiểm tra lại ID/mention rồi thử lại.",
+                ephemeral=True,
+            )
+
+        amount = pending["amount"]
+        new_total = add_user_spent(buyer_id, amount)
+
+        from cogs.admin_views import auto_give_buy_roles
+        role_cfg = await auto_give_buy_roles(guild, buyer, new_total)
+
+        done_role = guild.get_role(DONE_ROLE_ID)
+        done_role_given = False
+        if done_role:
+            try:
+                if done_role not in buyer.roles:
+                    await buyer.add_roles(done_role, reason=f"Sold-stock — cộng tiền qua DM bởi {_uname_plain(interaction.user)}")
+                done_role_given = True
+            except Exception as _e:
+                log_msg = f"[SOLD] Không thể give role {DONE_ROLE_ID} cho {buyer}: {_e}"
+                print(log_msg)
+
+        remove_pending_sold_buyer(self.channel_id)
+
+        content = (
+            f"✅ Đã cộng **{fmt_amount(amount)}** cho {buyer.mention} "
+            f"(tổng hiện tại: **{fmt_amount(new_total)}**) — kênh cũ: `{pending['old_name']}`."
+        )
+        if role_cfg:
+            content += f"\n🏆 Role hiện tại: **{role_cfg.get('label', '?')}**"
+        if done_role:
+            content += f"\n🎖️ Role tặng: {done_role.mention} {'✅' if done_role_given else '*(đã có sẵn)*'}"
+        await interaction.response.edit_message(content=content, embed=None, view=None)
+
+        await send_log(bot_ref, "INFO", "💰 Sold-stock — đã cộng tiền cho buyer qua DM",
+            fields=[
+                ("👤 Buyer",   buyer.mention,                    True),
+                ("💰 Giá",     fmt_amount(amount),                True),
+                ("🎫 Kênh cũ", f"`{pending['old_name']}`",        True),
+                ("✍️ Nhập bởi", _uname_plain(interaction.user),  True),
+            ],
+            user=buyer, guild_id=guild_id)
+
+
+class _SoldBuyerView(View):
+    """Nút trong DM admin TuyTam/Ruby — nhấn để mở Modal nhập tài khoản buyer."""
+    def __init__(self, channel_id: int):
+        super().__init__(timeout=None)
+        self.channel_id = channel_id
+
+    @discord.ui.button(label="🧑 Nhập người mua", style=discord.ButtonStyle.primary, custom_id="sold_buyer_input")
+    async def input_buyer(self, interaction: discord.Interaction, button: Button):
+        pending = get_pending_sold_buyer(self.channel_id)
+        if not pending:
+            for item in self.children:
+                item.disabled = True
+            return await interaction.response.edit_message(
+                content="ℹ️ Đơn này đã được xử lý hoặc không còn tồn tại.", view=self,
+            )
+        await interaction.response.send_modal(_SoldBuyerModal(self.channel_id))
+
+
+async def _send_sold_buyer_dm(bot, target_user_id: int, channel_id: int, old_name: str, amount: int, seller_mention: str) -> int | None:
+    """Gửi DM hỏi 'tài khoản Discord nào mua' cho 1 admin, trả về message_id nếu gửi thành công."""
+    target_user = bot.get_user(target_user_id) or await bot.fetch_user(target_user_id)
+    if not target_user:
+        return None
+    embed = discord.Embed(
+        title="🧑 Cần xác nhận người mua đơn sold",
+        description=(
+            f"Seller {seller_mention} vừa sold kênh `{old_name}` với giá **{fmt_amount(amount)}**.\n\n"
+            f"Nhấn nút bên dưới và cho biết **tài khoản Discord nào đã mua** — bot sẽ cộng tiền "
+            f"cho đúng người đó, y như lệnh `.done`."
+        ),
+        color=0xF0A500,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(name="🎫 Kênh cũ", value=f"`{old_name}`", inline=True)
+    embed.add_field(name="👤 Seller", value=seller_mention, inline=True)
+    embed.add_field(name="💰 Giá", value=fmt_amount(amount), inline=True)
+    try:
+        msg = await target_user.send(embed=embed, view=_SoldBuyerView(channel_id))
+        return msg.id
+    except discord.Forbidden:
+        return None
+
+
 async def _escalate_pending_sold(bot, channel_id: int):
     """Sau 24h không ai xử lý → DM thêm cho Ruby, KHÔNG thu hồi nút bên TuyTam."""
     await asyncio.sleep(SOLD_ESCALATE_AFTER_SECONDS)
@@ -971,41 +1142,50 @@ async def _escalate_pending_sold(bot, channel_id: int):
 
 
 async def resume_pending_sold_views(bot):
-    """Gọi từ bot.py on_ready — đăng ký lại persistent view cho mọi đơn pending còn tồn,
-    và lên lịch escalate đúng theo thời gian còn lại (hoặc escalate ngay nếu đã quá 24h).
-    Lặp qua từng guild vì pending_sold_price giờ lưu riêng theo guild (multi-guild)."""
-    from core.data import set_current_guild
-    for guild in bot.guilds:
-        set_current_guild(guild.id)
-        pending_all = get_all_pending_sold_price()
-        for channel_id_str, pending in pending_all.items():
-            channel_id = int(channel_id_str)
+    """Gọi từ bot.py on_ready — đăng ký lại persistent view cho mọi đơn pending còn tồn
+    (giá lẫn buyer), và lên lịch escalate đúng theo thời gian còn lại (hoặc escalate ngay
+    nếu đã quá 24h). [v4.18.0] Data đã chuyển sang global nên KHÔNG cần loop theo guild
+    nữa — get_all_pending_sold_price()/get_all_pending_sold_buyer() đọc được ngay."""
+    pending_price_all = get_all_pending_sold_price()
+    for channel_id_str, pending in pending_price_all.items():
+        channel_id = int(channel_id_str)
 
-            tuytam_mid = pending.get("tuytam_message_id")
-            if tuytam_mid:
-                bot.add_view(_SoldPriceView(channel_id), message_id=tuytam_mid)
+        tuytam_mid = pending.get("tuytam_message_id")
+        if tuytam_mid:
+            bot.add_view(_SoldPriceView(channel_id), message_id=tuytam_mid)
 
-            ruby_mid = pending.get("ruby_message_id")
-            if ruby_mid:
-                bot.add_view(_SoldPriceView(channel_id), message_id=ruby_mid)
+        ruby_mid = pending.get("ruby_message_id")
+        if ruby_mid:
+            bot.add_view(_SoldPriceView(channel_id), message_id=ruby_mid)
 
-            if pending.get("escalated"):
-                continue  # Đã escalate trước khi restart, không cần lên lịch lại
+        if pending.get("escalated"):
+            continue  # Đã escalate trước khi restart, không cần lên lịch lại
 
-            try:
-                created_at = datetime.fromisoformat(pending["time"])
-                if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=timezone.utc)
-            except Exception:
-                created_at = datetime.now(timezone.utc)
+        try:
+            created_at = datetime.fromisoformat(pending["time"])
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+        except Exception:
+            created_at = datetime.now(timezone.utc)
 
-            elapsed   = (datetime.now(timezone.utc) - created_at).total_seconds()
-            remaining = SOLD_ESCALATE_AFTER_SECONDS - elapsed
+        elapsed   = (datetime.now(timezone.utc) - created_at).total_seconds()
+        remaining = SOLD_ESCALATE_AFTER_SECONDS - elapsed
 
-            if remaining <= 0:
-                asyncio.create_task(_escalate_pending_sold_now(bot, channel_id))
-            else:
-                asyncio.create_task(_escalate_pending_sold_after(bot, channel_id, remaining))
+        if remaining <= 0:
+            asyncio.create_task(_escalate_pending_sold_now(bot, channel_id))
+        else:
+            asyncio.create_task(_escalate_pending_sold_after(bot, channel_id, remaining))
+
+    # Đơn đang chờ xác định BUYER (không escalate — chỉ cần đăng ký lại nút bấm)
+    pending_buyer_all = get_all_pending_sold_buyer()
+    for channel_id_str, pending in pending_buyer_all.items():
+        channel_id = int(channel_id_str)
+        tuytam_mid = pending.get("tuytam_message_id")
+        if tuytam_mid:
+            bot.add_view(_SoldBuyerView(channel_id), message_id=tuytam_mid)
+        ruby_mid = pending.get("ruby_message_id")
+        if ruby_mid:
+            bot.add_view(_SoldBuyerView(channel_id), message_id=ruby_mid)
 
 
 async def _escalate_pending_sold_now(bot, channel_id: int):
@@ -1093,12 +1273,34 @@ async def handle_sold(bot, message: discord.Message):
                 ("🎫 Kênh cũ", f"`{old_name}`",          True),
             ],
             user=message.author, guild_id=message.guild.id)
+
+        # ── Giá đã có ngay — hỏi admin TuyTam tài khoản Discord nào mua để cộng
+        # tiền cho đúng người (giống lệnh .done), KHÔNG chặn phần trên (kênh đã
+        # chuyển, thống kê seller đã ghi xong dù DM này có gửi được hay không).
+        add_pending_sold_buyer(channel.id, seller_id, amount, new_name, old_name, message.guild.id)
+        if not ADMIN_TUYTAM_ID:
+            print(f"[SOLD] ⚠️ Không hỏi được người mua cho kênh `{old_name}` — chưa cài ADMIN_TUYTAM_ID.")
+            await send_log(bot, "INFO", "⚠️ Sold-stock — chưa cài ADMIN_TUYTAM_ID, không hỏi được người mua",
+                fields=[("👤 Seller", _uname_plain(message.author), True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
+                user=message.author, guild_id=message.guild.id)
+            return
+        msg_id = await _send_sold_buyer_dm(bot, ADMIN_TUYTAM_ID, channel.id, old_name, amount, message.author.mention)
+        if msg_id:
+            set_pending_sold_buyer_dm(channel.id, tuytam_message_id=msg_id)
+            bot.add_view(_SoldBuyerView(channel.id), message_id=msg_id)
+        else:
+            print(f"[SOLD] ⚠️ Không gửi được DM hỏi người mua cho admin TuyTam — kênh `{old_name}` (DM tắt?).")
+            await send_log(bot, "INFO", "⚠️ Không gửi được DM hỏi người mua cho admin TuyTam (DM tắt)",
+                fields=[("👤 Seller", _uname_plain(message.author), True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
+                user=message.author, guild_id=message.guild.id)
         return
 
     # ── Không parse được giá → lưu pending + DM admin TuyTam nhập tay ──
+    # (sau khi admin nhập giá xong, _SoldPriceModal.on_submit sẽ TỰ hỏi tiếp người mua)
     add_pending_sold_price(channel.id, seller_id, new_name, old_name, message.guild.id)
 
     if not ADMIN_TUYTAM_ID:
+        print(f"[SOLD] ⚠️ Không đọc được giá từ tên kênh `{old_name}` & chưa cài ADMIN_TUYTAM_ID — bỏ qua hỏi giá.")
         await send_log(bot, "INFO", "⚠️ Sold-stock — không parse được giá & chưa cài ADMIN_TUYTAM_ID",
             fields=[("👤 Seller", _uname_plain(message.author), True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
             user=message.author, guild_id=message.guild.id)

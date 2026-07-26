@@ -189,8 +189,6 @@ def _default_data(guild_id: int) -> dict:
         "seller_categories": {},       # {user_id: category_id} — category riêng của từng seller
         "log_channels":     {},        # {group: channel_id} — kênh log theo nhóm
         "seller_sales":      [],       # [{user_id, amount, channel_name, channel_id, time}] — lịch sử sold-stock
-        "pending_sold_price": {},      # {channel_id: {seller_id, channel_name, old_name, guild_id, time, tuytam_message_id, ruby_message_id, escalated}}
-        "resolved_sold_price": {},     # {channel_id: {amount, resolved_by, old_name, time}} — đơn đã được admin xử lý
     }
 
 def _default_data_global() -> dict:
@@ -204,6 +202,14 @@ def _default_data_global() -> dict:
         # legit/vouch bị Discord rate limit (2 lần/10 phút), resume lại sau khi bot restart.
         # Xem bot.py: _queue_or_rename / _apply_rename_with_retry / _resume_pending_renames
         "_pending_renames": {},
+        # ── Sold-stock (xem cogs/admin.py: handle_sold) — CHUYỂN sang global (v4.18.0) vì
+        # các Modal/View xử lý nằm trong DM admin: interaction.guild_id LUÔN là None trong DM
+        # nên GuildContextView/Modal KHÔNG set được guild context → load_data() theo-guild sẽ
+        # đọc nhầm/rỗng. Data này tự chứa "guild_id" bên trong mỗi entry (đúng pattern global),
+        # nơi gọi tự set_current_guild(entry["guild_id"]) SAU khi đọc được entry.
+        "_pending_sold_price":  {},  # {channel_id: {seller_id, channel_name, old_name, guild_id, time, tuytam_message_id, ruby_message_id, escalated}}
+        "_resolved_sold_price": {},  # {channel_id: {amount, resolved_by, old_name, time}} — đơn đã được admin xử lý
+        "_pending_sold_buyer":  {},  # {channel_id: {seller_id, amount, channel_name, old_name, guild_id, time, tuytam_message_id, resolved}}
     }
 
 # ══════════════════════════════════════════
@@ -561,12 +567,14 @@ def get_seller_sales_stats() -> dict:
     return stats
 
 # ── Pending sold price — chờ admin TuyTam/Ruby điền giá thủ công qua DM ──
+# [v4.18.0] Chuyển sang load_global_data()/save_global_data() — xem giải thích ở
+# _default_data_global() phía trên. KHÔNG cần guild context để đọc/ghi các hàm này.
 # {channel_id_str: {seller_id, channel_name, old_name, guild_id, time,
 #                    tuytam_message_id, ruby_message_id, escalated}}
 def add_pending_sold_price(channel_id: int, seller_id: int, channel_name: str, old_name: str, guild_id: int):
-    data = load_data()
-    data.setdefault("pending_sold_price", {})
-    data["pending_sold_price"][str(channel_id)] = {
+    data = load_global_data()
+    data.setdefault("_pending_sold_price", {})
+    data["_pending_sold_price"][str(channel_id)] = {
         "seller_id":         seller_id,
         "channel_name":      channel_name,
         "old_name":          old_name,
@@ -576,19 +584,19 @@ def add_pending_sold_price(channel_id: int, seller_id: int, channel_name: str, o
         "ruby_message_id":   None,
         "escalated":         False,
     }
-    save_data(data)
+    save_global_data(data)
 
 def get_pending_sold_price(channel_id: int) -> dict | None:
-    return load_data().get("pending_sold_price", {}).get(str(channel_id))
+    return load_global_data().get("_pending_sold_price", {}).get(str(channel_id))
 
 def get_all_pending_sold_price() -> dict:
     """Trả về toàn bộ pending {channel_id_str: doc} — dùng khi resume sau restart."""
-    return dict(load_data().get("pending_sold_price", {}))
+    return dict(load_global_data().get("_pending_sold_price", {}))
 
 def set_pending_sold_dm(channel_id: int, *, tuytam_message_id: int = None, ruby_message_id: int = None):
     """Lưu message_id của DM (TuyTam và/hoặc Ruby) để resume persistent view sau restart."""
-    data = load_data()
-    pending = data.setdefault("pending_sold_price", {})
+    data = load_global_data()
+    pending = data.setdefault("_pending_sold_price", {})
     doc = pending.get(str(channel_id))
     if not doc:
         return
@@ -597,48 +605,48 @@ def set_pending_sold_dm(channel_id: int, *, tuytam_message_id: int = None, ruby_
     if ruby_message_id is not None:
         doc["ruby_message_id"] = ruby_message_id
     pending[str(channel_id)] = doc
-    save_data(data)
+    save_global_data(data)
 
 def mark_pending_sold_escalated(channel_id: int):
-    data = load_data()
-    pending = data.setdefault("pending_sold_price", {})
+    data = load_global_data()
+    pending = data.setdefault("_pending_sold_price", {})
     doc = pending.get(str(channel_id))
     if not doc:
         return
     doc["escalated"] = True
     pending[str(channel_id)] = doc
-    save_data(data)
+    save_global_data(data)
 
 def remove_pending_sold_price(channel_id: int):
-    data = load_data()
-    data.setdefault("pending_sold_price", {})
-    data["pending_sold_price"].pop(str(channel_id), None)
-    save_data(data)
+    data = load_global_data()
+    data.setdefault("_pending_sold_price", {})
+    data["_pending_sold_price"].pop(str(channel_id), None)
+    save_global_data(data)
 
 # ── Resolved sold price — lưu kết quả sau khi 1 admin đã điền giá ──
 # Cho phép admin còn lại (bấm nút trễ) biết đơn đã được ai xử lý + giá bao nhiêu.
 # {channel_id_str: {amount, resolved_by (user_id), old_name, time}} — tự dọn sau 7 ngày
 def mark_pending_sold_resolved(channel_id: int, amount: int, resolved_by: int, old_name: str):
-    data = load_data()
-    data.setdefault("resolved_sold_price", {})
-    data["resolved_sold_price"][str(channel_id)] = {
+    data = load_global_data()
+    data.setdefault("_resolved_sold_price", {})
+    data["_resolved_sold_price"][str(channel_id)] = {
         "amount":      amount,
         "resolved_by": resolved_by,
         "old_name":    old_name,
         "time":        datetime.now(timezone.utc).isoformat(),
     }
-    save_data(data)
+    save_global_data(data)
 
 def get_resolved_sold_price(channel_id: int) -> dict | None:
-    return load_data().get("resolved_sold_price", {}).get(str(channel_id))
+    return load_global_data().get("_resolved_sold_price", {}).get(str(channel_id))
 
 # [FIX v4.11.5] Comment phía trên ghi "tự dọn sau 7 ngày" từ trước nhưng
 # chưa từng có code dọn thật — dict lớn dần vô hạn. Gọi hàm này 1 lần/ngày
-# từ nơi đã có guild context sẵn (daily_report_task trong logger.py).
+# từ daily_report_task trong logger.py — giờ KHÔNG cần guild context nữa (global).
 def cleanup_resolved_sold_price(max_age_days: int = 7) -> int:
     """Xóa các entry resolved_sold_price cũ hơn max_age_days. Trả về số entry đã xóa."""
-    data = load_data()
-    resolved = data.get("resolved_sold_price", {})
+    data = load_global_data()
+    resolved = data.get("_resolved_sold_price", {})
     if not resolved:
         return 0
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
@@ -656,9 +664,66 @@ def cleanup_resolved_sold_price(max_age_days: int = 7) -> int:
         return 0
     for ch_id in to_delete:
         del resolved[ch_id]
-    data["resolved_sold_price"] = resolved
-    save_data(data)
+    data["_resolved_sold_price"] = resolved
+    save_global_data(data)
     return len(to_delete)
+
+# ── Pending sold BUYER — chờ admin TuyTam/Ruby cho biết tài khoản Discord nào đã
+# mua đơn sold-stock này, để cộng tiền (+role) cho đúng buyer giống lệnh .done.
+# [v4.18.0] Global từ đầu — cùng lý do với pending_sold_price ở trên.
+# {channel_id_str: {seller_id, amount, channel_name, old_name, guild_id, time,
+#                    tuytam_message_id, ruby_message_id, escalated}}
+def add_pending_sold_buyer(channel_id: int, seller_id: int, amount: int, channel_name: str,
+                            old_name: str, guild_id: int):
+    data = load_global_data()
+    data.setdefault("_pending_sold_buyer", {})
+    data["_pending_sold_buyer"][str(channel_id)] = {
+        "seller_id":         seller_id,
+        "amount":            amount,
+        "channel_name":      channel_name,
+        "old_name":          old_name,
+        "guild_id":          guild_id,
+        "time":              datetime.now(timezone.utc).isoformat(),
+        "tuytam_message_id": None,
+        "ruby_message_id":   None,
+        "escalated":         False,
+    }
+    save_global_data(data)
+
+def get_pending_sold_buyer(channel_id: int) -> dict | None:
+    return load_global_data().get("_pending_sold_buyer", {}).get(str(channel_id))
+
+def get_all_pending_sold_buyer() -> dict:
+    return dict(load_global_data().get("_pending_sold_buyer", {}))
+
+def set_pending_sold_buyer_dm(channel_id: int, *, tuytam_message_id: int = None, ruby_message_id: int = None):
+    data = load_global_data()
+    pending = data.setdefault("_pending_sold_buyer", {})
+    doc = pending.get(str(channel_id))
+    if not doc:
+        return
+    if tuytam_message_id is not None:
+        doc["tuytam_message_id"] = tuytam_message_id
+    if ruby_message_id is not None:
+        doc["ruby_message_id"] = ruby_message_id
+    pending[str(channel_id)] = doc
+    save_global_data(data)
+
+def mark_pending_sold_buyer_escalated(channel_id: int):
+    data = load_global_data()
+    pending = data.setdefault("_pending_sold_buyer", {})
+    doc = pending.get(str(channel_id))
+    if not doc:
+        return
+    doc["escalated"] = True
+    pending[str(channel_id)] = doc
+    save_global_data(data)
+
+def remove_pending_sold_buyer(channel_id: int):
+    data = load_global_data()
+    data.setdefault("_pending_sold_buyer", {})
+    data["_pending_sold_buyer"].pop(str(channel_id), None)
+    save_global_data(data)
 
 async def get_ticket_number(guild_id: int) -> str:
     """FIX: async + Lock đảm bảo không bao giờ tạo 2 ticket trùng số.

@@ -1,12 +1,25 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.18.0] — 2026-07-27
+
+### 🐛 Sửa lỗi
+- `cogs/ticket.py: done_cmd` + `/done` — `.done` từng CRASH ngay khi chạy (trước cả khi gửi embed xác nhận) do `from cogs.admin import auto_give_buy_roles` sai module — hàm thật nằm ở `cogs/admin_views.py`. Sửa lại đúng import ở cả 2 chỗ (prefix command + slash command)
+- `core/data.py` — Luồng admin TuyTam/Ruby nhập giá đơn sold thủ công qua DM (`_SoldPriceModal`) không hoạt động đúng: `pending_sold_price`/`resolved_sold_price` lưu theo-guild nhưng Modal/View chạy trong DM luôn có `interaction.guild_id = None` nên không set được guild context → `load_data()` đọc nhầm/rỗng. Chuyển 2 bảng này (+ `pending_sold_buyer` mới) sang `load_global_data()`/`save_global_data()` — không cần guild context để đọc, nơi gọi tự `set_current_guild(pending["guild_id"])` khi cần thao tác data theo-guild (add_seller_sale, add_user_spent, auto_give_buy_roles...)
+
+### ✨ Tính năng mới
+- `cogs/shop_orders.py: build_payment_qr_embed` — Khi `.done` gọi mà ngân hàng CHƯA cấu hình đủ (thiếu `.shopbank`), bot vẫn bỏ qua gửi QR như trước nhưng giờ có in log console (`log.warning`) để admin biết vì sao QR không gửi. Giá đơn hàng vẫn được lưu bình thường, không phụ thuộc vào QR
+- `cogs/admin.py` — Sold-stock (`stock` → `sold`) giờ hỏi thêm admin TuyTam **tài khoản Discord nào đã mua** để cộng tiền cho đúng buyer (giống hệt lệnh `.done`: `add_user_spent` + `auto_give_buy_roles` + tặng role "Đã Mua Hàng"), thay vì trước đây chỉ ghi thống kê doanh số cho seller:
+  - Nếu đọc được giá từ tên kênh → ghi thống kê seller như cũ, sau đó DM ngay admin TuyTam hỏi người mua (`_SoldBuyerModal`/`_SoldBuyerView`)
+  - Nếu KHÔNG đọc được giá từ tên kênh → vẫn DM admin TuyTam nhập giá thủ công như cũ (`_SoldPriceModal`); sau khi nhập giá xong, bot tự động hỏi tiếp người mua ngay trong cùng luồng
+  - Đăng ký lại persistent view cho cả 2 loại DM (giá + buyer) sau khi bot restart (`resume_pending_sold_views`)
+
 ## [v4.17.0] — 2026-07-26
 
 ### 🐛 Sửa lỗi
-- `bot.py: on_message` — Bot crash-log khi có người nhắn DM cho bot: 'DMChannel' object has no attribute 'name' trong `_handle_legit()` + cảnh báo load_data() KHÔNG có guild context (do set_current_guild() không được gọi khi message.guild là None nhưng các handler auto-sold/AI-chat/legit/vouch vẫn chạy tiếp). Thêm `if not message.guild: return` ngay sau process_commands() — các tính năng chỉ dành cho server giờ tự bỏ qua DM, lệnh prefix trong DM vẫn hoạt động bình thường
+- `bot.py: on_message` — Bot crash-log khi có người **nhắn DM** cho bot: `'DMChannel' object has no attribute 'name'` trong `_handle_legit()` + cảnh báo `load_data() KHÔNG có guild context` (do `set_current_guild()` không được gọi khi `message.guild` là None nhưng các handler auto-sold/AI-chat/legit/vouch vẫn chạy tiếp). Thêm `if not message.guild: return` ngay sau `process_commands()` — các tính năng chỉ dành cho server giờ tự bỏ qua DM, lệnh prefix trong DM vẫn hoạt động bình thường
 
 ### ✨ Tính năng mới
-- `core/rag.py` — Fallback tìm kiếm khi Voyage AI lỗi/hết quota (429): thêm `_keyword_fallback_search()` so khớp từ khoá thô trong Mongo (không cần Atlas Vector Index) khi `get_embedding()` trả None. `get_relevant_context()` nhận diện kết quả fallback và đưa cảnh báo vào prompt để Groq tự đánh giá độ liên quan trước khi dùng
+- `core/rag.py` — Fallback tìm kiếm khi **Voyage AI lỗi/hết quota (429)**: thêm `_keyword_fallback_search()` so khớp từ khoá thô trong Mongo (không cần Atlas Vector Index) khi `get_embedding()` trả `None`. `get_relevant_context()` nhận diện kết quả fallback (không cùng thang điểm với cosine similarity) và đưa cảnh báo vào prompt để Groq tự đánh giá độ liên quan trước khi dùng, thay vì AI chat mất hẳn khả năng tra RAG mỗi khi Voyage bị giới hạn rate
 
 ---
 

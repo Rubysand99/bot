@@ -1283,7 +1283,7 @@ class TicketCog(commands.Cog):
             "staff_id":    ctx.author.id,
         })
 
-        from cogs.admin import auto_give_buy_roles
+        from cogs.admin_views import auto_give_buy_roles
         role_cfg = await auto_give_buy_roles(ctx.guild, buyer, new_total)
 
         # Tặng role "Đã Mua Hàng" cho người tạo ticket khi hoàn thành đơn
@@ -1392,7 +1392,7 @@ class TicketCog(commands.Cog):
         data[completed_key] = True
         save_data(data)
         new_total = add_user_spent(user_id, parsed)
-        from cogs.admin import auto_give_buy_roles
+        from cogs.admin_views import auto_give_buy_roles
         role_cfg = await auto_give_buy_roles(interaction.guild, buyer, new_total)
         embed = discord.Embed(title="✅ Hoàn Thành Đơn", color=0x57F287, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="👤 Buyer",       value=buyer.mention,                    inline=True)

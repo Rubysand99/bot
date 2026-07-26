@@ -16,6 +16,7 @@ Cách hoạt động:
 """
 
 import shlex
+import logging
 from urllib.parse import quote
 from datetime import datetime, timezone
 
@@ -31,6 +32,8 @@ from core.data import (
 )
 from cogs.logger import send_log
 
+log = logging.getLogger(__name__)
+
 COLOR_QR = 0x5865F2
 COLOR_QUEUE_PENDING = 0xF1C40F
 COLOR_QUEUE_DONE = 0x2ECC71
@@ -38,7 +41,9 @@ COLOR_QUEUE_DONE = 0x2ECC71
 
 def build_payment_qr_embed(amount: int) -> discord.Embed | None:
     """Trả về embed QR VietQR cho số tiền `amount`, dùng nội dung CK mặc định đã cấu hình.
-    Trả về None nếu tính năng đang tắt hoặc chưa cấu hình đủ ngân hàng."""
+    Trả về None nếu tính năng đang tắt hoặc chưa cấu hình đủ ngân hàng — khi thiếu cấu hình
+    ngân hàng (khác với việc tính năng đang tắt hẳn), in log console để admin biết vì sao
+    `.done` không gửi QR, còn giá đơn hàng vẫn được lưu bình thường ở nơi gọi (ctx.reply/.done)."""
     if not get_cfg_shop_orders_enabled():
         return None
 
@@ -46,6 +51,10 @@ def build_payment_qr_embed(amount: int) -> discord.Embed | None:
     bank_code = cfg.get("bank_code")
     account_number = cfg.get("account_number")
     if not bank_code or not account_number:
+        log.warning(
+            "[SHOP] ⚠️ Bỏ qua gửi QR — chưa cấu hình đủ ngân hàng (thiếu bank_code hoặc "
+            "account_number). Dùng lệnh `.shopbank` để cài. Giá đơn hàng vẫn được lưu bình thường."
+        )
         return None
 
     template = cfg.get("template", "compact2")
