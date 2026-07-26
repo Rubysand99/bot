@@ -1,5 +1,15 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.17.0] — 2026-07-26
+
+### 🐛 Sửa lỗi
+- `bot.py: on_message` — Bot crash-log khi có người nhắn DM cho bot: 'DMChannel' object has no attribute 'name' trong `_handle_legit()` + cảnh báo load_data() KHÔNG có guild context (do set_current_guild() không được gọi khi message.guild là None nhưng các handler auto-sold/AI-chat/legit/vouch vẫn chạy tiếp). Thêm `if not message.guild: return` ngay sau process_commands() — các tính năng chỉ dành cho server giờ tự bỏ qua DM, lệnh prefix trong DM vẫn hoạt động bình thường
+
+### ✨ Tính năng mới
+- `core/rag.py` — Fallback tìm kiếm khi Voyage AI lỗi/hết quota (429): thêm `_keyword_fallback_search()` so khớp từ khoá thô trong Mongo (không cần Atlas Vector Index) khi `get_embedding()` trả None. `get_relevant_context()` nhận diện kết quả fallback và đưa cảnh báo vào prompt để Groq tự đánh giá độ liên quan trước khi dùng
+
+---
+
 ## [v4.16.0] — 2026-07-23
 
 ### 🐛 Sửa lỗi
