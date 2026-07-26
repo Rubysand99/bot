@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.16.0"
-BOT_UPDATED = "2026-07-23"
+BOT_VERSION = "4.17.0"
+BOT_UPDATED = "2026-07-26"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
 TOKEN = os.getenv("TOKEN")
@@ -207,6 +207,12 @@ async def on_message(message: discord.Message):
         set_current_guild(message.guild.id)
 
     await bot.process_commands(message)
+
+    # Các tính năng dưới đây (auto-sold, AI channel, legit/vouch) chỉ có ý nghĩa
+    # trong server — bỏ qua DM để tránh crash (DMChannel không có .name) và
+    # tránh load_data() bị gọi mà thiếu guild context.
+    if not message.guild:
+        return
 
     # Auto sold — stock → sold category
     from cogs.admin import handle_sold

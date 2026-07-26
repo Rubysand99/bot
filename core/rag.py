@@ -20,9 +20,19 @@ CẦN LÀM TRƯỚC KHI DÙNG:
        ]
      }
    (numDimensions=512 khớp với model voyage-3-lite bên dưới — đổi model thì đổi số này)
+
+FALLBACK khi Voyage lỗi/hết quota (vd 429 do chưa thêm payment method):
+Bot KHÔNG có model embedding nào khác sẵn có (Groq — dùng cho AI chat trong
+cogs/ai_chat.py — chỉ có chat completion, không có API embedding), nên không
+thể vector-search thay thế. Thay vào đó, search_rag() sẽ tự động rơi xuống
+_keyword_fallback_search(): so khớp từ khoá thô (không cần Atlas Vector Index)
+để vẫn lấy được các Q&A có khả năng liên quan, sau đó để chính Groq (đã dùng
+sẵn trong ai_chat.py) tự đánh giá cái nào thật sự liên quan khi trả lời —
+xem get_relevant_context().
 """
 
 import os
+import re
 import logging
 from datetime import datetime, timezone
 
@@ -145,15 +155,58 @@ async def delete_qa_from_rag(doc_id: str) -> None:
 
 
 # ══════════════════════════════════════════
+# FALLBACK — tìm theo từ khoá khi Voyage lỗi/hết quota (không cần Atlas Vector Index)
+# ══════════════════════════════════════════
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
+
+def _keyword_overlap_score(query: str, text: str) -> float:
+    """Tỉ lệ từ trong query cũng xuất hiện trong text (0..1). Thô nhưng đủ dùng
+    để xếp hạng tạm thời khi không có embedding — KHÔNG cùng thang điểm với
+    cosine similarity của vector search nên không so sánh trực tiếp với
+    RAG_SCORE_THRESHOLD."""
+    q_words = set(w.lower() for w in _WORD_RE.findall(query))
+    t_words = set(w.lower() for w in _WORD_RE.findall(text))
+    if not q_words or not t_words:
+        return 0.0
+    return len(q_words & t_words) / len(q_words)
+
+async def _keyword_fallback_search(guild_id: int, query: str, top_k: int = 5) -> list[dict]:
+    """Quét toàn bộ Q&A của guild trong Mongo (collection nhỏ, không cần index đặc
+    biệt), chấm điểm trùng từ khoá thô, lấy top_k điểm cao nhất > 0. Dùng khi
+    get_embedding() trả None (thiếu VOYAGE_API_KEY, hết quota/429, lỗi mạng...).
+    Kết quả kém chính xác hơn vector search — mỗi item có 'fallback': True để
+    get_relevant_context() biết mà nhắc AI tự cân nhắc độ liên quan."""
+    col = _get_knowledge_collection()
+    try:
+        docs = [doc async for doc in col.find({"guild_id": guild_id}, {"question": 1, "answer": 1})]
+    except Exception as e:
+        log.error(f"[RAG] ❌ Lỗi fallback keyword search: {e}")
+        return []
+
+    scored = []
+    for doc in docs:
+        score = _keyword_overlap_score(query, f"{doc.get('question', '')} {doc.get('answer', '')}")
+        if score > 0:
+            scored.append((score, doc))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [
+        {"question": d.get("question", ""), "answer": d.get("answer", ""), "score": s, "fallback": True}
+        for s, d in scored[:top_k]
+    ]
+
+
+# ══════════════════════════════════════════
 # TÌM KIẾM
 # ══════════════════════════════════════════
 async def search_rag(guild_id: int, query: str, top_k: int = 3) -> list[dict]:
     """Trả về list các Q&A gần nghĩa nhất, đã lọc theo guild_id, kèm score (0..1).
-    Trả về [] nếu chưa cấu hình embedding hoặc lỗi — CHỖ GỌI phải tự xử lý
-    trường hợp rỗng (coi như không có kiến thức liên quan)."""
+    Nếu Voyage không khả dụng (thiếu key / lỗi / 429 hết quota), tự động rơi
+    xuống tìm theo từ khoá thô (_keyword_fallback_search) thay vì trả [] luôn —
+    vẫn còn cơ hội tìm ra Q&A liên quan dù kém chính xác hơn vector search."""
     query_embedding = await get_embedding(query, input_type="query")
     if query_embedding is None:
-        return []
+        log.warning("[RAG] ⚠️ Voyage không khả dụng — chuyển sang tìm theo từ khoá (kém chính xác hơn).")
+        return await _keyword_fallback_search(guild_id, query, top_k * 2)
 
     col = _get_knowledge_collection()
     pipeline = [
@@ -189,8 +242,28 @@ async def search_rag(guild_id: int, query: str, top_k: int = 3) -> list[dict]:
 
 async def get_relevant_context(guild_id: int, query: str) -> str | None:
     """Helper tiện dụng cho ai_chat.py: tìm Q&A liên quan, trả về đoạn text
-    sẵn sàng nhét vào prompt, hoặc None nếu không có gì đủ tin cậy."""
+    sẵn sàng nhét vào prompt, hoặc None nếu không có gì đủ tin cậy.
+
+    Trường hợp fallback (Voyage lỗi, xem search_rag): điểm keyword-overlap
+    KHÔNG cùng thang với cosine similarity nên không lọc bằng RAG_SCORE_THRESHOLD
+    được — thay vào đó lấy top vài kết quả và nói rõ với AI (Groq, đang xử lý
+    câu trả lời) rằng đây chỉ là gợi ý tham khảo, để nó tự cân nhắc có dùng
+    hay không thay vì tin tưởng tuyệt đối như khi có vector search thật."""
     matches = await search_rag(guild_id, query, top_k=3)
+    is_fallback = any(m.get("fallback") for m in matches)
+
+    if is_fallback:
+        good = matches[:3]
+        if not good:
+            return None
+        header = (
+            "Các Q&A dưới đây được tìm theo TỪ KHOÁ THÔ (do dịch vụ embedding đang "
+            "tạm gián đoạn) — CÓ THỂ KHÔNG THẬT SỰ LIÊN QUAN, hãy tự đánh giá và chỉ "
+            "dùng nếu khớp thật sự với câu hỏi của khách, đừng ép dùng nếu không phù hợp:"
+        )
+        body = "\n\n".join(f"Q: {m['question']}\nA: {m['answer']}" for m in good)
+        return f"{header}\n\n{body}"
+
     good = [m for m in matches if m.get("score", 0) >= RAG_SCORE_THRESHOLD]
     if not good:
         return None
