@@ -853,6 +853,66 @@ async def create_direct_order_ticket(interaction: discord.Interaction, server_ke
         except Exception: pass
 
 
+async def create_listing_ticket(interaction: discord.Interaction, ign: str, price: str, cape: str,
+                                 note: str, source_thread: discord.Thread | None):
+    """Tạo ticket mua khi khách bấm nút 🛒 Mua trên 1 listing sản phẩm (cogs/listings.py)."""
+    guild = interaction.guild
+    try:
+        if await has_ticket(guild, interaction.user):
+            return await interaction.followup.send("❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.", ephemeral=True)
+
+        bot        = interaction.client
+        number     = await get_next_ticket_number(bot)
+        created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+        channel_name = f"mua-{number}"
+
+        role_ids   = get_ticket_role_ids("listing")
+        overwrites = _build_ticket_overwrites_multi(guild, interaction.user, role_ids)
+        category   = discord.utils.get(guild.categories, id=get_cfg_category())
+        channel    = await guild.create_text_channel(
+            name=channel_name, overwrites=overwrites, category=category,
+            topic=f"{interaction.user.id}||buy|listing|open|listing",
+        )
+
+        embed = discord.Embed(
+            title=f"🛒 MUA SẢN PHẨM  •  #{number}",
+            description=f"Xin chào {interaction.user.mention}! 👋\nStaff sẽ xử lý sớm nhất có thể.\n🟡 **Trạng thái:** Đang chờ staff nhận",
+            color=0x2ECC71, timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="👤  Người mua",     value=interaction.user.mention, inline=True)
+        embed.add_field(name="🕐  Thời gian",      value=created_at,               inline=True)
+        embed.add_field(name="📦  Sản phẩm",       value=ign or "?",               inline=True)
+        embed.add_field(name="💰  Giá niêm yết",   value=price or "?",             inline=True)
+        if cape:
+            embed.add_field(name="👕  Cape", value=cape, inline=True)
+        if note:
+            embed.add_field(name="📝  Ghi chú", value=note, inline=False)
+        if source_thread:
+            embed.add_field(name="🔗  Listing gốc", value=source_thread.mention, inline=False)
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
+
+        ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
+
+        await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
+        _register_ticket(interaction.user.id, channel.id)
+        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
+
+        await send_log(
+            interaction.client, "TICKET_CREATE", f"Ticket Tạo — {channel_name}",
+            fields=[
+                ("🎫 Kênh",       channel.mention,               True),
+                ("📦 Sản phẩm",   ign or "?",                    True),
+                ("👤 Người tạo", _uname_plain(interaction.user),  True),
+                ("🕐 Thời gian", created_at,                    True),
+            ],
+            user=interaction.user, guild_id=guild.id,
+        )
+    except Exception as e:
+        try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`", ephemeral=True)
+        except Exception: pass
+
+
 async def create_direct_service_ticket(interaction: discord.Interaction, service_key: str):
     """Tạo ticket dịch vụ thẳng (Giveaway, Hỗ Trợ) không qua popup."""
     await create_service_ticket(interaction, service_key)
@@ -1264,6 +1324,7 @@ class TicketCog(commands.Cog):
             "onemc":  "🎮 One MC",
             "ff":     "🔥 Free Fire",
             "accpre": "🎭 Acc Pre",
+            "listing": "🛒 Sản phẩm",
         }
         server_label = SERVER_LABELS.get(server_key, None)
 
