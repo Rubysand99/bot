@@ -1198,6 +1198,21 @@ def save_shop_orders_config(**fields) -> None:
 def get_cfg_queue_channel() -> int:
     return load_data().get("cfg_queue_channel", 0)
 
+def get_next_shop_order_number() -> str:
+    """Tăng & trả về số hoá đơn tiếp theo (theo guild) — dùng khi đánh dấu 'Hoàn thành'
+    trong hàng đợi shop_orders để dựng hóa đơn kiểu #2349 gửi vào kênh proof."""
+    data = load_data()
+    next_num = data.get("shop_order_counter", 0) + 1
+    data["shop_order_counter"] = next_num
+    save_data(data)
+    return str(next_num)
+
+def set_shop_order_counter(number: int) -> None:
+    """Cho phép admin chỉnh số hoá đơn bắt đầu (vd để khớp với hệ thống cũ)."""
+    data = load_data()
+    data["shop_order_counter"] = number
+    save_data(data)
+
 def save_cfg_queue_channel(channel_id: int) -> None:
     save_cfg("cfg_queue_channel", channel_id)
 
