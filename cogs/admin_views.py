@@ -456,6 +456,8 @@ _ALL_TICKET_OPTIONS = [
     ("order_build",    "🏗️ Mua/Bán Base",     "Mua/Bán"),
     # acc pre
     ("acc_pre",        "🎭 Acc Pre",           "Mua/Bán"),
+    # listing (sản phẩm dạng Forum — nút 🛒 Mua, xem cogs/listings.py)
+    ("listing",         "🛒 Mua Sản Phẩm (Listing)", "Mua/Bán"),
 ]
 
 
@@ -472,6 +474,7 @@ _TICKET_GROUPS = [
         ("order_ff",     "🔥 Free Fire"),
         ("order_build",  "🏗️ Build"),
         ("acc_pre",      "🎭 Acc Pre"),
+        ("listing",      "🛒 Mua Sản Phẩm (Listing)"),
     ]),
 ]
 

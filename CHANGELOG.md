@@ -1,5 +1,24 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.19.1] — 2026-07-27
+
+### 🐛 Sửa lỗi
+- `cogs/shop_orders.py` — **Hóa đơn công khai hiện sai số tiền.** `build_queue_embed()` ghi field "💰 Số tiền" bằng `fmt_amount()` (dạng rút gọn, vd `150000` → `"150k"`), sau đó `ReceiptProductModal.on_submit` đọc lại field đó bằng `_extract_amount_digits()` (strip mọi ký tự không phải chữ số) → chữ `k`/`tr` bị mất, `"150k"` chỉ còn lại `"150"` → hóa đơn gửi vào kênh proof hiện **150 VNĐ thay vì 150,000 VNĐ**. Thêm `fmt_vnd()` (định dạng đầy đủ `"150,000 VNĐ"`, không rút gọn — khớp đúng định dạng ảnh hóa đơn mẫu) và dùng nó ở cả `build_queue_embed()` lẫn `build_receipt_embed()` thay cho `fmt_amount()`, đảm bảo số tiền đọc lại từ embed luôn khớp 100% với số tiền gốc.
+
+### ♻️ Thay đổi
+- `cogs/admin_views.py` — Thêm loại ticket `listing` (🛒 Mua Sản Phẩm) vào danh sách gán role ping trong `.st` → Vai trò ticket, để admin cấu hình được role nhận ping khi khách bấm nút Mua trên 1 bài đăng sản phẩm (`cogs/listings.py`) — trước đó loại ticket này luôn fallback về support role mặc định, không cấu hình riêng được.
+
+---
+
+## [v4.19.0] — 2026-07-27
+
+### ✨ Tính năng mới
+- `cogs/shop_orders.py` — **Hóa đơn thanh toán công khai**: khi staff bấm ✅ Hoàn thành trên đơn hàng trong kênh hàng đợi, bot hỏi tên/mã sản phẩm qua modal rồi tự dựng hóa đơn (`build_receipt_embed`, có số hóa đơn tăng dần theo guild, nội dung CK tự sinh) và gửi vào kênh Proof Channel (cấu hình sẵn qua `.st`) — theo đúng format hóa đơn mẫu ViceVN.
+- `cogs/shop_orders.py: leaderboard_cmd` — Lệnh `.bxh` (alias `.leaderboard`/`.top`): bảng xếp hạng top 10 chi tiêu nhiều nhất trong server, đọc từ `user_total_spent` đã có sẵn (được cộng dồn mỗi khi `.done`).
+- `cogs/listings.py` (mới) — **Đăng sản phẩm dạng Forum**: lệnh `.addlisting #forum "<IGN>" "<Giá>" "<Cape>" ["<Thông tin thêm>"]` tạo 1 thread sản phẩm trong kênh forum kèm ảnh preview (nếu đính kèm) + 2 nút: 🟢 Chưa bán/🔴 Đã bán (toggle, staff/seller) và 🛒 Mua (khách bấm → tạo ticket mua qua `create_listing_ticket()` ở `cogs/ticket.py`, thông tin sản phẩm được copy sẵn vào ticket).
+
+---
+
 ## [v4.18.0] — 2026-07-27
 
 ### 🐛 Sửa lỗi

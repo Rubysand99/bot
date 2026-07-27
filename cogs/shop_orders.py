@@ -15,6 +15,9 @@ Cách hoạt động:
    trong kênh hàng đợi — embed được giữ lại, chỉ đổi màu + trạng thái, không xóa/chuyển kênh.
 """
 
+import re
+import random
+import string
 import shlex
 import logging
 from urllib.parse import quote
@@ -22,13 +25,17 @@ from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
+from discord.ui import TextInput
 
 from core.data import (
     ADMIN_IDS, fmt_amount, is_staff_member, get_or_fetch_channel, _uname_plain,
     get_cfg_shop_orders_enabled,
     get_shop_orders_config, save_shop_orders_config,
     get_cfg_queue_channel, save_cfg_queue_channel,
-    GuildContextView,
+    get_cfg_proof_channel,
+    get_next_shop_order_number, set_shop_order_counter,
+    load_data,
+    GuildContextView, GuildContextModal,
 )
 from cogs.logger import send_log
 
@@ -37,6 +44,51 @@ log = logging.getLogger(__name__)
 COLOR_QR = 0x5865F2
 COLOR_QUEUE_PENDING = 0xF1C40F
 COLOR_QUEUE_DONE = 0x2ECC71
+
+
+def _extract_mention_id(text: str) -> int | None:
+    m = re.search(r"<@!?(\d+)>", text or "")
+    return int(m.group(1)) if m else None
+
+
+def _extract_amount_digits(text: str) -> int:
+    digits = re.sub(r"[^\d]", "", text or "")
+    return int(digits) if digits else 0
+
+
+def fmt_vnd(amount: int) -> str:
+    """Định dạng đầy đủ '150,000 VNĐ' — KHÔNG rút gọn như fmt_amount() ('150k'/'1.5tr').
+    Dùng cho mọi field embed mà sau này bị đọc lại bằng _extract_amount_digits() (hàng đợi →
+    hóa đơn), vì fmt_amount() rút gọn sẽ làm mất số 0 khi strip ký tự không phải chữ số
+    (vd '150k' → chỉ còn '150' → hóa đơn hiện sai 150đ thay vì 150,000đ). Cũng khớp đúng
+    định dạng hóa đơn mẫu (ảnh gốc): 'Số tiền: 150,000 VNĐ'."""
+    return f"{amount:,} VNĐ"
+
+
+def gen_transfer_code(name: str) -> str:
+    """Sinh nội dung CK kiểu <tên>-<mã random 6 ký tự>, giống format ảnh hóa đơn mẫu."""
+    safe_name = re.sub(r"[^A-Za-z0-9_]", "", name or "")[:20] or "KHACH"
+    rand = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    return f"{safe_name}-{rand}"
+
+
+def build_receipt_embed(order_number: str, buyer_mention: str, product: str, amount: int,
+                         approver: discord.abc.User, transfer_code: str) -> discord.Embed:
+    """Hóa đơn công khai kiểu ảnh mẫu — gửi vào kênh proof khi đơn hàng đợi được đánh dấu Hoàn thành."""
+    e = discord.Embed(
+        title=f"🧾 HÓA ĐƠN THANH TOÁN MUA HÀNG #{order_number}",
+        description="Giao dịch đã được xác nhận hoàn tất thành công bởi Admin!",
+        color=COLOR_QUEUE_DONE,
+        timestamp=datetime.now(timezone.utc),
+    )
+    e.add_field(name="👤 Khách hàng", value=buyer_mention, inline=False)
+    e.add_field(name="📦 Sản phẩm", value=product or "*(không rõ)*", inline=False)
+    e.add_field(name="💰 Số tiền", value=f"**{fmt_vnd(amount)}**", inline=True)
+    e.add_field(name="🧑 Người duyệt", value=approver.mention, inline=True)
+    e.add_field(name="📝 Nội dung CK", value=f"`{transfer_code}`", inline=False)
+    e.add_field(name="🚀 Trạng thái", value="🟢 Đã giao hàng", inline=False)
+    e.set_footer(text="Cảm ơn bạn đã tin tưởng!")
+    return e
 
 
 def build_payment_qr_embed(amount: int) -> discord.Embed | None:
@@ -87,7 +139,7 @@ def build_queue_embed(buyer: discord.abc.User, ticket_channel: discord.abc.Guild
     e.set_thumbnail(url=buyer.display_avatar.url)
     e.add_field(name="👤 Khách", value=buyer.mention, inline=True)
     e.add_field(name="🎫 Ticket", value=ticket_channel.mention if ticket_channel else "*(không rõ)*", inline=True)
-    e.add_field(name="💰 Số tiền", value=fmt_amount(amount), inline=True)
+    e.add_field(name="💰 Số tiền", value=fmt_vnd(amount), inline=True)
     e.add_field(name="📌 Trạng thái", value="🟡 Đang xử lý", inline=False)
     return e
 
@@ -108,6 +160,85 @@ async def send_to_queue(bot, buyer: discord.abc.User, ticket_channel: discord.ab
     await queue_channel.send(embed=embed, view=QueueOrderView())
 
 
+class ReceiptProductModal(GuildContextModal, title="🧾 Hoàn thành đơn hàng"):
+    """Hỏi tên/mã sản phẩm trước khi dựng hóa đơn công khai gửi vào kênh proof."""
+
+    def __init__(self, message: discord.Message, default_product: str = ""):
+        super().__init__()
+        self.message = message
+        self.product_input = TextInput(
+            label="Tên / mã sản phẩm",
+            placeholder="vd: PANJA_ATIG123",
+            default=default_product[:100] if default_product else None,
+            max_length=100,
+            required=False,
+        )
+        self.add_item(self.product_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        embed = self.message.embeds[0]
+        if embed.color and embed.color.value == COLOR_QUEUE_DONE:
+            return await interaction.response.send_message("Đơn này đã được đánh dấu hoàn thành rồi.", ephemeral=True)
+
+        buyer_field  = next((f.value for f in embed.fields if f.name == "👤 Khách"), "")
+        amount_field = next((f.value for f in embed.fields if f.name == "💰 Số tiền"), "")
+        buyer_id     = _extract_mention_id(buyer_field)
+        amount       = _extract_amount_digits(amount_field)
+        buyer_mention = f"<@{buyer_id}>" if buyer_id else "*(không rõ)*"
+
+        buyer_member = interaction.guild.get_member(buyer_id) if buyer_id else None
+        name_for_code = buyer_member.name if buyer_member else "KHACH"
+
+        product        = self.product_input.value.strip()
+        order_number   = get_next_shop_order_number()
+        transfer_code  = gen_transfer_code(name_for_code)
+
+        embed.color = COLOR_QUEUE_DONE
+        for i, field in enumerate(embed.fields):
+            if field.name == "📌 Trạng thái":
+                embed.set_field_at(
+                    i, name=field.name,
+                    value=f"✅ Đã hoàn thành bởi {interaction.user.mention} • Hóa đơn #{order_number}",
+                    inline=False,
+                )
+                break
+
+        view = QueueOrderView()
+        view.done_btn.disabled = True
+
+        try:
+            await interaction.response.edit_message(embed=embed, view=view)
+        except Exception:
+            await self.message.edit(embed=embed, view=view)
+            await interaction.response.send_message("✅ Đã hoàn thành đơn hàng.", ephemeral=True)
+
+        receipt = build_receipt_embed(
+            order_number=order_number, buyer_mention=buyer_mention,
+            product=product, amount=amount, approver=interaction.user,
+            transfer_code=transfer_code,
+        )
+        proof_ch_id = get_cfg_proof_channel()
+        if proof_ch_id:
+            proof_channel = await get_or_fetch_channel(interaction.client, proof_ch_id)
+            if proof_channel:
+                try:
+                    await proof_channel.send(embed=receipt)
+                except Exception as e:
+                    log.warning(f"[SHOP] ⚠️ Không gửi được hóa đơn vào kênh proof: {e}")
+        else:
+            log.warning("[SHOP] ⚠️ Chưa cấu hình kênh proof (Proof Channel trong .st) — bỏ qua gửi hóa đơn công khai.")
+
+        await send_log(
+            interaction.client, "SHOP_QUEUE_DONE", "Đơn hàng đợi đã hoàn thành",
+            fields=[
+                ("🧑 Seller", _uname_plain(interaction.user), True),
+                ("📦 Sản phẩm", product or "(không rõ)", True),
+                ("🧾 Số hóa đơn", f"#{order_number}", True),
+            ],
+            user=interaction.user, guild_id=interaction.guild_id,
+        )
+
+
 class QueueOrderView(GuildContextView):
     """Persistent view — không gắn order_code, chỉ sửa trực tiếp embed của message được bấm."""
 
@@ -123,20 +254,15 @@ class QueueOrderView(GuildContextView):
         if embed.color and embed.color.value == COLOR_QUEUE_DONE:
             return await interaction.response.send_message("Đơn này đã được đánh dấu hoàn thành rồi.", ephemeral=True)
 
-        embed.color = COLOR_QUEUE_DONE
-        for i, field in enumerate(embed.fields):
-            if field.name == "📌 Trạng thái":
-                embed.set_field_at(i, name=field.name, value=f"✅ Đã hoàn thành bởi {interaction.user.mention}", inline=False)
-                break
+        ticket_field = next((f.value for f in embed.fields if f.name == "🎫 Ticket"), "")
+        default_product = ""
+        m = re.search(r"<#(\d+)>", ticket_field or "")
+        if m:
+            ch = interaction.guild.get_channel(int(m.group(1)))
+            if ch:
+                default_product = ch.name
 
-        button.disabled = True
-        await interaction.response.edit_message(embed=embed, view=self)
-
-        await send_log(
-            interaction.client, "SHOP_QUEUE_DONE", "Đơn hàng đợi đã hoàn thành",
-            fields=[("🧑 Seller", _uname_plain(interaction.user), True)],
-            user=interaction.user, guild_id=interaction.guild_id,
-        )
+        await interaction.response.send_modal(ReceiptProductModal(interaction.message, default_product))
 
 
 class ShopOrdersCog(commands.Cog):
@@ -158,6 +284,48 @@ class ShopOrdersCog(commands.Cog):
             return await ctx.reply(f"Kênh hàng đợi hiện tại: {current}\nDùng: `.setqueue #kênh` để đổi.")
         save_cfg_queue_channel(channel.id)
         await ctx.reply(f"✅ Đã đặt kênh hàng đợi: {channel.mention}")
+
+    @commands.command(name="bxh", aliases=["leaderboard", "top"])
+    async def leaderboard_cmd(self, ctx: commands.Context):
+        """Dùng: .bxh — Bảng xếp hạng top 10 chi tiêu nhiều nhất trong server."""
+        spent = load_data().get("user_total_spent", {})
+        ranking = sorted(
+            ((uid, amt) for uid, amt in spent.items() if amt > 0),
+            key=lambda kv: kv[1], reverse=True,
+        )[:10]
+
+        if not ranking:
+            return await ctx.reply("📭 Chưa có ai chi tiêu gì trong server này cả.")
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for i, (uid, amount) in enumerate(ranking):
+            icon = medals[i] if i < 3 else "✨"
+            member = ctx.guild.get_member(int(uid))
+            name = member.mention if member else f"<@{uid}>"
+            lines.append(f"{icon} **Top {i + 1}:** {name} — Đã chi: **{fmt_amount(amount)}**")
+
+        embed = discord.Embed(
+            title="🏆 BẢNG XẾP HẠNG CHI TIÊU",
+            description="\n".join(lines),
+            color=0xF1C40F,
+            timestamp=datetime.now(timezone.utc),
+        )
+        if ctx.guild.icon:
+            embed.set_thumbnail(url=ctx.guild.icon.url)
+        embed.set_footer(text=f"{ctx.guild.name} • Cập nhật lúc")
+        await ctx.reply(embed=embed)
+
+    @commands.command(name="shoporderno")
+    async def shoporderno_cmd(self, ctx: commands.Context, number: int = None):
+        """Dùng: .shoporderno <số> — chỉnh số hóa đơn kế tiếp (vd để khớp hệ thống cũ)."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền.")
+        if number is None:
+            current = load_data().get("shop_order_counter", 0)
+            return await ctx.reply(f"Số hóa đơn hiện tại: `#{current}` — hóa đơn tiếp theo sẽ là `#{current + 1}`.\nDùng: `.shoporderno <số>` để đổi.")
+        set_shop_order_counter(number)
+        await ctx.reply(f"✅ Đã đặt số hóa đơn — hóa đơn tiếp theo sẽ là `#{number + 1}`.")
 
     @commands.command(name="shopbank")
     async def shopbank_cmd(self, ctx: commands.Context, *, args: str = None):
