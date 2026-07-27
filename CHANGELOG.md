@@ -1,5 +1,12 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.19.2] — 2026-07-27
+
+### 🐛 Sửa lỗi
+- `cogs/admin.py` — `.help` chưa liệt kê các lệnh mới của v4.19.0: `.bxh`/`.leaderboard`/`.top`, `.addlisting`, `.shoporderno`. Bổ sung vào mục `shoporders` (đổi tên hiển thị thành "Shop Orders (VietQR) & Bảng xếp hạng") và tạo mục mới `listings` (🛒 Sản phẩm) mô tả `.addlisting`, 2 nút trên bài đăng, và cách gán role ping riêng qua `.st`. Cập nhật cả embed tổng quan (`.help` không tham số) và alias (`.help bxh`, `.help listing`, `.help sanpham`, `.help forum` đều dẫn đúng mục).
+
+---
+
 ## [v4.19.1] — 2026-07-27
 
 ### 🐛 Sửa lỗi

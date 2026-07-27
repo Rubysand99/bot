@@ -468,14 +468,22 @@ class AdminCog(commands.Cog):
                 ]
             },
             "shoporders": {
-                "emoji": "🧾", "title": "Shop Orders (VietQR)",
+                "emoji": "🧾", "title": "Shop Orders (VietQR) & Bảng xếp hạng",
                 "fields": [
                     ("ℹ️ Giới thiệu",
                      "Tính năng thử nghiệm — bật/tắt qua `.st`. Khi bật, `.done <tiền>` (mục Ticket)\n"
                      "sẽ tự tạo mã QR VietQR động theo số tiền thay vì chỉ báo hoàn thành.", False),
                     ("⚙️ Cấu hình (admin, bắt buộc trước khi dùng)",
                      "`.shopbank <thông tin>` — Cài thông tin ngân hàng (tên NH, số TK, chủ TK...) để tạo QR\n"
-                     "`.setqueue #kênh` — Cài kênh hàng đợi đơn hàng cho seller (nút ✅ xác nhận đã xử lý)", False),
+                     "`.setqueue #kênh` — Cài kênh hàng đợi đơn hàng cho seller (nút ✅ xác nhận đã xử lý)\n"
+                     "`.shoporderno [số]` — Xem/đổi số hóa đơn kế tiếp (admin)\n"
+                     "Kênh Proof (nơi hóa đơn công khai được gửi) — cài trong `.st` → Proof Channel", False),
+                    ("🧾 Hóa đơn công khai",
+                     "Staff bấm ✅ trên đơn hàng ở kênh hàng đợi → nhập tên/mã sản phẩm →\n"
+                     "bot tự gửi hóa đơn (số hóa đơn tăng dần, nội dung CK tự sinh) vào kênh Proof", False),
+                    ("🏆 Bảng xếp hạng",
+                     "`.bxh` (alias `.leaderboard`/`.top`) — Top 10 chi tiêu nhiều nhất trong server\n"
+                     "(cộng dồn tự động mỗi khi `.done`)", False),
                 ]
             },
             "admin": {
@@ -503,6 +511,23 @@ class AdminCog(commands.Cog):
                      "`/userinfo` `/serverinfo` `/botinfo`", False),
                 ]
             },
+            "listings": {
+                "emoji": "🛒", "title": "Sản phẩm (Forum Listing)",
+                "fields": [
+                    ("ℹ️ Giới thiệu",
+                     "Đăng sản phẩm dạng bài (thread) trong 1 kênh Forum, kèm nút Mua cho khách bấm.", False),
+                    ("📋 Lệnh (staff/seller)",
+                     '`.addlisting #forum "<IGN>" "<Giá>" "<Cape>" ["<Thông tin thêm>"]`\n'
+                     "Đính kèm ảnh preview vào cùng tin nhắn nếu muốn (không bắt buộc)\n"
+                     "Ví dụ: `.addlisting #stock \"test\" \"999K\" \"common, pan, copper\" \"Unban All\"`", False),
+                    ("🔘 Nút trên bài đăng",
+                     "🟢 Chưa bán / 🔴 Đã bán — staff/seller bấm để đổi trạng thái (tự khoá nút Mua khi Đã bán)\n"
+                     "🛒 Mua — khách bấm → bot tự tạo ticket kèm sẵn thông tin sản phẩm (IGN/giá)", False),
+                    ("🏷️ Role ping riêng (tuỳ chọn)",
+                     "Cấu hình role nhận ping khi có ticket Mua sản phẩm qua `.st` → Vai trò ticket\n"
+                     "→ chọn mục `🛒 Mua Sản Phẩm (Listing)`", False),
+                ]
+            },
         }
 
         # Normalize topic aliases
@@ -518,13 +543,14 @@ class AdminCog(commands.Cog):
             "admin": "admin", "adm": "admin",
             "seller": "seller",
             "shoporders": "shoporders", "shop": "shoporders", "qr": "shoporders",
-            "vietqr": "shoporders", "donhang": "shoporders", "order": "shoporders",
+            "vietqr": "shoporders", "donhang": "shoporders", "order": "shoporders", "bxh": "shoporders",
+            "listings": "listings", "listing": "listings", "sanpham": "listings", "forum": "listings",
         }
 
         if topic:
             key = ALIASES.get(topic.lower().strip())
             if not key:
-                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "invite", "dichvu", "giveaway", "mod", "ai", "log", "admin", "seller", "shoporders"])
+                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "invite", "dichvu", "giveaway", "mod", "ai", "log", "admin", "seller", "shoporders", "listings"])
                 return await ctx.reply(f"❌ Không tìm thấy mục `{topic}`.\nCác mục hợp lệ: {topics_list}")
             t = TOPICS[key]
             embed = discord.Embed(
@@ -540,7 +566,7 @@ class AdminCog(commands.Cog):
         # Embed tổng quan
         embed = discord.Embed(
             title="📖  Danh Sách Lệnh — TuyTam Bot",
-            description="Dùng `.help <mục>` để xem chi tiết từng phần.\nVí dụ: `.help mod` | `.help ticket` | `.help admin`",
+            description="Dùng `.help <mục>` để xem chi tiết từng phần.\nVí dụ: `.help mod` | `.help ticket` | `.help admin` | `.help listings`",
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
@@ -553,7 +579,8 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo` `.baocao`", inline=True)
         embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel`", inline=True)
         embed.add_field(name="🏪 Seller",    value="`.seller add/remove/list/panel`\n`.myseller`", inline=True)
-        embed.add_field(name="🧾 Shop Orders", value="`.shopbank` `.setqueue`\n*(dùng chung `.done` ở Ticket)*", inline=True)
+        embed.add_field(name="🧾 Shop Orders", value="`.shopbank` `.setqueue` `.shoporderno`\n`.bxh` — bảng xếp hạng\n*(dùng chung `.done` ở Ticket)*", inline=True)
+        embed.add_field(name="🛒 Sản phẩm",    value="`.addlisting #forum \"IGN\" \"Giá\" \"Cape\"`\n*(xem `.help listings`)*", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
 
