@@ -868,7 +868,7 @@ async def create_listing_ticket(interaction: discord.Interaction, ign: str, pric
         created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
         channel_name = f"mua-{number}"
 
-        role_ids   = get_ticket_role_ids("listing")
+        role_ids   = list(dict.fromkeys(get_ticket_role_ids("listing") + get_ticket_role_ids("listing_manage")))
         overwrites = _build_ticket_overwrites_multi(guild, interaction.user, role_ids)
         category   = discord.utils.get(guild.categories, id=get_cfg_category())
         channel    = await guild.create_text_channel(

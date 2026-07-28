@@ -77,7 +77,7 @@ class ListingView(GuildContextView):
             if getattr(item, "custom_id", None) == "shop_listing_buy":
                 item.disabled = not currently_sold  # đang chuyển SANG đã bán → khóa nút Mua
 
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.response.edit_message(embed=embed, view=self, attachments=interaction.message.attachments)
 
     @discord.ui.button(label="🛒 Mua", style=discord.ButtonStyle.primary, custom_id="shop_listing_buy")
     async def buy_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
