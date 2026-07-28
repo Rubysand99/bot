@@ -458,6 +458,8 @@ _ALL_TICKET_OPTIONS = [
     ("acc_pre",        "🎭 Acc Pre",           "Mua/Bán"),
     # listing (sản phẩm dạng Forum — nút 🛒 Mua, xem cogs/listings.py)
     ("listing",         "🛒 Mua Sản Phẩm (Listing)", "Mua/Bán"),
+    # auto buy — role được quyền đăng/sửa listing (KHÔNG phải role nhận ping ticket)
+    ("listing_manage",  "🛒 Quản lý Auto Buy",       "Auto Buy"),
 ]
 
 
@@ -475,6 +477,9 @@ _TICKET_GROUPS = [
         ("order_build",  "🏗️ Build"),
         ("acc_pre",      "🎭 Acc Pre"),
         ("listing",      "🛒 Mua Sản Phẩm (Listing)"),
+    ]),
+    ("🤖 Auto Buy", [
+        ("listing_manage", "🛒 Quản lý Auto Buy (đăng/sửa sản phẩm)"),
     ]),
 ]
 

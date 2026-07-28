@@ -854,8 +854,10 @@ async def create_direct_order_ticket(interaction: discord.Interaction, server_ke
 
 
 async def create_listing_ticket(interaction: discord.Interaction, ign: str, price: str, cape: str,
-                                 note: str, source_thread: discord.Thread | None):
-    """Tạo ticket mua khi khách bấm nút 🛒 Mua trên 1 listing sản phẩm (cogs/listings.py)."""
+                                 note: str, source_link: str | None):
+    """Tạo ticket mua khi khách bấm nút 🛒 Mua trên 1 listing sản phẩm (cogs/listings.py).
+    source_link: mention của thread (nếu listing đăng trong kênh Forum) hoặc jump_url của tin nhắn
+    listing gốc (nếu đăng trong kênh Text thường) — None nếu không xác định được."""
     guild = interaction.guild
     try:
         if await has_ticket(guild, interaction.user):
@@ -887,8 +889,8 @@ async def create_listing_ticket(interaction: discord.Interaction, ign: str, pric
             embed.add_field(name="👕  Cape", value=cape, inline=True)
         if note:
             embed.add_field(name="📝  Ghi chú", value=note, inline=False)
-        if source_thread:
-            embed.add_field(name="🔗  Listing gốc", value=source_thread.mention, inline=False)
+        if source_link:
+            embed.add_field(name="🔗  Listing gốc", value=source_link, inline=False)
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 

@@ -1,28 +1,32 @@
 """
-cogs/listings.py — Đăng sản phẩm dạng Forum (kiểu ảnh mẫu ViceVN) + nút 🛒 Mua.
+cogs/listings.py — Đăng sản phẩm dạng Forum HOẶC kênh chat thường (kiểu ảnh mẫu ViceVN) + nút 🛒 Mua.
 
 Cách hoạt động:
-1. Staff/seller gõ `.addlisting #forum-channel "<IGN>" "<Giá>" "<Cape>" ["<Thông tin thêm>"]`
-   trong cùng tin nhắn có thể đính kèm 1 ảnh preview (không bắt buộc).
-2. Bot tạo 1 thread mới trong kênh forum đó với embed sản phẩm + 2 nút:
-   - 🟢 Chưa bán / 🔴 Đã bán  — toggle, chỉ staff/seller bấm được
+1. Staff/seller/role Auto Buy gõ `.addlisting #kênh "<IGN>" "<Giá>" "<Cape>" ["<Thông tin thêm>"]`
+   — #kênh có thể là kênh Forum (tạo thread mới) HOẶC kênh Text thường (gửi thẳng tin nhắn).
+   Trong cùng tin nhắn có thể đính kèm 1 ảnh preview (không bắt buộc).
+2. Bot đăng embed sản phẩm + 2 nút:
+   - 🟢 Chưa bán / 🔴 Đã bán  — toggle, chỉ staff/seller/role Auto Buy bấm được
    - 🛒 Mua                   — khách bấm để tạo ticket mua (dùng lại luồng ticket.py),
                                 thông tin sản phẩm được copy sẵn vào ticket.
 3. ListingView KHÔNG gắn ID sản phẩm vào custom_id (giống QueueOrderView ở shop_orders.py) —
    view chỉ đọc/ghi trực tiếp embed của message được bấm, nên chỉ cần đăng ký 1 persistent
    view duy nhất lúc cog_load, không cần lưu danh sách listing vào Mongo.
+4. Quyền đăng/sửa listing: `is_staff_member()` (ADMIN + support role + seller role) HOẶC có 1 trong
+   các role được gán ở `.st` → Vai trò ticket → nhóm "🤖 Auto Buy" (key Mongo: "listing_manage").
 """
 
 import shlex
 import logging
+from typing import Union
 from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
 
 from core.data import (
-    is_staff_member, _uname_plain,
-    GuildContextView,
+    is_staff_member, _uname_plain, ADMIN_IDS,
+    get_ticket_role_ids, GuildContextView,
 )
 from cogs.logger import send_log
 from cogs.ticket import create_listing_ticket
@@ -33,6 +37,19 @@ COLOR_LISTING_AVAILABLE = 0x2ECC71
 COLOR_LISTING_SOLD = 0xE74C3C
 
 
+def can_manage_listing(member: discord.Member) -> bool:
+    """Staff/seller (is_staff_member) HOẶC role được gán riêng cho Auto Buy (.st → Vai trò ticket → 🤖 Auto Buy)."""
+    if is_staff_member(member):
+        return True
+    allowed_ids = get_ticket_role_ids("listing_manage")
+    if not allowed_ids:
+        return False
+    if member.id in allowed_ids:
+        return True
+    member_role_ids = {r.id for r in member.roles}
+    return any(rid in member_role_ids for rid in allowed_ids if rid not in ADMIN_IDS)
+
+
 class ListingView(GuildContextView):
     """Persistent view gắn trên mỗi bài đăng sản phẩm."""
 
@@ -41,8 +58,8 @@ class ListingView(GuildContextView):
 
     @discord.ui.button(label="🟢 Chưa bán", style=discord.ButtonStyle.success, custom_id="shop_listing_toggle")
     async def toggle_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_staff_member(interaction.user):
-            return await interaction.response.send_message("❌ Chỉ seller/staff mới đổi được trạng thái sản phẩm.", ephemeral=True)
+        if not can_manage_listing(interaction.user):
+            return await interaction.response.send_message("❌ Chỉ seller/staff/role Auto Buy mới đổi được trạng thái sản phẩm.", ephemeral=True)
 
         embed = interaction.message.embeds[0]
         currently_sold = bool(embed.color and embed.color.value == COLOR_LISTING_SOLD)
@@ -74,8 +91,12 @@ class ListingView(GuildContextView):
         note  = next((f.value for f in embed.fields if f.name == "📝 Thông tin thêm"), "")
 
         await interaction.response.defer(ephemeral=True)
-        source_thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
-        await create_listing_ticket(interaction, ign, price, cape, note, source_thread)
+        # Kênh Forum (thread) → mention thread. Kênh Text thường → link thẳng tới tin nhắn listing gốc.
+        if isinstance(interaction.channel, discord.Thread):
+            source_link = interaction.channel.mention
+        else:
+            source_link = interaction.message.jump_url
+        await create_listing_ticket(interaction, ign, price, cape, note, source_link)
 
 
 def build_listing_embed(ign: str, price: str, cape: str, note: str, author: discord.abc.User) -> discord.Embed:
@@ -102,19 +123,23 @@ class ListingsCog(commands.Cog):
         self.bot.add_view(ListingView())
 
     @commands.command(name="addlisting", aliases=["sanpham", "listing"])
-    async def addlisting_cmd(self, ctx: commands.Context, channel: discord.ForumChannel = None, *, args: str = None):
-        """Dùng: .addlisting #forum "<IGN>" "<Giá>" "<Cape>" ["<Thông tin thêm>"]
+    async def addlisting_cmd(
+        self, ctx: commands.Context,
+        channel: Union[discord.ForumChannel, discord.TextChannel] = None,
+        *, args: str = None,
+    ):
+        """Dùng: .addlisting #kênh "<IGN>" "<Giá>" "<Cape>" ["<Thông tin thêm>"]
+        #kênh có thể là kênh Forum (tạo thread mới) hoặc kênh Text thường (gửi thẳng tin nhắn).
         Đính kèm ảnh preview vào cùng tin nhắn nếu muốn (không bắt buộc)."""
-        if not is_staff_member(ctx.author):
-            return await ctx.reply("❌ Chỉ staff/seller mới có quyền đăng sản phẩm.")
+        if not can_manage_listing(ctx.author):
+            return await ctx.reply("❌ Chỉ staff/seller hoặc role được cấp quyền Auto Buy mới có quyền đăng sản phẩm.")
         if not channel or not args:
             return await ctx.reply(
-                '❌ Dùng: `.addlisting #forum "<IGN>" "<Giá>" "<Cape>" ["<Thông tin thêm>"]`\n'
+                '❌ Dùng: `.addlisting #kênh "<IGN>" "<Giá>" "<Cape>" ["<Thông tin thêm>"]`\n'
+                '#kênh có thể là kênh Forum (tạo thread) hoặc kênh Text thường (gửi thẳng tin nhắn).\n'
                 'Ví dụ: `.addlisting #stock "test" "999K" "common, pan, copper" "Unban All"`\n'
                 '💡 Đính kèm ảnh preview vào tin nhắn nếu muốn (không bắt buộc).'
             )
-        if not isinstance(channel, discord.ForumChannel):
-            return await ctx.reply("❌ Kênh đích phải là 1 Forum Channel (kênh chỉ có chủ đề).")
 
         try:
             parts = shlex.split(args)
@@ -122,7 +147,7 @@ class ListingsCog(commands.Cog):
             return await ctx.reply("❌ Cú pháp lỗi, kiểm tra lại dấu ngoặc kép.")
         if len(parts) < 3:
             return await ctx.reply(
-                '❌ Thiếu tham số. Dùng: `.addlisting #forum "<IGN>" "<Giá>" "<Cape>" ["<Thông tin thêm>"]`'
+                '❌ Thiếu tham số. Dùng: `.addlisting #kênh "<IGN>" "<Giá>" "<Cape>" ["<Thông tin thêm>"]`'
             )
 
         ign, price, cape = parts[0], parts[1], parts[2]
@@ -139,17 +164,23 @@ class ListingsCog(commands.Cog):
                 log.warning(f"[LISTINGS] ⚠️ Không đọc được ảnh đính kèm: {e}")
 
         try:
-            kwargs = {"name": f"{ign} | {price}"[:100], "embed": embed, "view": ListingView()}
-            if file:
-                kwargs["file"] = file
-            result = await channel.create_thread(**kwargs)
+            if isinstance(channel, discord.ForumChannel):
+                kwargs = {"name": f"{ign} | {price}"[:100], "embed": embed, "view": ListingView()}
+                if file:
+                    kwargs["file"] = file
+                result = await channel.create_thread(**kwargs)
+                target = result.thread if hasattr(result, "thread") else result
+            else:
+                kwargs = {"embed": embed, "view": ListingView()}
+                if file:
+                    kwargs["file"] = file
+                target = await channel.send(**kwargs)
         except discord.Forbidden:
-            return await ctx.reply("❌ Bot thiếu quyền tạo bài trong kênh forum này.")
+            return await ctx.reply("❌ Bot thiếu quyền đăng bài trong kênh này.")
         except Exception as e:
             return await ctx.reply(f"❌ Lỗi khi tạo listing: `{e}`")
 
-        thread = result.thread if hasattr(result, "thread") else result
-        await ctx.reply(f"✅ Đã đăng sản phẩm: {thread.mention}")
+        await ctx.reply(f"✅ Đã đăng sản phẩm: {target.mention}")
 
         await send_log(
             ctx.bot, "SHOP_LISTING_CREATE", "Sản phẩm mới được đăng",
@@ -157,7 +188,7 @@ class ListingsCog(commands.Cog):
                 ("📦 Sản phẩm", ign, True),
                 ("💰 Giá", price, True),
                 ("🧑 Người đăng", _uname_plain(ctx.author), True),
-                ("🧵 Thread", thread.mention, True),
+                ("📍 Vị trí", target.mention, True),
             ],
             user=ctx.author, guild_id=ctx.guild.id,
         )
