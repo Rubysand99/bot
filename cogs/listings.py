@@ -16,6 +16,7 @@ Cách hoạt động:
    các role được gán ở `.st` → Vai trò ticket → nhóm "🤖 Auto Buy" (key Mongo: "listing_manage").
 """
 
+import asyncio
 import shlex
 import logging
 from typing import Union
@@ -103,6 +104,7 @@ class ListingView(GuildContextView):
             # cả 2 → hiện dư 1 file rời ngoài embed). Ép edit 2 bước: xoá trắng hết đính kèm trước
             # (attachments=[]), rồi mới gắn file mới vào — đảm bảo không thể còn sót file cũ.
             await interaction.edit_original_response(attachments=[])
+            await asyncio.sleep(0.5)  # Chờ Discord xử lý xong bước xoá trước khi gắn ảnh mới (tránh race condition)
             edit_kwargs["attachments"] = [new_file]
         await interaction.edit_original_response(**edit_kwargs)
 
