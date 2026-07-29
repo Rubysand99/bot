@@ -16,7 +16,6 @@ Cách hoạt động:
    các role được gán ở `.st` → Vai trò ticket → nhóm "🤖 Auto Buy" (key Mongo: "listing_manage").
 """
 
-import asyncio
 import shlex
 import logging
 from typing import Union
@@ -62,7 +61,7 @@ class ListingView(GuildContextView):
         if not can_manage_listing(interaction.user):
             return await interaction.response.send_message("❌ Chỉ seller/staff/role Auto Buy mới đổi được trạng thái sản phẩm.", ephemeral=True)
 
-        # Defer ngay lập tức (ack trong <3s) — phần tải lại ảnh bên dưới có thể mất hơn 3s,
+        # Defer ngay lập tức (ack trong <3s) — fetch_message() bên dưới đôi khi mất hơn 3s,
         # nên KHÔNG dùng edit_message() trực tiếp (dễ timeout/silent-fail), sửa qua followup sau.
         await interaction.response.defer()
 
@@ -89,23 +88,14 @@ class ListingView(GuildContextView):
                 item.disabled = not currently_sold  # đang chuyển SANG đã bán → khóa nút Mua
 
         edit_kwargs = {"embed": embed, "view": self}
-        new_file = None
         if msg.attachments:
-            try:
-                # Phải re-upload lại file trong CÙNG request edit này thì Discord mới tiếp tục
-                # coi ảnh là "thuộc về" embed (attachment://<file>).
-                new_file = await msg.attachments[0].to_file()
-                embed.set_image(url=f"attachment://{new_file.filename}")
-            except Exception as e:
-                log.warning(f"[LISTINGS] ⚠️ Không tải lại được ảnh khi toggle: {e}")
-
-        if new_file:
-            # attachments=[file] không luôn thay thế sạch attachment CŨ (Discord đôi khi giữ lại
-            # cả 2 → hiện dư 1 file rời ngoài embed). Ép edit 2 bước: xoá trắng hết đính kèm trước
-            # (attachments=[]), rồi mới gắn file mới vào — đảm bảo không thể còn sót file cũ.
-            await interaction.edit_original_response(attachments=[])
-            await asyncio.sleep(0.5)  # Chờ Discord xử lý xong bước xoá trước khi gắn ảnh mới (tránh race condition)
-            edit_kwargs["attachments"] = [new_file]
+            # KHÔNG re-upload/tải lại file, KHÔNG xoá-rồi-gắn-lại (2 request riêng từng gây dư 1 ảnh
+            # rời phía trên embed do Discord phát 2 sự kiện update tách rời — client mobile render lỡ
+            # dở giữa 2 lần). Chỉ cần truyền THẲNG LẠI đối tượng Attachment gốc (không đổi) trong
+            # CÙNG 1 lần edit duy nhất — Discord giữ nguyên attachment, không tạo file mới, không
+            # phát sinh sự kiện dư thừa. embed.image vẫn tham chiếu đúng attachment://<tên file cũ>
+            # vì embed lấy lại từ msg.embeds[0], không bị đổi.
+            edit_kwargs["attachments"] = msg.attachments
         await interaction.edit_original_response(**edit_kwargs)
 
     @discord.ui.button(label="🛒 Mua", style=discord.ButtonStyle.primary, custom_id="shop_listing_buy")
