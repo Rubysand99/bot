@@ -1277,34 +1277,65 @@ class TicketCog(commands.Cog):
         await _close_ticket(ctx.channel, self.bot, closer=ctx.author)
 
     @commands.command(name="done")
-    async def done_cmd(self, ctx, amount_str: str = None):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Chỉ admin mới có quyền hoàn thành đơn.")
-        if not (ctx.channel.topic and "|" in ctx.channel.topic): return await ctx.reply("❌ Đây không phải kênh ticket.")
-        if not amount_str: return await ctx.reply("❌ Thiếu số tiền! Ví dụ: `.done 50k`, `.done 1tr5`")
+    async def done_cmd(self, ctx, *, args: str = None):
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền hoàn thành đơn.")
+        if not args:
+            return await ctx.reply(
+                "❌ Thiếu thông tin!\n"
+                "Trong ticket: `.done 50k`\n"
+                "Ngoài ticket: `.done @user 50k`"
+            )
+
+        # Parse buyer + amount
+        buyer = None
+        amount_str = args.strip()
+        if ctx.message.mentions:
+            buyer = ctx.message.mentions[0]
+            # Bỏ mọi dạng mention khỏi chuỗi để lấy amount
+            amount_str = amount_str.replace(buyer.mention, "").replace(f"<@!{buyer.id}>", "").replace(f"<@{buyer.id}>", "").strip()
+
+        is_ticket = bool(ctx.channel.topic and "|" in ctx.channel.topic)
+
+        if not buyer:
+            if not is_ticket:
+                return await ctx.reply("❌ Ngoài kênh ticket, cần mention user: `.done @user 50k`")
+            # Đọc buyer từ topic
+            parts = ctx.channel.topic.split("|")
+            try:
+                user_id = int(parts[0]) if parts[0].isdigit() else None
+            except Exception:
+                user_id = None
+            if not user_id:
+                return await ctx.reply("❌ Không đọc được thông tin buyer từ ticket.")
+            buyer = ctx.guild.get_member(user_id)
+            if not buyer:
+                return await ctx.reply(f"❌ Không tìm thấy buyer (ID: `{user_id}`).")
+
+        if not amount_str:
+            return await ctx.reply("❌ Thiếu số tiền! Ví dụ: `.done 50k`, `.done @user 1tr5`")
 
         amount = parse_amount(amount_str)
         if amount is None or amount <= 0:
             return await ctx.reply(f"❌ Số tiền `{amount_str}` không hợp lệ!")
 
-        # Parse topic: user_id||trade_type|item_key|status[|server_key]
-        parts = ctx.channel.topic.split("|")
-        try: user_id = int(parts[0]) if parts[0].isdigit() else None
-        except Exception: user_id = None
-        if not user_id: return await ctx.reply("❌ Không đọc được thông tin buyer từ ticket.")
-
-        trade_type = parts[2] if len(parts) > 2 else None
-        server_key = parts[5] if len(parts) > 5 else None  # slot 5: donut / kingmc / accpre / None
-
-        if trade_type not in ("sell", "buy"):
-            return await ctx.reply("ℹ️ Ticket dịch vụ / hỗ trợ không tính vào đơn mua hàng.")
-
-        buyer = ctx.guild.get_member(user_id)
-        if not buyer: return await ctx.reply(f"❌ Không tìm thấy buyer (ID: `{user_id}`).")
+        # Xác định server_key / trade_type (chỉ khi trong ticket và không có mention)
+        server_key = None
+        trade_type = None
+        if is_ticket and not ctx.message.mentions:
+            parts = ctx.channel.topic.split("|")
+            trade_type = parts[2] if len(parts) > 2 else None
+            server_key = parts[5] if len(parts) > 5 else None
+            if trade_type not in ("sell", "buy"):
+                return await ctx.reply("ℹ️ Ticket dịch vụ / hỗ trợ không tính vào đơn mua hàng.")
 
         data = load_data()
-        completed_key = f"completed_{ctx.channel.id}"
+        if is_ticket and not ctx.message.mentions:
+            completed_key = f"completed_{ctx.channel.id}"
+        else:
+            completed_key = f"completed_msg_{ctx.message.id}"
         if data.get(completed_key):
-            total = get_user_total_spent(user_id)
+            total = get_user_total_spent(buyer.id)
             return await ctx.reply(f"⚠️ Đơn này đã hoàn thành rồi!\nBuyer: {buyer.mention} — tổng: **{fmt_amount(total)}**")
 
         data[completed_key] = True
@@ -1312,11 +1343,11 @@ class TicketCog(commands.Cog):
 
         # Cộng tiền theo server (nếu có server_key) VÀ vào tổng chung
         if server_key:
-            totals     = add_user_spent_server(user_id, amount, server_key)
+            totals     = add_user_spent_server(buyer.id, amount, server_key)
             new_total  = totals["total"]
             srv_total  = totals["server_total"]
         else:
-            new_total = add_user_spent(user_id, amount)
+            new_total = add_user_spent(buyer.id, amount)
             srv_total = None
 
         # Label server để hiển thị
@@ -1331,12 +1362,14 @@ class TicketCog(commands.Cog):
         server_label = SERVER_LABELS.get(server_key, None)
 
         # Lưu lịch sử đơn
-        try:    opened_at = ctx.channel.created_at.isoformat()
-        except: opened_at = datetime.now(timezone.utc).isoformat()
+        try:
+            opened_at = ctx.channel.created_at.isoformat()
+        except Exception:
+            opened_at = datetime.now(timezone.utc).isoformat()
 
         save_ticket_record({
-            "ticket_name": ctx.channel.name,
-            "user_id":     user_id,
+            "ticket_name": ctx.channel.name if is_ticket else f"manual-done-{ctx.message.id}",
+            "user_id":     buyer.id,
             "username":    _uname_plain(buyer),
             "amount":      amount,
             "server_key":  server_key or "unknown",
@@ -1349,7 +1382,7 @@ class TicketCog(commands.Cog):
         from cogs.admin_views import auto_give_buy_roles
         role_cfg = await auto_give_buy_roles(ctx.guild, buyer, new_total)
 
-        # Tặng role "Đã Mua Hàng" cho người tạo ticket khi hoàn thành đơn
+        # Tặng role "Đã Mua Hàng"
         DONE_ROLE_ID = 1515393691206811901
         done_role = ctx.guild.get_role(DONE_ROLE_ID)
         done_role_given = False
@@ -1407,13 +1440,14 @@ class TicketCog(commands.Cog):
         if server_label and srv_total is not None:
             log_fields.append((f"📊 {server_label}", fmt_amount(srv_total), True))
         log_fields += [
-            ("🎫 Ticket",        ctx.channel.mention, True),
+            ("🎫 Kênh",        ctx.channel.mention, True),
             ("✍️ Xác nhận bởi", _uname_plain(ctx.author),  True),
         ]
         await send_log(
             ctx.bot, "TICKET_DONE", f"Hoàn Thành Đơn — {ctx.channel.name}",
             fields=log_fields,
             user=ctx.author,
+            guild_id=ctx.guild.id,
         )
 
     # ── SLASH COMMANDS ──
@@ -1426,41 +1460,102 @@ class TicketCog(commands.Cog):
         await interaction.response.send_message("🔒 Đang đóng ticket...", ephemeral=True)
         await _close_ticket(interaction.channel, self.bot, closer=interaction.user)
 
-    @discord.app_commands.command(name="done", description="Hoàn thành đơn hàng trong ticket")
-    @discord.app_commands.describe(amount="Số tiền giao dịch, vd: 50k, 1tr5, 200000")
-    async def slash_done(self, interaction: discord.Interaction, amount: str):
+    @discord.app_commands.command(name="done", description="Hoàn thành đơn hàng (trong ticket hoặc ngoài ticket)")
+    @discord.app_commands.describe(
+        amount="Số tiền giao dịch, vd: 50k, 1tr5, 200000",
+        user="Buyer (bỏ trống nếu dùng trong ticket — tự đọc từ topic)",
+    )
+    async def slash_done(self, interaction: discord.Interaction, amount: str, user: discord.Member = None):
         if interaction.user.id not in ADMIN_IDS:
             return await interaction.response.send_message("❌ Chỉ admin mới có quyền hoàn thành đơn.", ephemeral=True)
-        if not (interaction.channel.topic and "|" in interaction.channel.topic):
-            return await interaction.response.send_message("❌ Đây không phải kênh ticket.", ephemeral=True)
+
         parsed = parse_amount(amount)
         if not parsed or parsed <= 0:
             return await interaction.response.send_message(f"❌ Số tiền `{amount}` không hợp lệ!", ephemeral=True)
-        parts = interaction.channel.topic.split("|")
-        try: user_id = int(parts[0]) if parts[0].isdigit() else None
-        except Exception: user_id = None
-        if not user_id:
-            return await interaction.response.send_message("❌ Không đọc được thông tin buyer.", ephemeral=True)
-        trade_type = parts[2] if len(parts) > 2 else None
-        if trade_type not in ("sell", "buy"):
-            return await interaction.response.send_message("ℹ️ Ticket dịch vụ không tính đơn hàng.", ephemeral=True)
-        buyer = interaction.guild.get_member(user_id)
+
+        is_ticket = bool(interaction.channel.topic and "|" in interaction.channel.topic)
+        buyer = user
+
         if not buyer:
-            return await interaction.response.send_message(f"❌ Không tìm thấy buyer (ID: `{user_id}`).", ephemeral=True)
+            if not is_ticket:
+                return await interaction.response.send_message(
+                    "❌ Ngoài kênh ticket, cần chọn **user** trong option.", ephemeral=True
+                )
+            parts = interaction.channel.topic.split("|")
+            try:
+                user_id = int(parts[0]) if parts[0].isdigit() else None
+            except Exception:
+                user_id = None
+            if not user_id:
+                return await interaction.response.send_message("❌ Không đọc được thông tin buyer.", ephemeral=True)
+            buyer = interaction.guild.get_member(user_id)
+            if not buyer:
+                return await interaction.response.send_message(f"❌ Không tìm thấy buyer (ID: `{user_id}`).", ephemeral=True)
+
+        # Xác định server_key / trade_type (chỉ khi trong ticket và không có user param)
+        server_key = None
+        trade_type = None
+        if is_ticket and not user:
+            parts = interaction.channel.topic.split("|")
+            trade_type = parts[2] if len(parts) > 2 else None
+            server_key = parts[5] if len(parts) > 5 else None
+            if trade_type not in ("sell", "buy"):
+                return await interaction.response.send_message("ℹ️ Ticket dịch vụ không tính đơn hàng.", ephemeral=True)
+
         data = load_data()
-        completed_key = f"completed_{interaction.channel.id}"
+        if is_ticket and not user:
+            completed_key = f"completed_{interaction.channel.id}"
+        else:
+            completed_key = f"completed_msg_{interaction.id}"
         if data.get(completed_key):
-            total = get_user_total_spent(user_id)
-            return await interaction.response.send_message(f"⚠️ Đơn này đã hoàn thành rồi!\nTổng: **{fmt_amount(total)}**", ephemeral=True)
+            total = get_user_total_spent(buyer.id)
+            return await interaction.response.send_message(
+                f"⚠️ Đơn này đã hoàn thành rồi!\nTổng: **{fmt_amount(total)}**", ephemeral=True
+            )
         data[completed_key] = True
         save_data(data)
-        new_total = add_user_spent(user_id, parsed)
+
+        if server_key:
+            totals    = add_user_spent_server(buyer.id, parsed, server_key)
+            new_total = totals["total"]
+            srv_total = totals["server_total"]
+        else:
+            new_total = add_user_spent(buyer.id, parsed)
+            srv_total = None
+
+        SERVER_LABELS = {
+            "donut":  "🍩 DonutSMP",
+            "kingmc": "👑 KingMC",
+            "onemc":  "🎮 One MC",
+            "ff":     "🔥 Free Fire",
+            "accpre": "🎭 Acc Pre",
+            "listing": "🛒 Sản phẩm",
+        }
+        server_label = SERVER_LABELS.get(server_key, None)
+
+        save_ticket_record({
+            "ticket_name": interaction.channel.name if is_ticket else f"slash-done-{interaction.id}",
+            "user_id":     buyer.id,
+            "username":    _uname_plain(buyer),
+            "amount":      parsed,
+            "server_key":  server_key or "unknown",
+            "opened_at":   datetime.now(timezone.utc).isoformat(),
+            "closed_at":   datetime.now(timezone.utc).isoformat(),
+            "staff":       _uname_plain(interaction.user),
+            "staff_id":    interaction.user.id,
+        })
+
         from cogs.admin_views import auto_give_buy_roles
         role_cfg = await auto_give_buy_roles(interaction.guild, buyer, new_total)
+
         embed = discord.Embed(title="✅ Hoàn Thành Đơn", color=0x57F287, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="👤 Buyer",       value=buyer.mention,                    inline=True)
         embed.add_field(name="💵 Đơn này",     value=f"**{fmt_amount(parsed)}**",      inline=True)
         embed.add_field(name="💰 Tổng đã mua", value=f"**{fmt_amount(new_total)}**",   inline=True)
+
+        if server_label and srv_total is not None:
+            embed.add_field(name=f"📊 Tổng {server_label}", value=f"**{fmt_amount(srv_total)}**", inline=True)
+
         if role_cfg:
             role_obj = interaction.guild.get_role(role_cfg.get("role_id", 0))
             embed.add_field(name="🏆 Role", value=role_obj.mention if role_obj else role_cfg.get("label","?"), inline=False)
@@ -1478,10 +1573,11 @@ class TicketCog(commands.Cog):
                 ("👤 Buyer",       _uname_plain(buyer),   True),
                 ("💵 Đơn này",     fmt_amount(parsed),    True),
                 ("💰 Tổng",        fmt_amount(new_total), True),
-                ("🎫 Ticket",      interaction.channel.mention, True),
+                ("🎫 Kênh",        interaction.channel.mention, True),
                 ("✍️ Xác nhận",    _uname_plain(interaction.user),   True),
             ],
             user=interaction.user,
+            guild_id=interaction.guild_id,
         )
 
     # ══════════════════════════════════════════
