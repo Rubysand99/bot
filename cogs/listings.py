@@ -86,7 +86,16 @@ class ListingView(GuildContextView):
 
         edit_kwargs = {"embed": embed, "view": self}
         if msg.attachments:
-            edit_kwargs["attachments"] = msg.attachments  # giữ đúng liên kết ảnh ↔ embed
+            try:
+                # Phải re-upload lại file trong CÙNG request edit này thì Discord mới tiếp tục
+                # coi ảnh là "thuộc về" embed (attachment://<file>). Chỉ giữ nguyên Attachment cũ
+                # (không kèm file mới) khiến Discord tách ảnh ra hiện như file đính kèm rời.
+                file = await msg.attachments[0].to_file()
+                embed.set_image(url=f"attachment://{file.filename}")
+                edit_kwargs["attachments"] = [file]
+            except Exception as e:
+                log.warning(f"[LISTINGS] ⚠️ Không re-upload được ảnh khi toggle: {e}")
+                edit_kwargs["attachments"] = msg.attachments
         await interaction.response.edit_message(**edit_kwargs)
 
     @discord.ui.button(label="🛒 Mua", style=discord.ButtonStyle.primary, custom_id="shop_listing_buy")
