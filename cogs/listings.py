@@ -61,8 +61,6 @@ class ListingView(GuildContextView):
         if not can_manage_listing(interaction.user):
             return await interaction.response.send_message("❌ Chỉ seller/staff/role Auto Buy mới đổi được trạng thái sản phẩm.", ephemeral=True)
 
-        # Defer ngay lập tức (ack trong <3s) — fetch_message() bên dưới đôi khi mất hơn 3s,
-        # nên KHÔNG dùng edit_message() trực tiếp (dễ timeout/silent-fail), sửa qua followup sau.
         await interaction.response.defer()
 
         # interaction.message đôi khi là bản rút gọn (thiếu attachments) → fetch lại cho chắc.
@@ -72,54 +70,41 @@ class ListingView(GuildContextView):
             msg = interaction.message
 
         embed = msg.embeds[0] if msg.embeds else interaction.message.embeds[0]
-
-        # ── Fix lỗi dư ảnh dạng thô khi toggle ──
-        # Discord API trả embed.image.url dạng full CDN URL (không phải attachment://).
-        # Khi edit lại embed với full URL, Discord không nhận diện được attachment đã được
-        # dùng trong embed → hiển thị cả attachment thô (trên) lẫn embed (dưới).
-        # Chuyển về attachment://<filename> để Discord hiểu attachment này thuộc về embed
-        # và ẩn dạng thô đi.
-        if msg.attachments and embed.image and embed.image.url:
-            url = embed.image.url
-            if url.startswith(("https://cdn.discordapp.com/", "https://media.discordapp.net/")):
-                matched = False
-                for att in msg.attachments:
-                    if att.filename in url:
-                        embed.set_image(url=f"attachment://{att.filename}")
-                        matched = True
-                        break
-                if not matched:
-                    embed.set_image(url=f"attachment://{msg.attachments[0].filename}")
-        # ─────────────────────────────────────────
-
         currently_sold = bool(embed.color and embed.color.value == COLOR_LISTING_SOLD)
 
         if currently_sold:
             button.label = "🟢 Chưa bán"
             button.style = discord.ButtonStyle.success
-            embed.color = COLOR_LISTING_AVAILABLE
         else:
             button.label = "🔴 Đã bán"
             button.style = discord.ButtonStyle.danger
-            embed.color = COLOR_LISTING_SOLD
 
         for item in self.children:
             if getattr(item, "custom_id", None) == "shop_listing_buy":
                 item.disabled = not currently_sold  # đang chuyển SANG đã bán → khóa nút Mua
 
-        # Dùng msg.edit() (edit trực tiếp qua bot token) thay vì interaction.edit_original_response()
-        # (edit qua webhook interaction). Lý do: edit qua webhook BẮT BUỘC phải gửi lại "attachments"
-        # mỗi lần, dễ lỗi dư/append thay vì thay thế đúng attachment cũ. Với msg.edit() trực tiếp,
-        # Discord TỰ ĐỘNG giữ nguyên attachment nếu không đụng tới tham số này — không cần tải lại,
-        # không cần truyền lại attachment, tránh hẳn toàn bộ lỗi dư ảnh khi toggle.
-        await msg.edit(embed=embed, view=self)
+        # ── Fix lỗi dư ảnh: CHỈ edit view, KHÔNG edit embed ──
+        # Dù embed.color để đọc trạng thái ban đầu, nhưng KHÔNG ghi lại embed
+        # khi edit message. Giữ nguyên embed y như cũ để tránh Discord re-serialize
+        # embed.image.url (đã bị API chuyển thành CDN URL) gây dư ảnh dạng thô.
+        await msg.edit(view=self)
+        # ───────────────────────────────────────────────────
 
     @discord.ui.button(label="🛒 Mua", style=discord.ButtonStyle.primary, custom_id="shop_listing_buy")
     async def buy_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = interaction.message.embeds[0]
-        if embed.color and embed.color.value == COLOR_LISTING_SOLD:
+        # Xác định trạng thái đã bán bằng cách đọc label nút toggle
+        # (thay vì embed.color, vì embed không còn bị edit khi toggle nữa)
+        is_sold = False
+        for row in interaction.message.components:
+            for child in row.children:
+                if getattr(child, "custom_id", None) == "shop_listing_toggle":
+                    is_sold = "Đã bán" in (child.label or "")
+                    break
+
+        if is_sold:
             return await interaction.response.send_message("❌ Sản phẩm này đã được bán rồi.", ephemeral=True)
 
+        embed = interaction.message.embeds[0]
         ign   = next((f.value for f in embed.fields if f.name == "👤 IGN"), "?")
         price = next((f.value for f in embed.fields if f.name == "💰 Giá"), "?")
         cape  = next((f.value for f in embed.fields if f.name == "👕 Cape"), "")
