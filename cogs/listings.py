@@ -61,7 +61,14 @@ class ListingView(GuildContextView):
         if not can_manage_listing(interaction.user):
             return await interaction.response.send_message("❌ Chỉ seller/staff/role Auto Buy mới đổi được trạng thái sản phẩm.", ephemeral=True)
 
-        embed = interaction.message.embeds[0]
+        # interaction.message đôi khi là bản rút gọn (thiếu attachments) → fetch lại cho chắc,
+        # tránh trường hợp truyền attachments=[] rỗng làm Discord xoá mất ảnh khi edit.
+        try:
+            msg = await interaction.channel.fetch_message(interaction.message.id)
+        except Exception:
+            msg = interaction.message
+
+        embed = msg.embeds[0] if msg.embeds else interaction.message.embeds[0]
         currently_sold = bool(embed.color and embed.color.value == COLOR_LISTING_SOLD)
 
         if currently_sold:
@@ -77,7 +84,10 @@ class ListingView(GuildContextView):
             if getattr(item, "custom_id", None) == "shop_listing_buy":
                 item.disabled = not currently_sold  # đang chuyển SANG đã bán → khóa nút Mua
 
-        await interaction.response.edit_message(embed=embed, view=self, attachments=interaction.message.attachments)
+        edit_kwargs = {"embed": embed, "view": self}
+        if msg.attachments:
+            edit_kwargs["attachments"] = msg.attachments  # giữ đúng liên kết ảnh ↔ embed
+        await interaction.response.edit_message(**edit_kwargs)
 
     @discord.ui.button(label="🛒 Mua", style=discord.ButtonStyle.primary, custom_id="shop_listing_buy")
     async def buy_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
