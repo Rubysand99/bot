@@ -61,8 +61,11 @@ class ListingView(GuildContextView):
         if not can_manage_listing(interaction.user):
             return await interaction.response.send_message("❌ Chỉ seller/staff/role Auto Buy mới đổi được trạng thái sản phẩm.", ephemeral=True)
 
-        # interaction.message đôi khi là bản rút gọn (thiếu attachments) → fetch lại cho chắc,
-        # tránh trường hợp truyền attachments=[] rỗng làm Discord xoá mất ảnh khi edit.
+        # Defer ngay lập tức (ack trong <3s) — phần tải lại ảnh bên dưới có thể mất hơn 3s,
+        # nên KHÔNG dùng edit_message() trực tiếp (dễ timeout/silent-fail), sửa qua followup sau.
+        await interaction.response.defer()
+
+        # interaction.message đôi khi là bản rút gọn (thiếu attachments) → fetch lại cho chắc.
         try:
             msg = await interaction.channel.fetch_message(interaction.message.id)
         except Exception:
@@ -96,7 +99,7 @@ class ListingView(GuildContextView):
             except Exception as e:
                 log.warning(f"[LISTINGS] ⚠️ Không re-upload được ảnh khi toggle: {e}")
                 edit_kwargs["attachments"] = msg.attachments
-        await interaction.response.edit_message(**edit_kwargs)
+        await interaction.edit_original_response(**edit_kwargs)
 
     @discord.ui.button(label="🛒 Mua", style=discord.ButtonStyle.primary, custom_id="shop_listing_buy")
     async def buy_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
