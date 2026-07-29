@@ -1,5 +1,53 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.20.5] — 2026-07-27
+
+### 🐛 Sửa lỗi
+- `cogs/listings.py: ListingView.toggle_btn` — Xác nhận: sau khi đổi trạng thái, embed hiện ảnh đúng NHƯNG vẫn còn dư 1 file ảnh cũ nằm ngoài embed — tức `attachments=[file]` (v4.20.4) không thay thế sạch được attachment cũ như kỳ vọng. Sửa bằng cách ép edit **2 bước**: bước 1 gọi `edit_original_response(attachments=[])` xoá trắng toàn bộ đính kèm hiện có, bước 2 mới `edit_original_response(embed=..., attachments=[file mới])` để gắn ảnh vào — đảm bảo không thể còn sót file cũ vì đã bị xoá sạch trước khi thêm file mới.
+
+---
+
+## [v4.20.4] — 2026-07-27
+
+### 🐛 Sửa lỗi
+- `cogs/listings.py: ListingView.toggle_btn` — v4.20.3 vẫn còn tách ảnh dù đã re-upload lại file, dù log không báo lỗi gì. Nguyên nhân nghi vấn: `interaction.response.edit_message()` phải phản hồi trong 3 giây, nhưng bước `fetch_message()` + tải lại bytes ảnh (`to_file()`) rồi mới edit có thể vượt quá 3s (hoặc endpoint UPDATE_MESSAGE xử lý multipart upload không ổn định) → Discord fallback hiển thị sai mà không throw exception rõ ràng ở phía bot. Đổi sang `interaction.response.defer()` ack ngay lập tức, rồi `interaction.edit_original_response()` (endpoint followup, có thời gian xử lý dài hơn nhiều — token hợp lệ 15 phút thay vì 3 giây) để thực hiện phần tải/upload lại ảnh + đổi embed.
+
+---
+
+## [v4.20.3] — 2026-07-27
+
+### 🐛 Sửa lỗi
+- `cogs/listings.py: ListingView.toggle_btn` — Sửa đúng gốc lỗi ảnh tách ra ngoài embed (v4.20.1/v4.20.2 mới chỉ chặn được việc mất ảnh, chưa hết tách ảnh): Discord chỉ giữ ảnh "thuộc về" embed (không hiện thành file rời bên dưới) khi embed dùng `attachment://<file>` **và** file đó được **re-upload lại trong cùng request edit**. Bản trước chỉ giữ nguyên `Attachment` cũ (không kèm file mới) → Discord coi ảnh là 2 thứ tách biệt: link ảnh trong embed + file đính kèm cũ hiện riêng. Nay tải lại ảnh cũ qua `Attachment.to_file()` và up lại kèm mỗi lần bấm 🟢/🔴, đảm bảo ảnh luôn nằm đúng trong embed như lúc mới đăng.
+
+---
+
+## [v4.20.2] — 2026-07-27
+
+### 🐛 Sửa lỗi
+- `cogs/listings.py: ListingView.toggle_btn` — Fix v4.20.1 (`attachments=interaction.message.attachments`) gây **mất ảnh hoàn toàn** thay vì tách khỏi embed: `interaction.message` (lấy từ cache interaction) đôi khi trả về danh sách `attachments` rỗng dù ảnh vẫn tồn tại trên message thật, nên truyền `attachments=[]` rỗng khiến Discord xoá ảnh khi edit. Sửa bằng cách `fetch_message()` lại message đầy đủ trước khi edit để lấy đúng attachments thật, và chỉ truyền tham số `attachments` khi danh sách đó không rỗng (nếu rỗng thì bỏ qua tham số, để Discord tự giữ nguyên như mặc định thay vì ép xoá).
+
+---
+
+## [v4.20.1] — 2026-07-27
+
+### 🐛 Sửa lỗi
+- `cogs/listings.py: ListingView.toggle_btn` — Ảnh preview bị "tách" ra khỏi embed, hiện như file đính kèm rời bên dưới tin nhắn sau khi bấm nút 🟢/🔴 đổi trạng thái. Nguyên nhân: `interaction.response.edit_message()` không khai báo lại `attachments` hiện có, khiến Discord huỷ liên kết giữa ảnh và vị trí `image` trong embed dù ảnh không mất. Sửa bằng cách truyền `attachments=interaction.message.attachments` mỗi lần edit để giữ đúng liên kết.
+- `cogs/ticket.py: create_listing_ticket` — Role gán ở `.st` → Vai trò ticket → nhóm **🤖 Auto Buy** (`listing_manage`) không tự động thấy được kênh ticket khi khách bấm 🛒 Mua, vì kênh ticket chỉ đọc role ở nhóm **🛒 Mua Sản Phẩm (Listing)** (`listing`) riêng biệt. Nay ticket cộng gộp role từ **cả 2 nhóm** — chỉ cần gán role ở 1 trong 2 mục (hoặc cả 2) đều được thấy ticket.
+
+---
+
+## [v4.20.0] — 2026-07-27
+
+### ✨ Tính năng mới
+- `cogs/admin_views.py` — Thêm nhóm role mới **"🤖 Auto Buy"** trong `.st` → Vai trò ticket (key Mongo `listing_manage`, dùng chung cơ chế `_RolePickerView` với role ticket) — admin gán role được phép **đăng/sửa listing** (tách riêng khỏi role nhận ping khi có ticket mua, vốn đã có ở nhóm `listing`).
+- `cogs/listings.py` — `can_manage_listing()`: quyền đăng/toggle listing giờ = `is_staff_member()` **HOẶC** có 1 trong các role vừa gán ở mục Auto Buy — không còn giới hạn chỉ staff/seller mặc định.
+
+### ♻️ Thay đổi
+- `cogs/listings.py: addlisting_cmd` — `#kênh` giờ nhận cả **kênh Text thường** lẫn kênh Forum (trước đây bắt buộc Forum). Kênh Forum → vẫn tạo thread như cũ; kênh Text → gửi thẳng tin nhắn listing vào kênh.
+- `cogs/ticket.py: create_listing_ticket` — đổi tham số `source_thread: Thread` → `source_link: str`, để ticket "🔗 Listing gốc" hiển thị đúng cả 2 trường hợp: mention thread (Forum) hoặc link tin nhắn gốc (Text, qua `jump_url`) thay vì bị bỏ trống khi đăng ở kênh Text.
+
+---
+
 ## [v4.19.2] — 2026-07-27
 
 ### 🐛 Sửa lỗi

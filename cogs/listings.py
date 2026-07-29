@@ -88,17 +88,22 @@ class ListingView(GuildContextView):
                 item.disabled = not currently_sold  # đang chuyển SANG đã bán → khóa nút Mua
 
         edit_kwargs = {"embed": embed, "view": self}
+        new_file = None
         if msg.attachments:
             try:
                 # Phải re-upload lại file trong CÙNG request edit này thì Discord mới tiếp tục
-                # coi ảnh là "thuộc về" embed (attachment://<file>). Chỉ giữ nguyên Attachment cũ
-                # (không kèm file mới) khiến Discord tách ảnh ra hiện như file đính kèm rời.
-                file = await msg.attachments[0].to_file()
-                embed.set_image(url=f"attachment://{file.filename}")
-                edit_kwargs["attachments"] = [file]
+                # coi ảnh là "thuộc về" embed (attachment://<file>).
+                new_file = await msg.attachments[0].to_file()
+                embed.set_image(url=f"attachment://{new_file.filename}")
             except Exception as e:
-                log.warning(f"[LISTINGS] ⚠️ Không re-upload được ảnh khi toggle: {e}")
-                edit_kwargs["attachments"] = msg.attachments
+                log.warning(f"[LISTINGS] ⚠️ Không tải lại được ảnh khi toggle: {e}")
+
+        if new_file:
+            # attachments=[file] không luôn thay thế sạch attachment CŨ (Discord đôi khi giữ lại
+            # cả 2 → hiện dư 1 file rời ngoài embed). Ép edit 2 bước: xoá trắng hết đính kèm trước
+            # (attachments=[]), rồi mới gắn file mới vào — đảm bảo không thể còn sót file cũ.
+            await interaction.edit_original_response(attachments=[])
+            edit_kwargs["attachments"] = [new_file]
         await interaction.edit_original_response(**edit_kwargs)
 
     @discord.ui.button(label="🛒 Mua", style=discord.ButtonStyle.primary, custom_id="shop_listing_buy")
