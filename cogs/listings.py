@@ -87,16 +87,12 @@ class ListingView(GuildContextView):
             if getattr(item, "custom_id", None) == "shop_listing_buy":
                 item.disabled = not currently_sold  # đang chuyển SANG đã bán → khóa nút Mua
 
-        edit_kwargs = {"embed": embed, "view": self}
-        if msg.attachments:
-            # KHÔNG re-upload/tải lại file, KHÔNG xoá-rồi-gắn-lại (2 request riêng từng gây dư 1 ảnh
-            # rời phía trên embed do Discord phát 2 sự kiện update tách rời — client mobile render lỡ
-            # dở giữa 2 lần). Chỉ cần truyền THẲNG LẠI đối tượng Attachment gốc (không đổi) trong
-            # CÙNG 1 lần edit duy nhất — Discord giữ nguyên attachment, không tạo file mới, không
-            # phát sinh sự kiện dư thừa. embed.image vẫn tham chiếu đúng attachment://<tên file cũ>
-            # vì embed lấy lại từ msg.embeds[0], không bị đổi.
-            edit_kwargs["attachments"] = msg.attachments
-        await interaction.edit_original_response(**edit_kwargs)
+        # Dùng msg.edit() (edit trực tiếp qua bot token) thay vì interaction.edit_original_response()
+        # (edit qua webhook interaction). Lý do: edit qua webhook BẮT BUỘC phải gửi lại "attachments"
+        # mỗi lần, dễ lỗi dư/append thay vì thay thế đúng attachment cũ. Với msg.edit() trực tiếp,
+        # Discord TỰ ĐỘNG giữ nguyên attachment nếu không đụng tới tham số này — không cần tải lại,
+        # không cần truyền lại attachment, tránh hẳn toàn bộ lỗi dư ảnh khi toggle.
+        await msg.edit(embed=embed, view=self)
 
     @discord.ui.button(label="🛒 Mua", style=discord.ButtonStyle.primary, custom_id="shop_listing_buy")
     async def buy_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
