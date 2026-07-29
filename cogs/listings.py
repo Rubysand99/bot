@@ -72,6 +72,26 @@ class ListingView(GuildContextView):
             msg = interaction.message
 
         embed = msg.embeds[0] if msg.embeds else interaction.message.embeds[0]
+
+        # ── Fix lỗi dư ảnh dạng thô khi toggle ──
+        # Discord API trả embed.image.url dạng full CDN URL (không phải attachment://).
+        # Khi edit lại embed với full URL, Discord không nhận diện được attachment đã được
+        # dùng trong embed → hiển thị cả attachment thô (trên) lẫn embed (dưới).
+        # Chuyển về attachment://<filename> để Discord hiểu attachment này thuộc về embed
+        # và ẩn dạng thô đi.
+        if msg.attachments and embed.image and embed.image.url:
+            url = embed.image.url
+            if url.startswith(("https://cdn.discordapp.com/", "https://media.discordapp.net/")):
+                matched = False
+                for att in msg.attachments:
+                    if att.filename in url:
+                        embed.set_image(url=f"attachment://{att.filename}")
+                        matched = True
+                        break
+                if not matched:
+                    embed.set_image(url=f"attachment://{msg.attachments[0].filename}")
+        # ─────────────────────────────────────────
+
         currently_sold = bool(embed.color and embed.color.value == COLOR_LISTING_SOLD)
 
         if currently_sold:
