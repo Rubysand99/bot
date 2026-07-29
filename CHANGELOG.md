@@ -1,5 +1,20 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.21.0] — 2026-07-27
+
+### ♻️ Thay đổi
+- `cogs/listings.py: ListingView` — **Đổi hướng xử lý nút trạng thái sản phẩm** sau nhiều lần vá không dứt điểm được lỗi ảnh tách/mất khi edit embed có đính kèm ảnh (v4.20.1 → v4.20.6). Từ nay bấm 🟢 Chưa bán/🔴 Đã bán **chỉ đổi label + màu của nút** (và khoá/mở nút 🛒 Mua) — **không đụng tới embed hay ảnh đính kèm nữa** (trước đây còn đổi cả màu viền embed theo trạng thái). Vì không còn edit embed/attachment nên né hoàn toàn nhóm lỗi Discord tách/mất ảnh khi edit — đổi lại, embed không còn đổi màu xanh/đỏ theo trạng thái (chỉ còn nút thể hiện).
+- `cogs/listings.py: toggle_btn/buy_btn` — Đọc đúng trạng thái "đã bán" từ `interaction.message.components` (dữ liệu thật của đúng tin nhắn bị bấm) thay vì từ `embed.color` hay từ `self.children`/`button` (object dùng CHUNG cho mọi bài đăng vì đây là persistent view — dùng sai sẽ lẫn trạng thái giữa các sản phẩm khác nhau khi có nhiều bài đăng cùng lúc).
+
+---
+
+## [v4.20.6] — 2026-07-27
+
+### 🐛 Sửa lỗi
+- `cogs/listings.py: ListingView.toggle_btn` — Xác nhận qua test trên Discord Mobile: lỗi dư 1 file đính kèm nằm phía TRÊN embed chỉ xảy ra ở lần bấm đầu, bấm lần 2 (chiều ngược lại) thì tự hết — cho thấy 2 bước edit (xoá trắng → gắn file mới, thêm ở v4.20.5) chạy quá sát nhau khiến Discord xử lý chưa kịp (race condition). Thêm `await asyncio.sleep(0.6)` giữa 2 bước để đảm bảo Discord xử lý xong việc xoá đính kèm cũ trước khi request gắn file mới được gửi.
+
+---
+
 ## [v4.20.5] — 2026-07-27
 
 ### 🐛 Sửa lỗi

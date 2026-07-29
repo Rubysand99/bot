@@ -61,16 +61,18 @@ class ListingView(GuildContextView):
         if not can_manage_listing(interaction.user):
             return await interaction.response.send_message("❌ Chỉ seller/staff/role Auto Buy mới đổi được trạng thái sản phẩm.", ephemeral=True)
 
-        await interaction.response.defer()
-
-        # interaction.message đôi khi là bản rút gọn (thiếu attachments) → fetch lại cho chắc.
-        try:
-            msg = await interaction.channel.fetch_message(interaction.message.id)
-        except Exception:
-            msg = interaction.message
-
-        embed = msg.embeds[0] if msg.embeds else interaction.message.embeds[0]
-        currently_sold = bool(embed.color and embed.color.value == COLOR_LISTING_SOLD)
+        # CHỈ đổi label/màu nút — KHÔNG đụng embed/ảnh/attachment (né hoàn toàn nhóm lỗi
+        # Discord tách/mất ảnh khi edit embed có ảnh đính kèm).
+        #
+        # Vì đây là persistent view dùng CHUNG cho mọi bài đăng sản phẩm, `self`/`button` là
+        # object dùng lại giữa các tin nhắn khác nhau — KHÔNG được suy trạng thái hiện tại từ
+        # `button.style`, phải đọc đúng trạng thái thật của tin nhắn bị bấm qua
+        # `interaction.message.components`.
+        currently_sold = False
+        for row in interaction.message.components:
+            for comp in row.children:
+                if getattr(comp, "custom_id", None) == "shop_listing_toggle":
+                    currently_sold = (comp.style == discord.ButtonStyle.danger)
 
         if currently_sold:
             button.label = "🟢 Chưa bán"
@@ -83,26 +85,16 @@ class ListingView(GuildContextView):
             if getattr(item, "custom_id", None) == "shop_listing_buy":
                 item.disabled = not currently_sold  # đang chuyển SANG đã bán → khóa nút Mua
 
-        # ── Fix lỗi dư ảnh: CHỈ edit view, KHÔNG edit embed ──
-        # Dù embed.color để đọc trạng thái ban đầu, nhưng KHÔNG ghi lại embed
-        # khi edit message. Giữ nguyên embed y như cũ để tránh Discord re-serialize
-        # embed.image.url (đã bị API chuyển thành CDN URL) gây dư ảnh dạng thô.
-        await msg.edit(view=self)
-        # ───────────────────────────────────────────────────
+        await interaction.response.edit_message(view=self)
 
     @discord.ui.button(label="🛒 Mua", style=discord.ButtonStyle.primary, custom_id="shop_listing_buy")
     async def buy_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Xác định trạng thái đã bán bằng cách đọc label nút toggle
-        # (thay vì embed.color, vì embed không còn bị edit khi toggle nữa)
-        is_sold = False
+        # Đọc trạng thái thật từ tin nhắn (lý do xem comment ở toggle_btn) thay vì embed.color
+        # (không còn đổi màu embed theo trạng thái nữa — xem toggle_btn).
         for row in interaction.message.components:
-            for child in row.children:
-                if getattr(child, "custom_id", None) == "shop_listing_toggle":
-                    is_sold = "Đã bán" in (child.label or "")
-                    break
-
-        if is_sold:
-            return await interaction.response.send_message("❌ Sản phẩm này đã được bán rồi.", ephemeral=True)
+            for comp in row.children:
+                if getattr(comp, "custom_id", None) == "shop_listing_toggle" and comp.style == discord.ButtonStyle.danger:
+                    return await interaction.response.send_message("❌ Sản phẩm này đã được bán rồi.", ephemeral=True)
 
         embed = interaction.message.embeds[0]
         ign   = next((f.value for f in embed.fields if f.name == "👤 IGN"), "?")
