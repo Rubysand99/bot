@@ -28,6 +28,7 @@ from core.data import (
     add_pending_sold_buyer, get_pending_sold_buyer, get_all_pending_sold_buyer,
     remove_pending_sold_buyer, set_pending_sold_buyer_dm, mark_pending_sold_buyer_escalated,
     get_cfg_shop_orders_enabled, set_cfg_shop_orders_enabled,
+    get_embed_template, get_embed_templates, delete_embed_template,
     GuildContextView as View, GuildContextModal as Modal,
 )
 from cogs.seller import is_active_seller
@@ -39,6 +40,7 @@ from cogs.admin_views import (
     _detect_channel_parts, _rebuild_name,
     _DEFAULT_PRICE_SECTIONS,
     MkChannelView,
+    EmbedAnnounceView, EmbedAnnounceModal, build_embed_from_payload,
 )
 
 BOT_VERSION = "4.13.1"
@@ -506,6 +508,16 @@ class AdminCog(commands.Cog):
                      "`.rename #kênh <tên mới>` — Đổi tên kênh\n"
                      "`.setperm #kênh @role <quyền>` — Cài quyền kênh\n"
                      "`.mkchannel` — Tạo kênh (chọn loại / danh mục / public-private / khoá)", False),
+                    ("📢 Thông báo",
+                     "`.embed [#kênh] [everyone|here]` (alias `.thongbao`/`.announce`) — Nhấn nút để "
+                     "soạn embed (tiêu đề/nội dung/màu/ảnh lớn/thumbnail/footer) ngay lúc dùng lệnh, "
+                     "gửi vào kênh chỉ định (mặc định kênh hiện tại). Staff dùng được; ping "
+                     "@everyone/@here chỉ dành cho admin\n"
+                     "`.embeduse <tên> [#kênh] [everyone|here]` — Gửi lại 1 mẫu đã lưu (lưu qua nút "
+                     "💾 sau khi `.embed` gửi xong)\n"
+                     "`.embedlist` (alias `.dsmautb`) — Xem danh sách mẫu đã lưu\n"
+                     "`.embeddel <tên>` — Xoá 1 mẫu\n"
+                     "`/embed` `/embeduse` `/embedlist` — Tương tự bản slash, `/embed` mở form soạn ngay lập tức", False),
                     ("🔷 Slash commands",
                      "`/clear` `/addrole` `/removerole` `/ping`\n"
                      "`/userinfo` `/serverinfo` `/botinfo`", False),
@@ -666,6 +678,88 @@ class AdminCog(commands.Cog):
         embed  = discord.Embed(title="🏓 Pong!", description=f"Độ trễ: **{lat}ms** — {status}", color=color)
         await ctx.reply(embed=embed)
 
+    def _resolve_embed_ping(self, user, raw: str | None) -> tuple[str | None, str | None]:
+        """'everyone'/'here' → nội dung ping thật. Chỉ ADMIN_IDS được ping
+        @everyone/@here (staff thường vẫn gửi/soạn embed được, chỉ không kèm ping)."""
+        if not raw:
+            return None, None
+        m = raw.strip().lstrip("@").lower()
+        if m not in ("everyone", "here"):
+            return None, None
+        if user.id not in ADMIN_IDS:
+            return None, "⚠️ Chỉ admin mới được ping @everyone/@here — thông báo sẽ gửi **không kèm ping**."
+        return f"@{m}", None
+
+    # ── .embed — gửi thông báo dạng embed, nội dung tự soạn lúc dùng lệnh ──
+    @commands.command(name="embed", aliases=["thongbao", "announce"])
+    async def embed_cmd(self, ctx, channel: discord.TextChannel = None, mention: str = None):
+        if not is_staff_member(ctx.author):
+            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+        target = channel or ctx.channel
+        ping, warn = self._resolve_embed_ping(ctx.author, mention)
+        view = EmbedAnnounceView(target, ping)
+        msg = (
+            f"📝 Nhấn nút bên dưới để soạn nội dung thông báo gửi tới {target.mention}"
+            + (f" (kèm `{ping}`)" if ping else "") + "."
+        )
+        if warn:
+            msg += f"\n{warn}"
+        await ctx.reply(msg, view=view)
+
+    # ── .embeduse — gửi lại 1 mẫu embed đã lưu ──
+    @commands.command(name="embeduse", aliases=["mautb"])
+    async def embeduse_cmd(self, ctx, name: str = None, channel: discord.TextChannel = None, mention: str = None):
+        if not is_staff_member(ctx.author):
+            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+        if not name:
+            return await ctx.reply("❌ Dùng: `.embeduse <tên mẫu> [#kênh] [everyone|here]`\nXem danh sách mẫu bằng `.embedlist`.")
+        payload = get_embed_template(name.strip().lower())
+        if not payload:
+            return await ctx.reply(f"❌ Không tìm thấy mẫu `{name}`. Dùng `.embedlist` để xem danh sách.")
+        target = channel or ctx.channel
+        ping, warn = self._resolve_embed_ping(ctx.author, mention)
+        embed = build_embed_from_payload(payload, requester=ctx.author)
+        try:
+            await target.send(content=ping, embed=embed)
+        except discord.Forbidden:
+            return await ctx.reply(f"❌ Bot thiếu quyền gửi tin nhắn trong {target.mention}.")
+        reply = f"✅ Đã gửi mẫu `{name}` tới {target.mention}."
+        if warn:
+            reply += f"\n{warn}"
+        await ctx.reply(reply)
+        await send_log(
+            self.bot, "ADMIN", "Gửi thông báo (mẫu embed)",
+            fields=[("📣 Kênh", target.mention, True), ("🏷️ Mẫu", name, True), ("🛡️ Người gửi", str(ctx.author), True)],
+            user=ctx.author, color=0x5865F2, guild_id=ctx.guild.id,
+        )
+
+    # ── .embedlist — xem danh sách mẫu đã lưu ──
+    @commands.command(name="embedlist", aliases=["dsmautb"])
+    async def embedlist_cmd(self, ctx):
+        if not is_staff_member(ctx.author):
+            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+        templates = get_embed_templates()
+        if not templates:
+            return await ctx.reply("📭 Server chưa có mẫu thông báo nào. Sau khi gửi `.embed`, nhấn nút 💾 để lưu làm mẫu.")
+        embed = discord.Embed(title="📋 Danh sách mẫu thông báo", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+        embed.description = "\n".join(
+            f"`{name}` — {p.get('title') or '(không tiêu đề)'}" for name, p in templates.items()
+        )[:4000]
+        embed.set_footer(text="Dùng .embeduse <tên> [#kênh] [everyone|here] để gửi lại")
+        await ctx.reply(embed=embed)
+
+    # ── .embeddel — xoá 1 mẫu đã lưu ──
+    @commands.command(name="embeddel", aliases=["xoamautb"])
+    async def embeddel_cmd(self, ctx, name: str = None):
+        if not is_staff_member(ctx.author):
+            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+        if not name:
+            return await ctx.reply("❌ Dùng: `.embeddel <tên mẫu>`")
+        if delete_embed_template(name.strip().lower()):
+            await ctx.reply(f"🗑️ Đã xoá mẫu `{name}`.")
+        else:
+            await ctx.reply(f"❌ Không tìm thấy mẫu `{name}`.")
+
     @commands.command(name="userinfo", aliases=["ui", "whois"])
     async def userinfo_cmd(self, ctx, member: discord.Member = None):
         m     = member or ctx.author
@@ -780,6 +874,101 @@ class AdminCog(commands.Cog):
         status = "Tốt 🟢" if lat < 100 else ("Bình thường 🟡" if lat < 200 else "Chậm 🔴")
         embed = discord.Embed(title="🏓 Pong!", description=f"Độ trễ: **{lat}ms** — {status}", color=color)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="embed", description="Soạn và gửi thông báo dạng embed")
+    @app_commands.describe(
+        channel="Kênh gửi thông báo (để trống = kênh hiện tại)",
+        mention="Ping kèm theo thông báo (tuỳ chọn, chỉ admin dùng được)",
+    )
+    @app_commands.choices(mention=[
+        app_commands.Choice(name="Không ping", value="none"),
+        app_commands.Choice(name="@everyone", value="everyone"),
+        app_commands.Choice(name="@here", value="here"),
+    ])
+    async def slash_embed(
+        self, interaction: discord.Interaction,
+        channel: discord.TextChannel = None,
+        mention: app_commands.Choice[str] = None,
+    ):
+        if not is_staff_member(interaction.user):
+            return await interaction.response.send_message("❌ Bạn không có quyền dùng lệnh này.", ephemeral=True)
+        target = channel or interaction.channel
+        raw = mention.value if mention else None
+        ping, warn = self._resolve_embed_ping(interaction.user, raw)
+        if warn:
+            # send_modal phải là response ĐẦU TIÊN cho slash command — gửi cảnh báo
+            # qua followup ephemeral SAU khi modal đã mở, không gộp chung được.
+            await interaction.response.send_modal(EmbedAnnounceModal(target, ping))
+            await interaction.followup.send(warn, ephemeral=True)
+        else:
+            await interaction.response.send_modal(EmbedAnnounceModal(target, ping))
+
+    @app_commands.command(name="embeduse", description="Gửi lại 1 mẫu thông báo đã lưu")
+    @app_commands.describe(
+        name="Tên mẫu (xem qua .embedlist / /embedlist)",
+        channel="Kênh gửi thông báo (để trống = kênh hiện tại)",
+        mention="Ping kèm theo thông báo (tuỳ chọn, chỉ admin dùng được)",
+    )
+    @app_commands.choices(mention=[
+        app_commands.Choice(name="Không ping", value="none"),
+        app_commands.Choice(name="@everyone", value="everyone"),
+        app_commands.Choice(name="@here", value="here"),
+    ])
+    async def slash_embeduse(
+        self, interaction: discord.Interaction, name: str,
+        channel: discord.TextChannel = None,
+        mention: app_commands.Choice[str] = None,
+    ):
+        if not is_staff_member(interaction.user):
+            return await interaction.response.send_message("❌ Bạn không có quyền dùng lệnh này.", ephemeral=True)
+        payload = get_embed_template(name.strip().lower())
+        if not payload:
+            return await interaction.response.send_message(f"❌ Không tìm thấy mẫu `{name}`.", ephemeral=True)
+        target = channel or interaction.channel
+        raw = mention.value if mention else None
+        ping, warn = self._resolve_embed_ping(interaction.user, raw)
+        embed = build_embed_from_payload(payload, requester=interaction.user)
+        try:
+            await target.send(content=ping, embed=embed)
+        except discord.Forbidden:
+            return await interaction.response.send_message(
+                f"❌ Bot thiếu quyền gửi tin nhắn trong {target.mention}.", ephemeral=True
+            )
+        reply = f"✅ Đã gửi mẫu `{name}` tới {target.mention}."
+        if warn:
+            reply += f"\n{warn}"
+        await interaction.response.send_message(reply, ephemeral=True)
+        await send_log(
+            self.bot, "ADMIN", "Gửi thông báo (mẫu embed)",
+            fields=[("📣 Kênh", target.mention, True), ("🏷️ Mẫu", name, True), ("🛡️ Người gửi", str(interaction.user), True)],
+            user=interaction.user, color=0x5865F2, guild_id=interaction.guild_id,
+        )
+
+    @app_commands.command(name="embedlist", description="Xem danh sách mẫu thông báo đã lưu")
+    async def slash_embedlist(self, interaction: discord.Interaction):
+        if not is_staff_member(interaction.user):
+            return await interaction.response.send_message("❌ Bạn không có quyền dùng lệnh này.", ephemeral=True)
+        templates = get_embed_templates()
+        if not templates:
+            return await interaction.response.send_message(
+                "📭 Server chưa có mẫu thông báo nào. Sau khi gửi `.embed`, nhấn nút 💾 để lưu làm mẫu.", ephemeral=True
+            )
+        embed = discord.Embed(title="📋 Danh sách mẫu thông báo", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+        embed.description = "\n".join(
+            f"`{name}` — {p.get('title') or '(không tiêu đề)'}" for name, p in templates.items()
+        )[:4000]
+        embed.set_footer(text="Dùng /embeduse <tên> để gửi lại")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="embeddel", description="Xoá 1 mẫu thông báo đã lưu")
+    @app_commands.describe(name="Tên mẫu cần xoá")
+    async def slash_embeddel(self, interaction: discord.Interaction, name: str):
+        if not is_staff_member(interaction.user):
+            return await interaction.response.send_message("❌ Bạn không có quyền dùng lệnh này.", ephemeral=True)
+        if delete_embed_template(name.strip().lower()):
+            await interaction.response.send_message(f"🗑️ Đã xoá mẫu `{name}`.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Không tìm thấy mẫu `{name}`.", ephemeral=True)
 
     @app_commands.command(name="userinfo", description="Xem thông tin thành viên")
     @app_commands.describe(member="Thành viên (để trống = bản thân)")

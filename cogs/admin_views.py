@@ -2282,5 +2282,166 @@ class RolePermFlow:
 
 
 # ══════════════════════════════════════════
+# EMBED ANNOUNCE — .embed / /embed / .embeduse / .embedlist / .embeddel
+# ══════════════════════════════════════════
+# Staff tự soạn nội dung (tiêu đề, mô tả, màu, ảnh, thumbnail, footer) ngay lúc
+# dùng lệnh, thay vì phải sửa code mỗi lần muốn gửi thông báo mới. Có thể lưu
+# lại thành "mẫu" (template) trong DB của server để gửi lại nhiều lần sau này.
+
+def _parse_embed_color(raw: str):
+    """Chuyển chuỗi hex ('#5865F2', '5865F2'...) thành discord.Color.
+    Rỗng hoặc sai định dạng → màu mặc định của bot (không raise lỗi)."""
+    raw = (raw or "").strip().lstrip("#")
+    if not raw:
+        return discord.Color(0x5865F2)
+    try:
+        return discord.Color(int(raw, 16))
+    except Exception:
+        return discord.Color(0x5865F2)
+
+
+def _looks_like_url(raw: str) -> bool:
+    raw = (raw or "").strip()
+    return raw.startswith("http://") or raw.startswith("https://")
+
+
+def build_embed_from_payload(payload: dict, requester: discord.abc.User = None) -> discord.Embed:
+    """Dựng discord.Embed từ payload đã lưu (dict: title/description/color/
+    image/thumbnail/footer) — dùng chung cho lúc soạn mới (EmbedAnnounceModal)
+    và lúc gửi lại từ mẫu đã lưu (.embeduse)."""
+    embed = discord.Embed(
+        title=payload.get("title") or None,
+        description=payload.get("description") or None,
+        color=discord.Color(payload.get("color", 0x5865F2)),
+        timestamp=datetime.now(timezone.utc),
+    )
+    if payload.get("image"):
+        embed.set_image(url=payload["image"])
+    if payload.get("thumbnail"):
+        embed.set_thumbnail(url=payload["thumbnail"])
+    footer = payload.get("footer") or (f"Gửi bởi {requester}" if requester else None)
+    if footer:
+        icon = requester.display_avatar.url if requester else None
+        embed.set_footer(text=footer, icon_url=icon)
+    return embed
+
+
+class EmbedAnnounceModal(Modal, title="📝 Soạn Thông Báo"):
+    """Modal nhập nội dung embed — dùng chung cho cả `.embed` (qua nút bấm,
+    xem EmbedAnnounceView) và `/embed` (mở thẳng từ slash command)."""
+    title_input = TextInput(label="Tiêu đề", max_length=256, placeholder="vd: 📢 Thông báo bảo trì")
+    desc_input  = TextInput(
+        label="Nội dung", style=discord.TextStyle.paragraph, max_length=4000,
+        placeholder="Nội dung thông báo… hỗ trợ **markdown** như Discord bình thường",
+    )
+    color_input = TextInput(
+        label="Màu hex (để trống = mặc định)", required=False, max_length=7,
+        placeholder="vd: #5865F2",
+    )
+    images_input = TextInput(
+        label="Ảnh lớn + Thumbnail (mỗi dòng 1 URL)", style=discord.TextStyle.paragraph,
+        required=False, max_length=600,
+        placeholder="Dòng 1: ảnh lớn (để trống nếu không có)\nDòng 2: thumbnail (góc trên phải, tuỳ chọn)",
+    )
+    footer_input = TextInput(
+        label="Footer (để trống = tên người gửi)", required=False, max_length=100,
+    )
+
+    def __init__(self, channel: discord.abc.Messageable, mention: str | None = None):
+        super().__init__()
+        self.channel = channel
+        self.mention = mention
+
+    def _payload(self, requester: discord.abc.User) -> dict:
+        lines = [l.strip() for l in (self.images_input.value or "").splitlines() if l.strip()]
+        image     = lines[0] if len(lines) >= 1 and _looks_like_url(lines[0]) else None
+        thumbnail = lines[1] if len(lines) >= 2 and _looks_like_url(lines[1]) else None
+        return {
+            "title":       self.title_input.value.strip(),
+            "description": self.desc_input.value.strip(),
+            "color":       _parse_embed_color(self.color_input.value).value,
+            "image":       image,
+            "thumbnail":   thumbnail,
+            "footer":      (self.footer_input.value or "").strip() or None,
+        }
+
+    async def on_submit(self, interaction: discord.Interaction):
+        payload = self._payload(interaction.user)
+        embed = build_embed_from_payload(payload, requester=interaction.user)
+
+        try:
+            await self.channel.send(content=self.mention, embed=embed)
+        except discord.Forbidden:
+            return await interaction.response.send_message(
+                f"❌ Bot thiếu quyền gửi tin nhắn trong {self.channel.mention}.", ephemeral=True
+            )
+        except Exception as e:
+            return await interaction.response.send_message(f"❌ Lỗi khi gửi thông báo: {e}", ephemeral=True)
+
+        await interaction.response.send_message(
+            f"✅ Đã gửi thông báo tới {self.channel.mention}.\n"
+            f"-# Muốn gửi lại sau này? Nhấn nút bên dưới để lưu làm mẫu.",
+            view=SaveEmbedTemplateView(payload), ephemeral=True,
+        )
+        await send_log(
+            interaction.client, "ADMIN", "Gửi thông báo (embed)",
+            fields=[
+                ("📣 Kênh",   self.channel.mention,                 True),
+                ("📝 Tiêu đề", embed.title or "(trống)",             True),
+                ("🛡️ Người gửi", str(interaction.user),             True),
+            ],
+            user=interaction.user, color=0x5865F2, guild_id=interaction.guild_id,
+        )
+
+
+class EmbedAnnounceView(View):
+    """Nút mở EmbedAnnounceModal — dùng cho lệnh prefix `.embed` (lệnh gõ chữ
+    không có sẵn interaction để mở Modal thẳng như slash command, nên phải
+    gửi kèm 1 nút bấm trung gian)."""
+    def __init__(self, channel: discord.abc.Messageable, mention: str | None = None):
+        super().__init__(timeout=300)
+        self.channel = channel
+        self.mention = mention
+
+    @discord.ui.button(label="📝 Soạn nội dung", style=discord.ButtonStyle.primary)
+    async def compose(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(EmbedAnnounceModal(self.channel, self.mention))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
+class _SaveTemplateNameModal(Modal, title="💾 Lưu Làm Mẫu"):
+    name_input = TextInput(label="Tên mẫu (dùng lại qua .embeduse <tên>)", max_length=50, placeholder="vd: sale-thang")
+
+    def __init__(self, payload: dict):
+        super().__init__()
+        self.payload = payload
+
+    async def on_submit(self, interaction: discord.Interaction):
+        from core.data import save_embed_template
+        name = self.name_input.value.strip().lower()
+        if not name:
+            return await interaction.response.send_message("❌ Tên mẫu không được để trống.", ephemeral=True)
+        save_embed_template(name, self.payload)
+        await interaction.response.send_message(
+            f"✅ Đã lưu mẫu `{name}`. Gửi lại bằng `.embeduse {name}` hoặc `/embeduse`.", ephemeral=True
+        )
+
+
+class SaveEmbedTemplateView(View):
+    """Đính kèm dưới tin nhắn xác nhận sau khi gửi thông báo — cho phép lưu
+    lại nội dung vừa soạn thành mẫu để dùng lại (không cần gõ lại từ đầu)."""
+    def __init__(self, payload: dict):
+        super().__init__(timeout=180)
+        self.payload = payload
+
+    @discord.ui.button(label="💾 Lưu làm mẫu", style=discord.ButtonStyle.secondary)
+    async def save(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(_SaveTemplateNameModal(self.payload))
+
+
+# ══════════════════════════════════════════
 # COG
 # ══════════════════════════════════════════

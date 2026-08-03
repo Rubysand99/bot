@@ -493,6 +493,28 @@ def save_seller_qr(user_id: int, path: str):
 def get_all_seller_qr() -> dict:
     return load_data().get("seller_qr", {})
 
+# ── Embed templates (.embed → nút "💾 Lưu làm mẫu" / .embeduse) ──
+def get_embed_templates() -> dict:
+    return load_data().get("embed_templates", {})
+
+def get_embed_template(name: str) -> dict | None:
+    return get_embed_templates().get(name)
+
+def save_embed_template(name: str, payload: dict):
+    data = load_data()
+    data.setdefault("embed_templates", {})
+    data["embed_templates"][name] = payload
+    save_data(data)
+
+def delete_embed_template(name: str) -> bool:
+    data = load_data()
+    templates = data.get("embed_templates", {})
+    if name not in templates:
+        return False
+    del templates[name]
+    save_data(data)
+    return True
+
 # ── Seller category (mỗi seller có 1 category riêng) ──
 def get_seller_category(user_id: int) -> int:
     return load_data().get("seller_categories", {}).get(str(user_id), 0)
