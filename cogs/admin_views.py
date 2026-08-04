@@ -2328,7 +2328,8 @@ def build_embed_from_payload(payload: dict, requester: discord.abc.User = None) 
 
 class EmbedAnnounceModal(Modal, title="📝 Soạn Thông Báo"):
     """Modal nhập nội dung embed — dùng chung cho cả `.embed` (qua nút bấm,
-    xem EmbedAnnounceView) và `/embed` (mở thẳng từ slash command)."""
+    xem EmbedAnnounceView), `/embed` (mở thẳng từ slash command), và nút
+    "✏️ Sửa" trên bản xem trước (EmbedPreviewView, lúc đó `editing=True`)."""
     title_input = TextInput(label="Tiêu đề", max_length=256, placeholder="vd: 📢 Thông báo bảo trì")
     desc_input  = TextInput(
         label="Nội dung", style=discord.TextStyle.paragraph, max_length=4000,
@@ -2347,12 +2348,22 @@ class EmbedAnnounceModal(Modal, title="📝 Soạn Thông Báo"):
         label="Footer (để trống = tên người gửi)", required=False, max_length=100,
     )
 
-    def __init__(self, channel: discord.abc.Messageable, mention: str | None = None):
+    def __init__(self, channel: discord.abc.Messageable, mention: str | None = None,
+                 *, initial: dict | None = None, editing: bool = False):
         super().__init__()
         self.channel = channel
         self.mention = mention
+        self.editing = editing
+        if initial:
+            self.title_input.default = initial.get("title", "")
+            self.desc_input.default  = initial.get("description", "")
+            self.color_input.default = f"#{initial.get('color', 0x5865F2):06X}"
+            self.images_input.default = "\n".join(
+                u for u in (initial.get("image"), initial.get("thumbnail")) if u
+            )
+            self.footer_input.default = initial.get("footer") or ""
 
-    def _payload(self, requester: discord.abc.User) -> dict:
+    def _payload(self) -> dict:
         lines = [l.strip() for l in (self.images_input.value or "").splitlines() if l.strip()]
         image     = lines[0] if len(lines) >= 1 and _looks_like_url(lines[0]) else None
         thumbnail = lines[1] if len(lines) >= 2 and _looks_like_url(lines[1]) else None
@@ -2366,32 +2377,92 @@ class EmbedAnnounceModal(Modal, title="📝 Soạn Thông Báo"):
         }
 
     async def on_submit(self, interaction: discord.Interaction):
-        payload = self._payload(interaction.user)
+        payload = self._payload()
         embed = build_embed_from_payload(payload, requester=interaction.user)
+        preview = EmbedPreviewView(payload, self.channel, self.mention, interaction.user.id)
+        note = (
+            f"👁️ **Xem trước** — chỉ mình bạn thấy tin nhắn này. Gửi tới {self.channel.mention}"
+            + (f" (kèm `{self.mention}`)" if self.mention else "") + "."
+        )
+        if self.editing:
+            # Nút "✏️ Sửa" mở modal này từ 1 component interaction trên bản xem trước
+            # có sẵn → edit_message cập nhật lại đúng tin nhắn xem trước đó.
+            await interaction.response.edit_message(content=note, embed=embed, view=preview)
+        else:
+            await interaction.response.send_message(content=note, embed=embed, view=preview, ephemeral=True)
 
+
+class EmbedPreviewView(View):
+    """Bản xem trước — chỉ người soạn thấy (tin nhắn ephemeral). Có 3 nút:
+    Gửi thật vào kênh / Sửa lại nội dung (mở lại Modal, giữ nguyên dữ liệu cũ) /
+    Huỷ. Chưa có gì được gửi vào kênh cho tới khi bấm "📤 Gửi"."""
+    def __init__(self, payload: dict, channel: discord.abc.Messageable, mention: str | None, requester_id: int,
+                 *, template_name: str | None = None):
+        super().__init__(timeout=300)
+        self.payload = payload
+        self.channel = channel
+        self.mention = mention
+        self.requester_id = requester_id
+        self.template_name = template_name
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        ok = await super().interaction_check(interaction)
+        if not ok:
+            return False
+        if interaction.user.id != self.requester_id:
+            await interaction.response.send_message(
+                "❌ Chỉ người soạn mới thao tác được bản xem trước này.", ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="📤 Gửi", style=discord.ButtonStyle.success)
+    async def send_now(self, interaction: discord.Interaction, button: Button):
+        embed = build_embed_from_payload(self.payload, requester=interaction.user)
+        for item in self.children:
+            item.disabled = True
         try:
             await self.channel.send(content=self.mention, embed=embed)
         except discord.Forbidden:
-            return await interaction.response.send_message(
-                f"❌ Bot thiếu quyền gửi tin nhắn trong {self.channel.mention}.", ephemeral=True
+            return await interaction.response.edit_message(
+                content=f"❌ Bot thiếu quyền gửi tin nhắn trong {self.channel.mention}.", embed=None, view=self
             )
         except Exception as e:
-            return await interaction.response.send_message(f"❌ Lỗi khi gửi thông báo: {e}", ephemeral=True)
+            return await interaction.response.edit_message(content=f"❌ Lỗi khi gửi thông báo: {e}", embed=None, view=self)
 
-        await interaction.response.send_message(
-            f"✅ Đã gửi thông báo tới {self.channel.mention}.\n"
-            f"-# Muốn gửi lại sau này? Nhấn nút bên dưới để lưu làm mẫu.",
-            view=SaveEmbedTemplateView(payload), ephemeral=True,
+        await interaction.response.edit_message(
+            content=(
+                f"✅ Đã gửi thông báo tới {self.channel.mention}.\n"
+                f"-# Muốn gửi lại sau này? Nhấn nút bên dưới để lưu làm mẫu."
+            ),
+            embed=None, view=SaveEmbedTemplateView(self.payload),
         )
         await send_log(
-            interaction.client, "ADMIN", "Gửi thông báo (embed)",
+            interaction.client, "ADMIN",
+            "Gửi thông báo (mẫu embed)" if self.template_name else "Gửi thông báo (embed)",
             fields=[
-                ("📣 Kênh",   self.channel.mention,                 True),
-                ("📝 Tiêu đề", embed.title or "(trống)",             True),
-                ("🛡️ Người gửi", str(interaction.user),             True),
-            ],
+                ("📣 Kênh",   self.channel.mention,                     True),
+                ("📝 Tiêu đề", self.payload.get("title") or "(trống)",  True),
+                ("🛡️ Người gửi", str(interaction.user),                True),
+            ] + ([("🏷️ Mẫu", self.template_name, True)] if self.template_name else []),
             user=interaction.user, color=0x5865F2, guild_id=interaction.guild_id,
         )
+
+    @discord.ui.button(label="✏️ Sửa", style=discord.ButtonStyle.primary)
+    async def edit(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(
+            EmbedAnnounceModal(self.channel, self.mention, initial=self.payload, editing=True)
+        )
+
+    @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button: Button):
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content="🗑️ Đã huỷ soạn thông báo — chưa gửi gì cả.", embed=None, view=None)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
 
 
 class EmbedAnnounceView(View):
@@ -2406,6 +2477,33 @@ class EmbedAnnounceView(View):
     @discord.ui.button(label="📝 Soạn nội dung", style=discord.ButtonStyle.primary)
     async def compose(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(EmbedAnnounceModal(self.channel, self.mention))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
+class EmbedUsePreviewButtonView(View):
+    """Dùng cho lệnh prefix `.embeduse` — cũng như EmbedAnnounceView, lệnh gõ
+    chữ không có sẵn interaction để hiện thẳng bản xem trước ephemeral, nên
+    phải gửi kèm 1 nút bấm trung gian trước."""
+    def __init__(self, payload: dict, channel: discord.abc.Messageable, mention: str | None, template_name: str):
+        super().__init__(timeout=300)
+        self.payload = payload
+        self.channel = channel
+        self.mention = mention
+        self.template_name = template_name
+
+    @discord.ui.button(label="👁️ Xem trước & Gửi", style=discord.ButtonStyle.primary)
+    async def preview(self, interaction: discord.Interaction, button: Button):
+        embed = build_embed_from_payload(self.payload, requester=interaction.user)
+        note = (
+            f"👁️ **Xem trước mẫu `{self.template_name}`** — chỉ mình bạn thấy tin nhắn này. Gửi tới {self.channel.mention}"
+            + (f" (kèm `{self.mention}`)" if self.mention else "") + "."
+        )
+        view = EmbedPreviewView(dict(self.payload), self.channel, self.mention, interaction.user.id,
+                                 template_name=self.template_name)
+        await interaction.response.send_message(content=note, embed=embed, view=view, ephemeral=True)
 
     async def on_timeout(self):
         for item in self.children:

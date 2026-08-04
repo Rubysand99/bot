@@ -40,7 +40,7 @@ from cogs.admin_views import (
     _detect_channel_parts, _rebuild_name,
     _DEFAULT_PRICE_SECTIONS,
     MkChannelView,
-    EmbedAnnounceView, EmbedAnnounceModal, build_embed_from_payload,
+    EmbedAnnounceView, EmbedAnnounceModal, EmbedPreviewView, EmbedUsePreviewButtonView, build_embed_from_payload,
 )
 
 BOT_VERSION = "4.13.1"
@@ -510,11 +510,13 @@ class AdminCog(commands.Cog):
                      "`.mkchannel` — Tạo kênh (chọn loại / danh mục / public-private / khoá)", False),
                     ("📢 Thông báo",
                      "`.embed [#kênh] [everyone|here]` (alias `.thongbao`/`.announce`) — Nhấn nút để "
-                     "soạn embed (tiêu đề/nội dung/màu/ảnh lớn/thumbnail/footer) ngay lúc dùng lệnh, "
-                     "gửi vào kênh chỉ định (mặc định kênh hiện tại). Staff dùng được; ping "
+                     "soạn embed (tiêu đề/nội dung/màu/ảnh lớn/thumbnail/footer). Sau khi soạn xong sẽ "
+                     "hiện **bản xem trước** (chỉ mình bạn thấy) kèm 3 nút: 📤 Gửi thật vào kênh / "
+                     "✏️ Sửa lại (mở lại form, giữ nguyên nội dung cũ) / ❌ Huỷ. Staff dùng được; ping "
                      "@everyone/@here chỉ dành cho admin\n"
-                     "`.embeduse <tên> [#kênh] [everyone|here]` — Gửi lại 1 mẫu đã lưu (lưu qua nút "
-                     "💾 sau khi `.embed` gửi xong)\n"
+                     "`.embeduse <tên> [#kênh] [everyone|here]` — Gửi lại 1 mẫu đã lưu, cũng qua bước "
+                     "xem trước (nhấn 👁️ rồi mới 📤 Gửi; có thể ✏️ Sửa tạm trước khi gửi mà không ảnh "
+                     "hưởng mẫu gốc). Lưu mẫu qua nút 💾 sau khi gửi thành công\n"
                      "`.embedlist` (alias `.dsmautb`) — Xem danh sách mẫu đã lưu\n"
                      "`.embeddel <tên>` — Xoá 1 mẫu\n"
                      "`/embed` `/embeduse` `/embedlist` — Tương tự bản slash, `/embed` mở form soạn ngay lập tức", False),
@@ -706,7 +708,7 @@ class AdminCog(commands.Cog):
             msg += f"\n{warn}"
         await ctx.reply(msg, view=view)
 
-    # ── .embeduse — gửi lại 1 mẫu embed đã lưu ──
+    # ── .embeduse — gửi lại 1 mẫu embed đã lưu (qua bản xem trước) ──
     @commands.command(name="embeduse", aliases=["mautb"])
     async def embeduse_cmd(self, ctx, name: str = None, channel: discord.TextChannel = None, mention: str = None):
         if not is_staff_member(ctx.author):
@@ -718,20 +720,10 @@ class AdminCog(commands.Cog):
             return await ctx.reply(f"❌ Không tìm thấy mẫu `{name}`. Dùng `.embedlist` để xem danh sách.")
         target = channel or ctx.channel
         ping, warn = self._resolve_embed_ping(ctx.author, mention)
-        embed = build_embed_from_payload(payload, requester=ctx.author)
-        try:
-            await target.send(content=ping, embed=embed)
-        except discord.Forbidden:
-            return await ctx.reply(f"❌ Bot thiếu quyền gửi tin nhắn trong {target.mention}.")
-        reply = f"✅ Đã gửi mẫu `{name}` tới {target.mention}."
+        msg = f"🏷️ Mẫu `{name}` — nhấn nút bên dưới để xem trước rồi gửi tới {target.mention}" + (f" (kèm `{ping}`)" if ping else "") + "."
         if warn:
-            reply += f"\n{warn}"
-        await ctx.reply(reply)
-        await send_log(
-            self.bot, "ADMIN", "Gửi thông báo (mẫu embed)",
-            fields=[("📣 Kênh", target.mention, True), ("🏷️ Mẫu", name, True), ("🛡️ Người gửi", str(ctx.author), True)],
-            user=ctx.author, color=0x5865F2, guild_id=ctx.guild.id,
-        )
+            msg += f"\n{warn}"
+        await ctx.reply(msg, view=EmbedUsePreviewButtonView(payload, target, ping, name.strip().lower()))
 
     # ── .embedlist — xem danh sách mẫu đã lưu ──
     @commands.command(name="embedlist", aliases=["dsmautb"])
@@ -928,21 +920,14 @@ class AdminCog(commands.Cog):
         raw = mention.value if mention else None
         ping, warn = self._resolve_embed_ping(interaction.user, raw)
         embed = build_embed_from_payload(payload, requester=interaction.user)
-        try:
-            await target.send(content=ping, embed=embed)
-        except discord.Forbidden:
-            return await interaction.response.send_message(
-                f"❌ Bot thiếu quyền gửi tin nhắn trong {target.mention}.", ephemeral=True
-            )
-        reply = f"✅ Đã gửi mẫu `{name}` tới {target.mention}."
-        if warn:
-            reply += f"\n{warn}"
-        await interaction.response.send_message(reply, ephemeral=True)
-        await send_log(
-            self.bot, "ADMIN", "Gửi thông báo (mẫu embed)",
-            fields=[("📣 Kênh", target.mention, True), ("🏷️ Mẫu", name, True), ("🛡️ Người gửi", str(interaction.user), True)],
-            user=interaction.user, color=0x5865F2, guild_id=interaction.guild_id,
+        note = (
+            f"👁️ **Xem trước mẫu `{name}`** — chỉ mình bạn thấy tin nhắn này. Gửi tới {target.mention}"
+            + (f" (kèm `{ping}`)" if ping else "") + "."
         )
+        if warn:
+            note += f"\n{warn}"
+        view = EmbedPreviewView(dict(payload), target, ping, interaction.user.id, template_name=name.strip().lower())
+        await interaction.response.send_message(content=note, embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(name="embedlist", description="Xem danh sách mẫu thông báo đã lưu")
     async def slash_embedlist(self, interaction: discord.Interaction):
