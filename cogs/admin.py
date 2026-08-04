@@ -6,6 +6,7 @@ v4.0.0 — 2026-05-30
 
 import re as _re
 import asyncio
+import json
 from datetime import datetime, timezone
 
 import discord
@@ -28,7 +29,7 @@ from core.data import (
     add_pending_sold_buyer, get_pending_sold_buyer, get_all_pending_sold_buyer,
     remove_pending_sold_buyer, set_pending_sold_buyer_dm, mark_pending_sold_buyer_escalated,
     get_cfg_shop_orders_enabled, set_cfg_shop_orders_enabled,
-    get_embed_template, get_embed_templates, delete_embed_template,
+    get_embed_template, get_embed_templates, save_embed_template, delete_embed_template,
     GuildContextView as View, GuildContextModal as Modal,
 )
 from cogs.seller import is_active_seller
@@ -519,7 +520,9 @@ class AdminCog(commands.Cog):
                      "hưởng mẫu gốc). Lưu mẫu qua nút 💾 sau khi gửi thành công\n"
                      "`.embedlist` (alias `.dsmautb`) — Xem danh sách mẫu đã lưu\n"
                      "`.embeddel <tên>` — Xoá 1 mẫu\n"
-                     "`/embed` `/embeduse` `/embedlist` — Tương tự bản slash, `/embed` mở form soạn ngay lập tức", False),
+                     "`.embedimport` (alias `.nhapmautb`) — Đính kèm file `.json` để nhập nhiều mẫu cùng lúc, "
+                     "bot lưu thẳng vào MongoDB ngay, không cần restart\n"
+                     "`/embed` `/embeduse` `/embedlist` `/embedimport` — Tương tự bản slash, `/embed` mở form soạn ngay lập tức", False),
                     ("🔷 Slash commands",
                      "`/clear` `/addrole` `/removerole` `/ping`\n"
                      "`/userinfo` `/serverinfo` `/botinfo`", False),
@@ -752,6 +755,84 @@ class AdminCog(commands.Cog):
         else:
             await ctx.reply(f"❌ Không tìm thấy mẫu `{name}`.")
 
+    @staticmethod
+    def _color_from_raw(raw) -> int:
+        if isinstance(raw, int):
+            return raw
+        if isinstance(raw, str):
+            s = raw.strip().lstrip("#")
+            try:
+                return int(s, 16)
+            except ValueError:
+                pass
+        return 0x5865F2
+
+    def _clean_template_payload(self, raw: dict) -> dict:
+        if not isinstance(raw, dict):
+            raise ValueError("phải là object JSON")
+        title = str(raw.get("title", "")).strip()
+        desc  = str(raw.get("description", "")).strip()
+        if not title or not desc:
+            raise ValueError("thiếu 'title' hoặc 'description'")
+        return {
+            "title": title,
+            "description": desc,
+            "color": self._color_from_raw(raw.get("color", 0x5865F2)),
+            "image": (raw.get("image") or None),
+            "thumbnail": (raw.get("thumbnail") or None),
+            "footer": (raw.get("footer") or None),
+        }
+
+    async def _import_templates_from_json(self, raw_text: str) -> tuple[list[str], list[str]]:
+        """Parse JSON dạng {"tên_mẫu": {title/description/color/image/thumbnail/footer}, ...}
+        và lưu thẳng vào MongoDB qua save_embed_template() (bot đang chạy sẵn, có kết nối
+        DB rồi nên lưu ngay lập tức, không cần restart). Trả về (đã lưu, lỗi)."""
+        data = json.loads(raw_text)
+        if not isinstance(data, dict) or not data:
+            raise ValueError("File JSON phải là 1 object dạng {\"tên_mẫu\": {...}, ...}")
+        saved, failed = [], []
+        for name, payload in data.items():
+            try:
+                clean = self._clean_template_payload(payload)
+                save_embed_template(str(name).strip().lower(), clean)
+                saved.append(str(name).strip().lower())
+            except Exception as e:
+                failed.append(f"`{name}` ({e})")
+        return saved, failed
+
+    # ── .embedimport — nhập nhiều mẫu cùng lúc từ file .json đính kèm ──
+    @commands.command(name="embedimport", aliases=["nhapmautb"])
+    async def embedimport_cmd(self, ctx):
+        if not is_staff_member(ctx.author):
+            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+        if not ctx.message.attachments:
+            return await ctx.reply(
+                "❌ Đính kèm 1 file `.json` khi gõ lệnh này. Định dạng:\n"
+                "```json\n"
+                '{"ten-mau": {"title": "...", "description": "...", "color": "#5865F2", '
+                '"image": null, "thumbnail": null, "footer": null}}\n'
+                "```"
+            )
+        att = ctx.message.attachments[0]
+        if not att.filename.lower().endswith(".json"):
+            return await ctx.reply("❌ File phải có đuôi `.json`.")
+        try:
+            raw_text = (await att.read()).decode("utf-8")
+        except Exception as e:
+            return await ctx.reply(f"❌ Không đọc được file: {e}")
+        try:
+            saved, failed = await self._import_templates_from_json(raw_text)
+        except Exception as e:
+            return await ctx.reply(f"❌ File JSON không hợp lệ: {e}")
+
+        msg = (f"✅ Đã lưu {len(saved)} mẫu vào MongoDB: " + ", ".join(f"`{n}`" for n in saved)) if saved \
+              else "❌ Không lưu được mẫu nào."
+        if failed:
+            msg += "\n⚠️ Lỗi: " + "; ".join(failed)
+        if saved:
+            msg += "\nDùng ngay `.embeduse <tên>` — không cần restart bot."
+        await ctx.reply(msg)
+
     @commands.command(name="userinfo", aliases=["ui", "whois"])
     async def userinfo_cmd(self, ctx, member: discord.Member = None):
         m     = member or ctx.author
@@ -954,6 +1035,30 @@ class AdminCog(commands.Cog):
             await interaction.response.send_message(f"🗑️ Đã xoá mẫu `{name}`.", ephemeral=True)
         else:
             await interaction.response.send_message(f"❌ Không tìm thấy mẫu `{name}`.", ephemeral=True)
+
+    @app_commands.command(name="embedimport", description="Nhập nhiều mẫu thông báo cùng lúc từ file .json")
+    @app_commands.describe(file="File .json dạng {\"tên_mẫu\": {title, description, color, image, thumbnail, footer}}")
+    async def slash_embedimport(self, interaction: discord.Interaction, file: discord.Attachment):
+        if not is_staff_member(interaction.user):
+            return await interaction.response.send_message("❌ Bạn không có quyền dùng lệnh này.", ephemeral=True)
+        if not file.filename.lower().endswith(".json"):
+            return await interaction.response.send_message("❌ File phải có đuôi `.json`.", ephemeral=True)
+        try:
+            raw_text = (await file.read()).decode("utf-8")
+        except Exception as e:
+            return await interaction.response.send_message(f"❌ Không đọc được file: {e}", ephemeral=True)
+        try:
+            saved, failed = await self._import_templates_from_json(raw_text)
+        except Exception as e:
+            return await interaction.response.send_message(f"❌ File JSON không hợp lệ: {e}", ephemeral=True)
+
+        msg = (f"✅ Đã lưu {len(saved)} mẫu vào MongoDB: " + ", ".join(f"`{n}`" for n in saved)) if saved \
+              else "❌ Không lưu được mẫu nào."
+        if failed:
+            msg += "\n⚠️ Lỗi: " + "; ".join(failed)
+        if saved:
+            msg += "\nDùng ngay `/embeduse` — không cần restart bot."
+        await interaction.response.send_message(msg, ephemeral=True)
 
     @app_commands.command(name="userinfo", description="Xem thông tin thành viên")
     @app_commands.describe(member="Thành viên (để trống = bản thân)")

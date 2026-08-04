@@ -1,5 +1,17 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.22.0] — 2026-08-03
+
+### ✨ Tính năng mới
+- `cogs/admin.py`, `cogs/admin_views.py`, `core/data.py` — `.embed [#kênh] [everyone|here]` (alias `.thongbao`/`.announce`) và `/embed` — gửi thông báo dạng embed, nội dung (tiêu đề/mô tả/màu hex/ảnh lớn/thumbnail/footer) do người dùng tự nhập qua Modal ngay lúc dùng lệnh thay vì cố định trong code. `.embed` gửi kèm nút "📝 Soạn nội dung" (lệnh gõ chữ không có sẵn interaction để mở Modal thẳng), `/embed` mở Modal ngay lập tức.
+  - Quyền: **staff** (`is_staff_member`) soạn/gửi được; ping `@everyone`/`@here` chỉ dành cho **ADMIN_IDS** (staff thường vẫn gửi được nhưng không kèm ping, có cảnh báo).
+  - **Xem trước (preview)**: sau khi soạn, bot không gửi ngay mà hiện bản xem trước dạng ephemeral (chỉ người soạn thấy) kèm 3 nút — 📤 Gửi thật vào kênh / ✏️ Sửa lại (mở lại Modal, giữ nguyên nội dung cũ để chỉnh tiếp) / ❌ Huỷ. Chỉ người bấm nút mới thao tác được trên bản xem trước của chính mình. Áp dụng cho cả `.embeduse`/`/embeduse` (gửi mẫu) — sửa tạm trước khi gửi không ảnh hưởng tới mẫu đã lưu.
+  - **`.embedimport`/`/embedimport`**: đính kèm 1 file `.json` dạng `{"tên_mẫu": {title, description, color, image, thumbnail, footer}}` — bot tự lưu thẳng vào MongoDB qua kết nối đang chạy sẵn (không cần restart, không cần script rời).
+  - **Lưu mẫu**: sau khi bấm 📤 Gửi thành công, có nút "💾 Lưu làm mẫu" đặt tên và lưu lại nội dung vào DB theo server để dùng lại nhiều lần qua `.embeduse <tên>` / `/embeduse` (không cần soạn lại từ đầu). `.embedlist`/`/embedlist` xem danh sách, `.embeddel`/`/embeddel` xoá mẫu.
+  - Có log audit vào kênh log nhóm `admin` mỗi lần gửi.
+
+---
+
 ## [v4.21.0] — 2026-07-27
 
 ### ♻️ Thay đổi
