@@ -426,6 +426,7 @@ def _build_ticket_roles_embed(guild: discord.Guild | None = None) -> discord.Emb
         f"🔥 Free Fire → {_tag('order_ff')}",
         f"🏗️ Build      → {_tag('order_build')}",
         f"🎭 Acc Pre   → {_tag('acc_pre')}",
+        f"💎 Ruby Shop → {_tag('rubyshop')}",
     ]
     admin_lines = [f"<@{aid}> `(ID: {aid})`" for aid in ADMIN_IDS]
 
@@ -456,6 +457,8 @@ _ALL_TICKET_OPTIONS = [
     ("order_build",    "🏗️ Mua/Bán Base",     "Mua/Bán"),
     # acc pre
     ("acc_pre",        "🎭 Acc Pre",           "Mua/Bán"),
+    # ruby shop
+    ("rubyshop",       "💎 Ruby Shop",         "Mua/Bán"),
     # listing (sản phẩm dạng Forum — nút 🛒 Mua, xem cogs/listings.py)
     ("listing",         "🛒 Mua Sản Phẩm (Listing)", "Mua/Bán"),
     # auto buy — role được quyền đăng/sửa listing (KHÔNG phải role nhận ping ticket)
@@ -476,6 +479,7 @@ _TICKET_GROUPS = [
         ("order_ff",     "🔥 Free Fire"),
         ("order_build",  "🏗️ Build"),
         ("acc_pre",      "🎭 Acc Pre"),
+        ("rubyshop",     "💎 Ruby Shop"),
         ("listing",      "🛒 Mua Sản Phẩm (Listing)"),
     ]),
     ("🤖 Auto Buy", [

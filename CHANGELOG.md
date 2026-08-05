@@ -1,5 +1,12 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.23.2] — 2026-08-05
+
+### 🐛 Sửa lỗi
+- `cogs/admin_views.py` — `.settings`/`.st` → nút "🎫 Ticket Roles" chưa có **Ruby Shop** trong danh sách chọn (chỉ `.setrole rubyshop @role` bằng lệnh gõ chữ mới gán được, UI bấm nút thì không thấy). Đã thêm `rubyshop` vào `_TICKET_GROUPS` (dropdown chọn loại ticket) và `_build_ticket_roles_embed` (bảng hiển thị role hiện tại) — giờ gán role Ruby Shop qua nút bấm trong `.st` cũng được, không bắt buộc phải gõ `.setrole` nữa.
+
+---
+
 ## [v4.23.1] — 2026-08-05
 
 ### ✨ Cải tiến
