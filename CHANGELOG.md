@@ -1,5 +1,14 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.23.1] — 2026-08-05
+
+### ✨ Cải tiến
+- `cogs/ticket.py`, `core/data.py` — `.rubyoption`/`.rbopt`:
+  - Thêm thao tác **`edit <tên cũ> -> <tên mới>`** để đổi tên 1 dịch vụ Ruby Shop mà không mất vị trí trong danh sách (chặn trùng tên với lựa chọn khác).
+  - Hỗ trợ **gộp nhiều thao tác trong 1 lệnh**, phân tách bằng dấu phẩy: `.rbopt add A, add B, remove C, edit D -> E`. Mỗi thao tác báo kết quả riêng (✅/⚠️/❌/✏️/🗑️), lỗi ở 1 thao tác không chặn các thao tác còn lại.
+
+---
+
 ## [v4.23.0] — 2026-08-05
 
 ### ✨ Tính năng mới

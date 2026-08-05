@@ -542,6 +542,20 @@ def remove_ruby_shop_option(name: str) -> bool:
     save_data(data)
     return True
 
+def rename_ruby_shop_option(old_name: str, new_name: str) -> bool:
+    """Đổi tên 1 lựa chọn, giữ nguyên vị trí trong danh sách.
+    True nếu tìm thấy old_name; raise ValueError nếu new_name trùng lựa chọn khác."""
+    data = load_data()
+    opts = data.get("ruby_shop_options", [])
+    idx = next((i for i, o in enumerate(opts) if o.lower() == old_name.lower()), None)
+    if idx is None:
+        return False
+    if any(o.lower() == new_name.lower() for i, o in enumerate(opts) if i != idx):
+        raise ValueError(f"tên mới '{new_name}' đã trùng với 1 lựa chọn khác")
+    opts[idx] = new_name
+    save_data(data)
+    return True
+
 # ── Seller category (mỗi seller có 1 category riêng) ──
 def get_seller_category(user_id: int) -> int:
     return load_data().get("seller_categories", {}).get(str(user_id), 0)

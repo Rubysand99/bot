@@ -28,7 +28,7 @@ from core.data import (
     get_or_fetch_channel,
     BUILDER_BASE_ROLE_ID as _BUILDER_ROLE_ID,
     get_ticket_role_ids, set_ticket_role_ids, get_all_ticket_multi_roles,
-    get_ruby_shop_options, add_ruby_shop_option, remove_ruby_shop_option,
+    get_ruby_shop_options, add_ruby_shop_option, remove_ruby_shop_option, rename_ruby_shop_option,
     GuildContextView as View,
     set_current_guild,
 )
@@ -1795,20 +1795,33 @@ class TicketCog(commands.Cog):
     # ADMIN: DANH SÁCH DỊCH VỤ RUBY SHOP (.rubyoption)
     # ══════════════════════════════════════════
     @commands.command(name="rubyoption", aliases=["rbopt"])
-    async def rubyoption_cmd(self, ctx, action: str = None, *, name: str = None):
+    async def rubyoption_cmd(self, ctx, *, args: str = None):
         """
         Quản lý danh sách dịch vụ hiện ra cho user chọn trước khi tạo ticket
         Ruby Shop (nút 💎 Ruby Shop trên panel).
 
-        `.rubyoption add <tên>`    — thêm 1 lựa chọn
-        `.rubyoption remove <tên>` — xoá 1 lựa chọn
-        `.rubyoption list`         — xem danh sách hiện tại
+        `.rubyoption add <tên>`               — thêm 1 lựa chọn
+        `.rubyoption remove <tên>`             — xoá 1 lựa chọn
+        `.rubyoption edit <tên cũ> -> <tên mới>` — đổi tên 1 lựa chọn
+        `.rubyoption list`                     — xem danh sách hiện tại
+
+        Gộp nhiều thao tác trong 1 lệnh, phân tách bằng dấu phẩy:
+        `.rubyoption add A, add B, remove C, edit D -> E`
         """
         if not is_staff_member(ctx.author):
             return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
 
-        action = (action or "").strip().lower()
-        if action not in ("add", "remove", "del", "delete", "list"):
+        if not args or args.strip().lower() == "list":
+            if args and args.strip().lower() == "list":
+                options = get_ruby_shop_options()
+                embed = discord.Embed(
+                    title="💎 Danh sách dịch vụ Ruby Shop", color=0xE91E8C, timestamp=datetime.now(timezone.utc)
+                )
+                embed.description = "\n".join(f"{i+1}. {o}" for i, o in enumerate(options)) if options \
+                    else "*(chưa có lựa chọn nào — dùng `.rubyoption add <tên>` để thêm)*"
+                embed.set_footer(text=f"{len(options)}/25 lựa chọn")
+                return await ctx.reply(embed=embed)
+
             options = get_ruby_shop_options()
             listing = "\n".join(f"• {o}" for o in options) if options else "*(chưa có lựa chọn nào)*"
             return await ctx.reply(
@@ -1816,37 +1829,59 @@ class TicketCog(commands.Cog):
                 "**Cú pháp:**\n"
                 "`.rubyoption add <tên>` — thêm lựa chọn\n"
                 "`.rubyoption remove <tên>` — xoá lựa chọn\n"
-                "`.rubyoption list` — xem danh sách\n\n"
+                "`.rubyoption edit <tên cũ> -> <tên mới>` — đổi tên lựa chọn\n"
+                "`.rubyoption list` — xem danh sách\n"
+                "-# Gộp nhiều thao tác cùng lúc, cách nhau bằng dấu phẩy:\n"
+                "-# `.rubyoption add A, add B, remove C, edit D -> E`\n\n"
                 f"**Hiện có {len(options)} lựa chọn:**\n{listing}"
             )
 
-        if action == "list":
-            options = get_ruby_shop_options()
-            embed = discord.Embed(
-                title="💎 Danh sách dịch vụ Ruby Shop", color=0xE91E8C, timestamp=datetime.now(timezone.utc)
-            )
-            embed.description = "\n".join(f"{i+1}. {o}" for i, o in enumerate(options)) if options \
-                else "*(chưa có lựa chọn nào — dùng `.rubyoption add <tên>` để thêm)*"
-            embed.set_footer(text=f"{len(options)}/25 lựa chọn")
-            return await ctx.reply(embed=embed)
+        # ── Gộp nhiều thao tác: tách theo dấu phẩy, mỗi đoạn là 1 thao tác riêng ──
+        segments = [s.strip() for s in args.split(",") if s.strip()]
+        results: list[str] = []
 
-        if not name:
-            return await ctx.reply(f"❌ Thiếu tên dịch vụ! Ví dụ: `.rubyoption {action} Nạp Ruby`")
+        for seg in segments:
+            parts = seg.split(None, 1)
+            action = parts[0].strip().lower() if parts else ""
+            rest   = parts[1].strip() if len(parts) > 1 else ""
 
-        if action == "add":
-            try:
-                added = add_ruby_shop_option(name.strip())
-            except ValueError as e:
-                return await ctx.reply(f"❌ {e}")
-            if not added:
-                return await ctx.reply(f"❌ Lựa chọn `{name}` đã tồn tại rồi.")
-            return await ctx.reply(f"✅ Đã thêm lựa chọn **{name}** vào Ruby Shop.")
+            if action == "list":
+                results.append("ℹ️ Dùng `.rubyoption list` riêng để xem danh sách.")
+                continue
 
-        # remove / del / delete
-        if remove_ruby_shop_option(name.strip()):
-            await ctx.reply(f"🗑️ Đã xoá lựa chọn **{name}** khỏi Ruby Shop.")
-        else:
-            await ctx.reply(f"❌ Không tìm thấy lựa chọn `{name}`. Dùng `.rubyoption list` để xem danh sách.")
+            if action == "add":
+                if not rest:
+                    results.append("❌ `add` thiếu tên dịch vụ."); continue
+                try:
+                    added = add_ruby_shop_option(rest)
+                except ValueError as e:
+                    results.append(f"❌ `add {rest}` — {e}"); continue
+                results.append(f"✅ Thêm **{rest}**" if added else f"⚠️ **{rest}** đã tồn tại, bỏ qua")
+
+            elif action in ("remove", "del", "delete"):
+                if not rest:
+                    results.append("❌ `remove` thiếu tên dịch vụ."); continue
+                ok = remove_ruby_shop_option(rest)
+                results.append(f"🗑️ Xoá **{rest}**" if ok else f"❌ Không tìm thấy **{rest}** để xoá")
+
+            elif action in ("edit", "rename"):
+                if "->" not in rest:
+                    results.append(f"❌ `edit {rest}` — cần dạng `edit tên cũ -> tên mới`"); continue
+                old_name, new_name = (p.strip() for p in rest.split("->", 1))
+                if not old_name or not new_name:
+                    results.append("❌ `edit` thiếu tên cũ hoặc tên mới."); continue
+                try:
+                    ok = rename_ruby_shop_option(old_name, new_name)
+                except ValueError as e:
+                    results.append(f"❌ `edit {old_name}` — {e}"); continue
+                results.append(f"✏️ Đổi **{old_name}** → **{new_name}**" if ok
+                                else f"❌ Không tìm thấy **{old_name}** để đổi tên")
+
+            else:
+                results.append(f"❌ Không hiểu thao tác `{action}` trong `{seg}` (dùng add/remove/edit)")
+
+        msg = "\n".join(results) or "❌ Không có thao tác nào hợp lệ."
+        await ctx.reply(msg[:1990])
 
     # ══════════════════════════════════════════
     # ADMIN: GÁN ROLE CHO TỪNG LOẠI TICKET

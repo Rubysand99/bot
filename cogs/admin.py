@@ -323,7 +323,9 @@ class AdminCog(commands.Cog):
                      "dịch vụ gì (chọn trong danh sách admin tự thêm)\n"
                      "`.rubyoption add <tên>` (alias `.rbopt`) — Thêm 1 dịch vụ vào danh sách lựa chọn\n"
                      "`.rubyoption remove <tên>` — Xoá 1 dịch vụ\n"
+                     "`.rubyoption edit <tên cũ> -> <tên mới>` — Đổi tên 1 dịch vụ\n"
                      "`.rubyoption list` — Xem danh sách hiện tại\n"
+                     "-# Gộp nhiều thao tác cùng lúc, cách nhau bằng dấu phẩy: `.rbopt add A, add B, remove C, edit D -> E`\n"
                      "`.setrole rubyshop @role` — Gán role xử lý ticket Ruby Shop", False),
                     ("📦 Stock Limit",
                      "`.setsl <item_key> <số lượng>` — Cài giới hạn tồn kho\n"
