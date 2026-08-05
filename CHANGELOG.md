@@ -1,5 +1,19 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.23.0] — 2026-08-05
+
+### ✨ Tính năng mới
+- `cogs/ticket.py`, `core/data.py` — Thêm loại ticket **💎 Ruby Shop** vào panel. Trước khi ticket được tạo, bot hỏi user cần hỗ trợ dịch vụ gì qua Select menu — danh sách lựa chọn **không hardcode trong code**, admin/staff tự quản lý bằng lệnh:
+  - `.rubyoption add <tên>` (alias `.rbopt`) — thêm 1 lựa chọn (tối đa 25, giới hạn Select menu của Discord)
+  - `.rubyoption remove <tên>` — xoá 1 lựa chọn
+  - `.rubyoption list` — xem danh sách hiện tại
+  - Nếu chưa có lựa chọn nào, bot báo cho user biết thay vì tạo ticket trống.
+  - `.setrole rubyshop @role` — gán role xử lý ticket Ruby Shop (dùng chung hệ thống multi-role sẵn có, `.listroles` cũng hiển thị).
+  - Ticket tạo ra ghi rõ dịch vụ user đã chọn trong embed + log audit (`TICKET_CREATE`).
+  - Nút Ruby Shop có thể bật/tắt riêng qua `.panelbuttons` như các nút khác.
+
+---
+
 ## [v4.22.0] — 2026-08-03
 
 ### ✨ Tính năng mới

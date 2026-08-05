@@ -515,6 +515,33 @@ def delete_embed_template(name: str) -> bool:
     save_data(data)
     return True
 
+# ── Ruby Shop — danh sách dịch vụ do admin cấu hình thủ công (.rubyoption),
+#    hiện ra cho user chọn trước khi ticket #ruby-shop được tạo ──
+def get_ruby_shop_options() -> list[str]:
+    return load_data().get("ruby_shop_options", [])
+
+def add_ruby_shop_option(name: str) -> bool:
+    """True nếu thêm mới; False nếu trùng tên (không phân biệt hoa/thường)."""
+    data = load_data()
+    opts = data.setdefault("ruby_shop_options", [])
+    if any(o.lower() == name.lower() for o in opts):
+        return False
+    if len(opts) >= 25:  # Discord Select menu tối đa 25 lựa chọn
+        raise ValueError("Đã đạt tối đa 25 lựa chọn (giới hạn Select menu của Discord).")
+    opts.append(name)
+    save_data(data)
+    return True
+
+def remove_ruby_shop_option(name: str) -> bool:
+    data = load_data()
+    opts = data.get("ruby_shop_options", [])
+    match = next((o for o in opts if o.lower() == name.lower()), None)
+    if not match:
+        return False
+    opts.remove(match)
+    save_data(data)
+    return True
+
 # ── Seller category (mỗi seller có 1 category riêng) ──
 def get_seller_category(user_id: int) -> int:
     return load_data().get("seller_categories", {}).get(str(user_id), 0)

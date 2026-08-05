@@ -28,6 +28,7 @@ from core.data import (
     get_or_fetch_channel,
     BUILDER_BASE_ROLE_ID as _BUILDER_ROLE_ID,
     get_ticket_role_ids, set_ticket_role_ids, get_all_ticket_multi_roles,
+    get_ruby_shop_options, add_ruby_shop_option, remove_ruby_shop_option,
     GuildContextView as View,
     set_current_guild,
 )
@@ -795,6 +796,59 @@ async def create_build_ticket(interaction: discord.Interaction, trade_type: str)
         except Exception:
             pass
 
+async def create_ruby_ticket(interaction: discord.Interaction, option_label: str):
+    """Tạo ticket Ruby Shop — sau khi user chọn 1 dịch vụ từ danh sách do admin
+    cấu hình thủ công (.rubyoption add), xem _RubyShopOptionSelect."""
+    guild = interaction.guild
+    try:
+        if await has_ticket(guild, interaction.user):
+            return await interaction.followup.send("❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.", ephemeral=True)
+
+        bot        = interaction.client
+        number     = await get_next_ticket_number(bot)
+        created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+        channel_name = f"ruby-{number}"
+
+        role_ids   = get_ticket_role_ids("rubyshop")
+        overwrites = _build_ticket_overwrites_multi(guild, interaction.user, role_ids)
+        category   = discord.utils.get(guild.categories, id=get_cfg_category())
+        channel    = await guild.create_text_channel(
+            name=channel_name, overwrites=overwrites, category=category,
+            topic=f"{interaction.user.id}||service|rubyshop|open|rubyshop",
+        )
+
+        embed = discord.Embed(
+            title=f"💎 RUBY SHOP  •  #{number}",
+            description=f"Xin chào {interaction.user.mention}! 👋\nStaff sẽ hỗ trợ bạn sớm nhất có thể.\n🟡 **Trạng thái:** Đang chờ staff nhận",
+            color=0xE91E8C, timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="👤  Người dùng",         value=interaction.user.mention, inline=True)
+        embed.add_field(name="🕐  Thời gian",          value=created_at,               inline=True)
+        embed.add_field(name="📦  Dịch vụ cần hỗ trợ", value=option_label,             inline=True)
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
+
+        ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
+
+        await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
+        _register_ticket(interaction.user.id, channel.id)
+        await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
+
+        await send_log(
+            interaction.client, "TICKET_CREATE", f"Ticket Tạo — {channel_name}",
+            fields=[
+                ("🎫 Kênh",       channel.mention,                True),
+                ("📦 Dịch vụ",    option_label,                   True),
+                ("👤 Người tạo", _uname_plain(interaction.user),  True),
+                ("🕐 Thời gian", created_at,                     True),
+            ],
+            user=interaction.user, guild_id=guild.id,
+        )
+    except Exception as e:
+        try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`")
+        except Exception: pass
+
+
 async def create_direct_order_ticket(interaction: discord.Interaction, server_key: str):
     """Tạo ticket mua/bán thẳng không qua chọn item (OneMC, FreeFire)."""
     guild = interaction.guild
@@ -971,6 +1025,37 @@ class AccPreView(View):
             except Exception: pass
 
 
+class _RubyShopOptionSelect(Select):
+    """Bước chọn dịch vụ trước khi tạo ticket Ruby Shop — options đến từ danh
+    sách admin tự thêm bằng `.rubyoption add <tên>` (core/data.py:
+    get_ruby_shop_options), KHÔNG hardcode trong code."""
+    def __init__(self, options: list[str]):
+        self._labels = options
+        opts = [
+            discord.SelectOption(label=label[:100], value=str(i))
+            for i, label in enumerate(options)
+        ]
+        super().__init__(placeholder="Chọn dịch vụ cần hỗ trợ...", options=opts, custom_id="rubyshop_option_select")
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            idx = int(self.values[0])
+            label = self._labels[idx] if 0 <= idx < len(self._labels) else self.values[0]
+            await interaction.response.defer(ephemeral=True)
+            await create_ruby_ticket(interaction, label)
+        except Exception as e:
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+
+class RubyShopOptionView(View):
+    """View bước 1 khi bấm nút 💎 Ruby Shop trên panel — chọn dịch vụ cần hỗ trợ
+    trước khi ticket thật sự được tạo."""
+    def __init__(self, options: list[str]):
+        super().__init__(timeout=60)
+        self.add_item(_RubyShopOptionSelect(options))
+
+
 # ══════════════════════════════════════════
 # PANEL BUTTONS — cấu hình bật/tắt theo từng guild
 # ══════════════════════════════════════════
@@ -981,6 +1066,7 @@ PANEL_BUTTON_DEFS = {
     "ff":       ("🔥 Free Fire",       discord.ButtonStyle.red,     "panel_ff",       1),
     "accpre":   ("🎭 Acc Pre",         discord.ButtonStyle.blurple, "panel_accpre",   2),
     "build":    ("🏗️ Build",          discord.ButtonStyle.grey,    "panel_build",    2),
+    "rubyshop": ("💎 Ruby Shop",       discord.ButtonStyle.grey,    "panel_rubyshop", 2),
     "giveaway": ("🎁 Nhận Giveaway",   discord.ButtonStyle.green,   "panel_giveaway", 3),
     "support":  ("🆘 Hỗ Trợ",          discord.ButtonStyle.blurple, "panel_support",  3),
 }
@@ -1027,6 +1113,7 @@ class TicketPanel(View):
             "ff":       self._h_ff,
             "accpre":   self._h_accpre,
             "build":    self._h_build,
+            "rubyshop": self._h_rubyshop,
             "giveaway": self._h_giveaway,
             "support":  self._h_support,
         }
@@ -1074,6 +1161,23 @@ class TicketPanel(View):
             await create_build_ticket(interaction, trade_type="buy")
         except Exception as e:
             try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+    async def _h_rubyshop(self, interaction: discord.Interaction):
+        try:
+            options = get_ruby_shop_options()
+            if not options:
+                return await interaction.response.send_message(
+                    "❌ Ruby Shop hiện chưa có dịch vụ nào được thiết lập. Vui lòng liên hệ staff "
+                    "hoặc admin thêm bằng `.rubyoption add <tên dịch vụ>`.",
+                    ephemeral=True,
+                )
+            await interaction.response.send_message(
+                "💎 **Ruby Shop — Bạn cần hỗ trợ về dịch vụ gì?**",
+                view=RubyShopOptionView(options), ephemeral=True,
+            )
+        except Exception as e:
+            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
             except Exception: pass
 
     async def _h_giveaway(self, interaction: discord.Interaction):
@@ -1688,6 +1792,63 @@ class TicketCog(commands.Cog):
     # ADMIN: GÁN CATEGORY CHO SELLER (.setsl)
     # ══════════════════════════════════════════
     # ══════════════════════════════════════════
+    # ADMIN: DANH SÁCH DỊCH VỤ RUBY SHOP (.rubyoption)
+    # ══════════════════════════════════════════
+    @commands.command(name="rubyoption", aliases=["rbopt"])
+    async def rubyoption_cmd(self, ctx, action: str = None, *, name: str = None):
+        """
+        Quản lý danh sách dịch vụ hiện ra cho user chọn trước khi tạo ticket
+        Ruby Shop (nút 💎 Ruby Shop trên panel).
+
+        `.rubyoption add <tên>`    — thêm 1 lựa chọn
+        `.rubyoption remove <tên>` — xoá 1 lựa chọn
+        `.rubyoption list`         — xem danh sách hiện tại
+        """
+        if not is_staff_member(ctx.author):
+            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+
+        action = (action or "").strip().lower()
+        if action not in ("add", "remove", "del", "delete", "list"):
+            options = get_ruby_shop_options()
+            listing = "\n".join(f"• {o}" for o in options) if options else "*(chưa có lựa chọn nào)*"
+            return await ctx.reply(
+                "❌ Thiếu thao tác!\n"
+                "**Cú pháp:**\n"
+                "`.rubyoption add <tên>` — thêm lựa chọn\n"
+                "`.rubyoption remove <tên>` — xoá lựa chọn\n"
+                "`.rubyoption list` — xem danh sách\n\n"
+                f"**Hiện có {len(options)} lựa chọn:**\n{listing}"
+            )
+
+        if action == "list":
+            options = get_ruby_shop_options()
+            embed = discord.Embed(
+                title="💎 Danh sách dịch vụ Ruby Shop", color=0xE91E8C, timestamp=datetime.now(timezone.utc)
+            )
+            embed.description = "\n".join(f"{i+1}. {o}" for i, o in enumerate(options)) if options \
+                else "*(chưa có lựa chọn nào — dùng `.rubyoption add <tên>` để thêm)*"
+            embed.set_footer(text=f"{len(options)}/25 lựa chọn")
+            return await ctx.reply(embed=embed)
+
+        if not name:
+            return await ctx.reply(f"❌ Thiếu tên dịch vụ! Ví dụ: `.rubyoption {action} Nạp Ruby`")
+
+        if action == "add":
+            try:
+                added = add_ruby_shop_option(name.strip())
+            except ValueError as e:
+                return await ctx.reply(f"❌ {e}")
+            if not added:
+                return await ctx.reply(f"❌ Lựa chọn `{name}` đã tồn tại rồi.")
+            return await ctx.reply(f"✅ Đã thêm lựa chọn **{name}** vào Ruby Shop.")
+
+        # remove / del / delete
+        if remove_ruby_shop_option(name.strip()):
+            await ctx.reply(f"🗑️ Đã xoá lựa chọn **{name}** khỏi Ruby Shop.")
+        else:
+            await ctx.reply(f"❌ Không tìm thấy lựa chọn `{name}`. Dùng `.rubyoption list` để xem danh sách.")
+
+    # ══════════════════════════════════════════
     # ADMIN: GÁN ROLE CHO TỪNG LOẠI TICKET
     # ══════════════════════════════════════════
     @commands.command(name="setrole")
@@ -1711,7 +1872,7 @@ class TicketCog(commands.Cog):
         ⚠️ Danh sách rỗng KHÔNG có nghĩa "chỉ admin" — ticket sẽ tự fallback
         về role support/seller/builder mặc định (xem _build_ticket_overwrites_multi).
 
-        Keys hợp lệ: order_donut, order_kingmc, order_onemc, order_ff, order_build, acc_pre, giveaway, support
+        Keys hợp lệ: order_donut, order_kingmc, order_onemc, order_ff, order_build, acc_pre, rubyshop, giveaway, support
 
         Ví dụ:
           .setrole order_donut @DonutStaff
@@ -1721,7 +1882,7 @@ class TicketCog(commands.Cog):
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
 
-        VALID_KEYS = ["order_donut", "order_kingmc", "order_onemc", "order_ff", "order_build", "acc_pre", "giveaway", "support"]
+        VALID_KEYS = ["order_donut", "order_kingmc", "order_onemc", "order_ff", "order_build", "acc_pre", "rubyshop", "giveaway", "support"]
         KEY_LABELS = {
             "order_donut":  "🍩 Mua/Bán DonutSMP",
             "order_kingmc": "👑 Mua/Bán KingMC",
@@ -1729,6 +1890,7 @@ class TicketCog(commands.Cog):
             "order_ff":     "🔥 Mua/Bán Free Fire",
             "order_build":  "🏗️ Mua/Bán Base",
             "acc_pre":      "🎭 Acc Pre",
+            "rubyshop":     "💎 Ruby Shop",
             "giveaway":     "🎁 Nhận Giveaway",
             "support":      "🆘 Hỗ Trợ",
         }
@@ -1826,6 +1988,7 @@ class TicketCog(commands.Cog):
             "order_ff":     "🔥 Mua/Bán Free Fire",
             "order_build":  "🏗️ Mua/Bán Base",
             "acc_pre":      "🎭 Acc Pre",
+            "rubyshop":     "💎 Ruby Shop",
             "giveaway":     "🎁 Nhận Giveaway",
             "support":      "🆘 Hỗ Trợ",
         }
