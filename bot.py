@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.23.2"
-BOT_UPDATED = "2026-08-05"
+BOT_VERSION = "4.24.0"
+BOT_UPDATED = "2026-08-06"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
 TOKEN = os.getenv("TOKEN")
@@ -88,7 +88,7 @@ async def load_cogs():
 @bot.event
 async def on_ready():
     from core.data import init_data_cache, set_current_guild
-    from cogs.ticket import TicketPanel, TicketButtons, sync_ticket_counter
+    from cogs.ticket import TicketPanel, TicketButtons, MiddlemanPanelView, sync_ticket_counter
     from cogs.giveaway import GiveawayView
     from cogs.admin import resume_pending_sold_views
 
@@ -105,6 +105,7 @@ async def on_ready():
     # Register persistent views
     bot.add_view(TicketPanel())
     bot.add_view(TicketButtons())
+    bot.add_view(MiddlemanPanelView())
     bot.add_view(GiveawayView())
 
     # Resume nút DM "Nhập giá" sold-stock (đơn pending chưa được admin xử lý)

@@ -309,6 +309,7 @@ class AdminCog(commands.Cog):
                 "fields": [
                     ("📋 Lệnh cơ bản",
                      "`.panel` — Đăng panel mua/bán\n"
+                     "`.mmpanel` — Đăng panel Giao Dịch Trung Gian (AutoMM)\n"
                      "`.panelbuttons` (alias `.panelbtn`) — Bật/tắt từng nút của panel (riêng theo server)\n"
                      "`.setpanel #kênh` — Cài kênh đăng panel tự động\n"
                      "`.close` — Đóng ticket hiện tại\n"
@@ -318,15 +319,20 @@ class AdminCog(commands.Cog):
                     ("🏷️ Loại ticket → Role",
                      "`.setrole <ticket_key> <seller|builder|xoá>` — Gán loại ticket vào nhóm role\n"
                      "`.listroles` — Xem toàn bộ cấu hình loại ticket → role", False),
-                    ("💎 Ruby Shop",
-                     "Panel có thêm nút 💎 Ruby Shop — trước khi tạo ticket, bot hỏi user cần hỗ trợ "
+                    ("🛒 Ticket Mua Hàng",
+                     "Panel có thêm nút 🛒 Ticket Mua Hàng — trước khi tạo ticket, bot hỏi user cần hỗ trợ "
                      "dịch vụ gì (chọn trong danh sách admin tự thêm)\n"
                      "`.rubyoption add <tên>` (alias `.rbopt`) — Thêm 1 dịch vụ vào danh sách lựa chọn\n"
                      "`.rubyoption remove <tên>` — Xoá 1 dịch vụ\n"
                      "`.rubyoption edit <tên cũ> -> <tên mới>` — Đổi tên 1 dịch vụ\n"
                      "`.rubyoption list` — Xem danh sách hiện tại\n"
                      "-# Gộp nhiều thao tác cùng lúc, cách nhau bằng dấu phẩy: `.rbopt add A, add B, remove C, edit D -> E`\n"
-                     "`.setrole rubyshop @role` — Gán role xử lý ticket Ruby Shop", False),
+                     "`.setrole rubyshop @role` — Gán role xử lý Ticket Mua Hàng", False),
+                    ("🤝 Giao Dịch Trung Gian",
+                     "`.mmpanel` — Đăng panel Giao Dịch Trung Gian (AutoMM)\n"
+                     "User bấm **Tạo giao dịch** → bot hỏi ID tài khoản muốn giao dịch → tạo ticket riêng, "
+                     "luôn ping admin TuyTam để trực tiếp làm trung gian\n"
+                     "`.setrole middleman @role` — Gán thêm role hỗ trợ (ngoài admin TuyTam mặc định)", False),
                     ("📦 Stock Limit",
                      "`.setsl <item_key> <số lượng>` — Cài giới hạn tồn kho\n"
                      "`.removesl <item_key>` — Xoá giới hạn tồn kho\n"
@@ -596,7 +602,7 @@ class AdminCog(commands.Cog):
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="🎫 Ticket",    value="`.panel` `.panelbuttons` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke` `.setsl` `.setrole`", inline=True)
+        embed.add_field(name="🎫 Ticket",    value="`.panel` `.mmpanel` `.panelbuttons` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke` `.setsl` `.setrole`", inline=True)
         embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite` `.verify`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick` `.gwreset`", inline=True)

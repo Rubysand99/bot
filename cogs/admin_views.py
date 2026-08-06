@@ -418,6 +418,7 @@ def _build_ticket_roles_embed(guild: discord.Guild | None = None) -> discord.Emb
     svc_lines = [
         f"🎁 Nhận Giveaway → {_tag('giveaway')}",
         f"🆘 Hỗ Trợ        → {_tag('support')}",
+        f"🤝 Giao Dịch TG  → {_tag('middleman')}",
     ]
     order_lines = [
         f"🍩 DonutSMP  → {_tag('order_donut')}",
@@ -426,7 +427,7 @@ def _build_ticket_roles_embed(guild: discord.Guild | None = None) -> discord.Emb
         f"🔥 Free Fire → {_tag('order_ff')}",
         f"🏗️ Build      → {_tag('order_build')}",
         f"🎭 Acc Pre   → {_tag('acc_pre')}",
-        f"💎 Ruby Shop → {_tag('rubyshop')}",
+        f"🛒 Ticket Mua Hàng → {_tag('rubyshop')}",
     ]
     admin_lines = [f"<@{aid}> `(ID: {aid})`" for aid in ADMIN_IDS]
 
@@ -447,6 +448,7 @@ _ALL_TICKET_OPTIONS = [
     # service
     ("giveaway",       "🎁 Nhận Giveaway", "Dịch vụ"),
     ("support",        "🆘 Hỗ Trợ",        "Dịch vụ"),
+    ("middleman",      "🤝 Giao Dịch Trung Gian", "Dịch vụ"),
     # order — DonutSMP & KingMC (có money/ske)
     ("order_donut",    "🍩 Mua/Bán DonutSMP", "Mua/Bán"),
     ("order_kingmc",   "👑 Mua/Bán KingMC",   "Mua/Bán"),
@@ -457,8 +459,8 @@ _ALL_TICKET_OPTIONS = [
     ("order_build",    "🏗️ Mua/Bán Base",     "Mua/Bán"),
     # acc pre
     ("acc_pre",        "🎭 Acc Pre",           "Mua/Bán"),
-    # ruby shop
-    ("rubyshop",       "💎 Ruby Shop",         "Mua/Bán"),
+    # ticket mua hàng (trước đây gọi "Ruby Shop" — key nội bộ vẫn là "rubyshop")
+    ("rubyshop",       "🛒 Ticket Mua Hàng",   "Mua/Bán"),
     # listing (sản phẩm dạng Forum — nút 🛒 Mua, xem cogs/listings.py)
     ("listing",         "🛒 Mua Sản Phẩm (Listing)", "Mua/Bán"),
     # auto buy — role được quyền đăng/sửa listing (KHÔNG phải role nhận ping ticket)
@@ -471,6 +473,7 @@ _TICKET_GROUPS = [
     ("🎮 Dịch Vụ", [
         ("giveaway",    "🎁 Nhận Giveaway"),
         ("support",     "🆘 Hỗ Trợ"),
+        ("middleman",   "🤝 Giao Dịch Trung Gian"),
     ]),
     ("🛒 Mua / Bán", [
         ("order_donut",  "🍩 DonutSMP"),
@@ -479,7 +482,7 @@ _TICKET_GROUPS = [
         ("order_ff",     "🔥 Free Fire"),
         ("order_build",  "🏗️ Build"),
         ("acc_pre",      "🎭 Acc Pre"),
-        ("rubyshop",     "💎 Ruby Shop"),
+        ("rubyshop",     "🛒 Ticket Mua Hàng"),
         ("listing",      "🛒 Mua Sản Phẩm (Listing)"),
     ]),
     ("🤖 Auto Buy", [

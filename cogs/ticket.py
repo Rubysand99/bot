@@ -11,10 +11,10 @@ from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
-from discord.ui import Button, Select
+from discord.ui import Button, Select, TextInput
 
 from core.data import (
-    ADMIN_IDS, TRANSCRIPT_CHANNEL_ID,
+    ADMIN_IDS, ADMIN_TUYTAM_ID, TRANSCRIPT_CHANNEL_ID,
     get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
     get_cfg_counter_channel,
     save_panel_channel_id,
@@ -30,6 +30,7 @@ from core.data import (
     get_ticket_role_ids, set_ticket_role_ids, get_all_ticket_multi_roles,
     get_ruby_shop_options, add_ruby_shop_option, remove_ruby_shop_option, rename_ruby_shop_option,
     GuildContextView as View,
+    GuildContextModal as Modal,
     set_current_guild,
 )
 from cogs.logger import send_log
@@ -251,6 +252,39 @@ def build_panel_embed(guild: discord.Guild) -> discord.Embed:
     embed.add_field(name="📋  Ticket bao gồm", value="› Tạo kênh riêng tư\n› Staff hỗ trợ 24/7\n› Transcript sau giao dịch", inline=True)
     embed.add_field(name="⚠️  Lưu ý", value="› Không spam ticket\n› Ghi rõ số lượng & item\n› Thanh toán đúng giá niêm yết", inline=False)
     embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
+    if guild.icon: embed.set_thumbnail(url=guild.icon.url)
+    return embed
+
+def build_middleman_panel_embed(guild: discord.Guild) -> discord.Embed:
+    """Panel riêng cho ticket Giao Dịch Trung Gian — embed mẫu theo #🤝・middleman."""
+    embed = discord.Embed(
+        title="🤝  AutoMM  •  Giao Dịch Trung Gian",
+        description=(
+            "Bot trung gian tự động — tiền/tài sản chỉ được xem là an toàn khi giao dịch "
+            "được thực hiện dưới sự giám sát của staff.\n"
+        ),
+        color=0x57F287, timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(
+        name="📋  Cách sử dụng",
+        value=(
+            "**1.** Nhấn **Tạo giao dịch** bên dưới\n"
+            "**2.** Nhập ID (hoặc tên) tài khoản bạn muốn giao dịch cùng\n"
+            "**3.** Ticket riêng tư được tạo, admin sẽ được thông báo hỗ trợ\n"
+            "**4.** Hai bên thực hiện giao dịch dưới sự giám sát của staff\n"
+            "**5.** Giao dịch xong → staff xác nhận & đóng ticket"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="⚠️  Lưu ý",
+        value=(
+            "-# Phí dịch vụ (nếu có) được áp dụng theo bảng phí hiện hành.\n"
+            "-# Chỉ tạo giao dịch khi bạn thực sự muốn hoàn tất."
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="TuyTam Store  •  Giao Dịch Trung Gian", icon_url=guild.icon.url if guild.icon else None)
     if guild.icon: embed.set_thumbnail(url=guild.icon.url)
     return embed
 
@@ -797,7 +831,7 @@ async def create_build_ticket(interaction: discord.Interaction, trade_type: str)
             pass
 
 async def create_ruby_ticket(interaction: discord.Interaction, option_label: str):
-    """Tạo ticket Ruby Shop — sau khi user chọn 1 dịch vụ từ danh sách do admin
+    """Tạo ticket Mua Hàng — sau khi user chọn 1 dịch vụ từ danh sách do admin
     cấu hình thủ công (.rubyoption add), xem _RubyShopOptionSelect."""
     guild = interaction.guild
     try:
@@ -807,7 +841,7 @@ async def create_ruby_ticket(interaction: discord.Interaction, option_label: str
         bot        = interaction.client
         number     = await get_next_ticket_number(bot)
         created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
-        channel_name = f"ruby-{number}"
+        channel_name = f"muahang-{number}"
 
         role_ids   = get_ticket_role_ids("rubyshop")
         overwrites = _build_ticket_overwrites_multi(guild, interaction.user, role_ids)
@@ -818,7 +852,7 @@ async def create_ruby_ticket(interaction: discord.Interaction, option_label: str
         )
 
         embed = discord.Embed(
-            title=f"💎 RUBY SHOP  •  #{number}",
+            title=f"🛒 TICKET MUA HÀNG  •  #{number}",
             description=f"Xin chào {interaction.user.mention}! 👋\nStaff sẽ hỗ trợ bạn sớm nhất có thể.\n🟡 **Trạng thái:** Đang chờ staff nhận",
             color=0xE91E8C, timestamp=datetime.now(timezone.utc),
         )
@@ -846,6 +880,69 @@ async def create_ruby_ticket(interaction: discord.Interaction, option_label: str
         )
     except Exception as e:
         try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`")
+        except Exception: pass
+
+
+async def create_middleman_ticket(interaction: discord.Interaction, partner_id: str):
+    """Tạo ticket Giao Dịch Trung Gian — sau khi user nhấn 'Tạo giao dịch' trên panel
+    #🤝・middleman và nhập ID tài khoản muốn giao dịch (xem MiddlemanAccountModal).
+    Hoạt động như 1 ticket mua hàng bình thường: tạo kênh riêng tư + ping staff,
+    NGOẠI TRỪ luôn ping thêm admin TuyTam (ADMIN_TUYTAM_ID) vì đây là giao dịch cần
+    admin trực tiếp đứng ra làm trung gian."""
+    guild = interaction.guild
+    try:
+        if await has_ticket(guild, interaction.user):
+            return await interaction.followup.send("❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.", ephemeral=True)
+
+        bot        = interaction.client
+        number     = await get_next_ticket_number(bot)
+        created_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+        channel_name = f"mm-{number}"
+
+        role_ids   = get_ticket_role_ids("middleman")
+        overwrites = _build_ticket_overwrites_multi(guild, interaction.user, role_ids)
+        category   = discord.utils.get(guild.categories, id=get_cfg_category())
+        channel    = await guild.create_text_channel(
+            name=channel_name, overwrites=overwrites, category=category,
+            topic=f"{interaction.user.id}||service|middleman|open|middleman",
+        )
+
+        embed = discord.Embed(
+            title=f"🤝 GIAO DỊCH TRUNG GIAN  •  #{number}",
+            description=f"Xin chào {interaction.user.mention}! 👋\nAdmin sẽ hỗ trợ làm trung gian giao dịch sớm nhất có thể.\n🟡 **Trạng thái:** Đang chờ staff nhận",
+            color=0x57F287, timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="👤  Người tạo",              value=interaction.user.mention, inline=True)
+        embed.add_field(name="🕐  Thời gian",               value=created_at,               inline=True)
+        embed.add_field(name="🎯  ID tài khoản giao dịch",  value=f"`{partner_id}`",        inline=True)
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_footer(text="TuyTam Store  •  Giao Dịch Trung Gian", icon_url=guild.icon.url if guild.icon else None)
+
+        # Ping role được gán (nếu có) + LUÔN ping thêm admin TuyTam
+        ping_ids = list(role_ids)
+        if ADMIN_TUYTAM_ID and ADMIN_TUYTAM_ID not in ping_ids:
+            ping_ids.append(ADMIN_TUYTAM_ID)
+        if ping_ids:
+            ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in ping_ids)
+        else:
+            ping_str = f"<@&{get_cfg_support_role()}>"
+
+        await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
+        _register_ticket(interaction.user.id, channel.id)
+        await interaction.followup.send(f"✅ Ticket giao dịch trung gian đã tạo! Vào đây: {channel.mention}", ephemeral=True)
+
+        await send_log(
+            interaction.client, "TICKET_CREATE", f"Ticket Tạo — {channel_name}",
+            fields=[
+                ("🎫 Kênh",              channel.mention,               True),
+                ("🎯 Tài khoản GD",      f"`{partner_id}`",             True),
+                ("👤 Người tạo",         _uname_plain(interaction.user), True),
+                ("🕐 Thời gian",         created_at,                    True),
+            ],
+            user=interaction.user, guild_id=guild.id,
+        )
+    except Exception as e:
+        try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`", ephemeral=True)
         except Exception: pass
 
 
@@ -1026,7 +1123,7 @@ class AccPreView(View):
 
 
 class _RubyShopOptionSelect(Select):
-    """Bước chọn dịch vụ trước khi tạo ticket Ruby Shop — options đến từ danh
+    """Bước chọn dịch vụ trước khi tạo ticket Mua Hàng — options đến từ danh
     sách admin tự thêm bằng `.rubyoption add <tên>` (core/data.py:
     get_ruby_shop_options), KHÔNG hardcode trong code."""
     def __init__(self, options: list[str]):
@@ -1049,11 +1146,53 @@ class _RubyShopOptionSelect(Select):
 
 
 class RubyShopOptionView(View):
-    """View bước 1 khi bấm nút 💎 Ruby Shop trên panel — chọn dịch vụ cần hỗ trợ
+    """View bước 1 khi bấm nút 🛒 Ticket Mua Hàng trên panel — chọn dịch vụ cần hỗ trợ
     trước khi ticket thật sự được tạo."""
     def __init__(self, options: list[str]):
         super().__init__(timeout=60)
         self.add_item(_RubyShopOptionSelect(options))
+
+
+# ══════════════════════════════════════════
+# MIDDLEMAN (GIAO DỊCH TRUNG GIAN) — panel riêng, xem build_middleman_panel_embed
+# ══════════════════════════════════════════
+class MiddlemanAccountModal(Modal, title="🤝 Tạo Giao Dịch Trung Gian"):
+    """Modal hỏi ID tài khoản muốn giao dịch cùng — bước duy nhất trước khi tạo
+    ticket, sau đó hoạt động y hệt 1 ticket mua hàng bình thường (xem
+    create_middleman_ticket)."""
+    partner_input = TextInput(
+        label="ID tài khoản muốn giao dịch",
+        placeholder="Nhập ID Discord hoặc username của đối tác giao dịch...",
+        max_length=100,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            await create_middleman_ticket(interaction, self.partner_input.value.strip())
+        except Exception as e:
+            try: await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
+
+
+class MiddlemanPanelView(View):
+    """Panel PERSISTENT riêng cho Giao Dịch Trung Gian — chỉ 1 nút 'Tạo giao dịch',
+    gửi bằng lệnh `.mmpanel` (xem TicketCog.mmpanel_cmd). Cần add_view() lúc
+    on_ready (bot.py) để nút vẫn hoạt động sau khi bot restart."""
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Tạo giao dịch", emoji="➕", style=discord.ButtonStyle.green, custom_id="panel_middleman_create")
+    async def create_transaction(self, interaction: discord.Interaction, button: Button):
+        try:
+            if await has_ticket(interaction.guild, interaction.user):
+                return await interaction.response.send_message(
+                    "❌ Bạn đang có ticket mở! Vui lòng đóng ticket cũ trước.", ephemeral=True
+                )
+            await interaction.response.send_modal(MiddlemanAccountModal())
+        except Exception as e:
+            try: await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+            except Exception: pass
 
 
 # ══════════════════════════════════════════
@@ -1066,7 +1205,7 @@ PANEL_BUTTON_DEFS = {
     "ff":       ("🔥 Free Fire",       discord.ButtonStyle.red,     "panel_ff",       1),
     "accpre":   ("🎭 Acc Pre",         discord.ButtonStyle.blurple, "panel_accpre",   2),
     "build":    ("🏗️ Build",          discord.ButtonStyle.grey,    "panel_build",    2),
-    "rubyshop": ("💎 Ruby Shop",       discord.ButtonStyle.grey,    "panel_rubyshop", 2),
+    "rubyshop": ("🛒 Ticket Mua Hàng", discord.ButtonStyle.grey,    "panel_rubyshop", 2),
     "giveaway": ("🎁 Nhận Giveaway",   discord.ButtonStyle.green,   "panel_giveaway", 3),
     "support":  ("🆘 Hỗ Trợ",          discord.ButtonStyle.blurple, "panel_support",  3),
 }
@@ -1168,12 +1307,12 @@ class TicketPanel(View):
             options = get_ruby_shop_options()
             if not options:
                 return await interaction.response.send_message(
-                    "❌ Ruby Shop hiện chưa có dịch vụ nào được thiết lập. Vui lòng liên hệ staff "
+                    "❌ Ticket Mua Hàng hiện chưa có dịch vụ nào được thiết lập. Vui lòng liên hệ staff "
                     "hoặc admin thêm bằng `.rubyoption add <tên dịch vụ>`.",
                     ephemeral=True,
                 )
             await interaction.response.send_message(
-                "💎 **Ruby Shop — Bạn cần hỗ trợ về dịch vụ gì?**",
+                "🛒 **Ticket Mua Hàng — Bạn cần hỗ trợ về dịch vụ gì?**",
                 view=RubyShopOptionView(options), ephemeral=True,
             )
         except Exception as e:
@@ -1348,6 +1487,13 @@ class TicketCog(commands.Cog):
     async def panel(self, ctx):
         if ctx.author.id not in ADMIN_IDS: return
         await ctx.send(embed=build_panel_embed(ctx.guild), view=TicketPanel(ctx.guild.id))
+        await ctx.message.delete()
+
+    @commands.command(name="mmpanel", aliases=["middlemanpanel"])
+    async def mmpanel_cmd(self, ctx):
+        """Gửi panel Giao Dịch Trung Gian (AutoMM) vào kênh hiện tại."""
+        if ctx.author.id not in ADMIN_IDS: return
+        await ctx.send(embed=build_middleman_panel_embed(ctx.guild), view=MiddlemanPanelView())
         await ctx.message.delete()
 
     @commands.command(name="panelbuttons", aliases=["panelbtn", "ticketbuttons"])
@@ -1792,13 +1938,13 @@ class TicketCog(commands.Cog):
     # ADMIN: GÁN CATEGORY CHO SELLER (.setsl)
     # ══════════════════════════════════════════
     # ══════════════════════════════════════════
-    # ADMIN: DANH SÁCH DỊCH VỤ RUBY SHOP (.rubyoption)
+    # ADMIN: DANH SÁCH DỊCH VỤ TICKET MUA HÀNG (.rubyoption)
     # ══════════════════════════════════════════
     @commands.command(name="rubyoption", aliases=["rbopt"])
     async def rubyoption_cmd(self, ctx, *, args: str = None):
         """
         Quản lý danh sách dịch vụ hiện ra cho user chọn trước khi tạo ticket
-        Ruby Shop (nút 💎 Ruby Shop trên panel).
+        Ticket Mua Hàng (nút 🛒 Ticket Mua Hàng trên panel).
 
         `.rubyoption add <tên>`               — thêm 1 lựa chọn
         `.rubyoption remove <tên>`             — xoá 1 lựa chọn
@@ -1815,7 +1961,7 @@ class TicketCog(commands.Cog):
             if args and args.strip().lower() == "list":
                 options = get_ruby_shop_options()
                 embed = discord.Embed(
-                    title="💎 Danh sách dịch vụ Ruby Shop", color=0xE91E8C, timestamp=datetime.now(timezone.utc)
+                    title="🛒 Danh sách dịch vụ Ticket Mua Hàng", color=0xE91E8C, timestamp=datetime.now(timezone.utc)
                 )
                 embed.description = "\n".join(f"{i+1}. {o}" for i, o in enumerate(options)) if options \
                     else "*(chưa có lựa chọn nào — dùng `.rubyoption add <tên>` để thêm)*"
@@ -1917,7 +2063,7 @@ class TicketCog(commands.Cog):
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
 
-        VALID_KEYS = ["order_donut", "order_kingmc", "order_onemc", "order_ff", "order_build", "acc_pre", "rubyshop", "giveaway", "support"]
+        VALID_KEYS = ["order_donut", "order_kingmc", "order_onemc", "order_ff", "order_build", "acc_pre", "rubyshop", "middleman", "giveaway", "support"]
         KEY_LABELS = {
             "order_donut":  "🍩 Mua/Bán DonutSMP",
             "order_kingmc": "👑 Mua/Bán KingMC",
@@ -1925,7 +2071,8 @@ class TicketCog(commands.Cog):
             "order_ff":     "🔥 Mua/Bán Free Fire",
             "order_build":  "🏗️ Mua/Bán Base",
             "acc_pre":      "🎭 Acc Pre",
-            "rubyshop":     "💎 Ruby Shop",
+            "rubyshop":     "🛒 Ticket Mua Hàng",
+            "middleman":    "🤝 Giao Dịch Trung Gian",
             "giveaway":     "🎁 Nhận Giveaway",
             "support":      "🆘 Hỗ Trợ",
         }
@@ -2023,7 +2170,8 @@ class TicketCog(commands.Cog):
             "order_ff":     "🔥 Mua/Bán Free Fire",
             "order_build":  "🏗️ Mua/Bán Base",
             "acc_pre":      "🎭 Acc Pre",
-            "rubyshop":     "💎 Ruby Shop",
+            "rubyshop":     "🛒 Ticket Mua Hàng",
+            "middleman":    "🤝 Giao Dịch Trung Gian",
             "giveaway":     "🎁 Nhận Giveaway",
             "support":      "🆘 Hỗ Trợ",
         }
