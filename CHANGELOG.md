@@ -1,5 +1,62 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.25.3] — 2026-08-10
+
+### 🐛 Sửa lỗi
+- `cogs/admin_views.py` — **AUTH_GATE bị vô hiệu hoá ở đúng View quan trọng nhất: `.setup`
+  (`SetupMainView`), `MkChannelView`, `_PageView`**. 3 class này TỰ OVERRIDE
+  `interaction_check()` và gọi `set_current_guild()` trực tiếp thay vì gọi
+  `super().interaction_check()` — nghĩa là chúng vô tình **che mất** luôn phần kiểm tra
+  `is_guild_authorized()` vừa thêm ở `GuildContextView` (v4.25.2). Hậu quả: nếu `.setup`
+  được mở lúc server còn ủy quyền, sau đó admin `.as` thu hồi ủy quyền trong lúc panel
+  đó vẫn còn hiệu lực (chưa hết 180s timeout), các nút/select bên trong **vẫn bấm được
+  bình thường** — xuyên thủng AUTH_GATE ngay tại panel setup chính. Đã sửa cả 3: gọi
+  `await super().interaction_check(interaction)` TRƯỚC (set context + áp AUTH_GATE),
+  chỉ cộng thêm điều kiện riêng (admin-only / đúng người gõ lệnh) sau khi super() pass.
+  `EmbedPreviewView` (dòng ~2415) đã làm đúng kiểu này từ đầu, không cần sửa.
+- `cogs/admin_views.py` — Dọn import `set_current_guild` không còn dùng tới (toàn bộ
+  override giờ set context gián tiếp qua `super()`).
+- `cogs/admin_views.py` — **7 chỗ** cảnh báo `"❌ Chỉ admin."` thiếu `ephemeral=True`,
+  khiến tin nhắn từ chối quyền hiển thị **công khai cho cả kênh** thay vì chỉ người bấm
+  thấy (không nhất quán — các cảnh báo tương tự khác trong cùng file đều đã ephemeral
+  đúng). Gồm `SetupMainView.interaction_check()` (dòng ~762, đúng panel `.setup`),
+  `PriceManagerView` (×3, nút Thêm/Xoá/Reset bảng giá), kênh-config select callback
+  trong `SettingsView` (×1), và 2 chỗ khác cùng pattern. Đã thêm `ephemeral=True` cả 7.
+
+### 📌 Bài học (ghi lại cho lần sau)
+- BẤT KỲ View/Modal nào override `interaction_check()` (để thêm điều kiện riêng như
+  admin-only, đúng người gõ lệnh...) **BẮT BUỘC** phải gọi
+  `if not await super().interaction_check(interaction): return False` ĐẦU TIÊN, không
+  được tự ý copy lại logic `set_current_guild()` rồi bỏ qua phần còn lại của lớp cha —
+  lớp cha (`GuildContextView`/`GuildContextModal`) có thể được thêm logic quan trọng
+  (như AUTH_GATE) sau này mà các override cũ sẽ không tự động thừa hưởng.
+
+---
+
+## [v4.25.2] — 2026-08-10
+
+### 🐛 Sửa lỗi
+- `core/data.py` — **Lỗi nghiêm trọng nhất trong đợt AUTH_GATE**: `GuildContextView`/
+  `GuildContextModal` (dùng bởi `TicketPanel`, `TicketButtons`, `MiddlemanPanelView`,
+  `GiveawayView`, toàn bộ UI `.st`/settings...) chỉ tự set guild context, **KHÔNG hề
+  kiểm tra `is_guild_authorized()`**. Hậu quả: prefix command (`.command`) và slash
+  command đã bị AUTH_GATE chặn đúng ở server chưa/hết ủy quyền, nhưng **nút bấm/select/
+  modal của các panel đã đăng từ trước (persistent View, `bot.add_view()` ở `on_ready`)
+  vẫn hoạt động bình thường** dù server đó bị `.as` thu hồi ủy quyền — vì Discord gửi
+  thẳng interaction đến View đã đăng ký, không đi qua `bot.check`/`CommandTree.
+  interaction_check` như lệnh gõ chữ/slash. Đã thêm kiểm tra `is_guild_authorized()`
+  vào `interaction_check()` của cả 2 class — chặn + báo (ephemeral, chỉ admin) tương tự
+  slash command khi server chưa ủy quyền.
+- `bot.py` — Dọn tham chiếu chết tới lệnh `.aslist` (không còn tồn tại — đã gộp hiển thị
+  trạng thái ủy quyền vào `.serverlist` từ v4.25.0) trong `AUTH_EXEMPT_COMMANDS` + docstring.
+
+### ⚠️ Lưu ý (không phải bug, nhắc để tránh nhầm)
+- `.as <id>` là lệnh **toggle** — gõ lần 2 trên cùng 1 server sẽ **THU HỒI** ủy quyền
+  thay vì chạy lại/xác nhận lại. Muốn xem trạng thái hiện tại trước khi bấm, dùng
+  `.serverlist` (hiện ✅/🔒 từng server) thay vì đoán rồi gõ `.as` lại cho chắc.
+
+---
+
 ## [v4.25.1] — 2026-08-10
 
 ### 🐛 Sửa lỗi

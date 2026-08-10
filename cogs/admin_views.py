@@ -20,7 +20,6 @@ from core.data import (
     get_price_sections, save_price_sections,
     parse_amount, fmt_amount,
     get_ticket_role_ids, set_ticket_role_ids, get_all_ticket_multi_roles,
-    set_current_guild,
     # FIX (lỗi nghiêm trọng): file này trước đây import View/Modal THẲNG từ discord.ui,
     # nghĩa là MỌI View/Modal trong file (2000+ dòng, ~20 class) KHÔNG hề set guild
     # context trước khi save_cfg()/save_data()/load_data() chạy trong callback của
@@ -208,17 +207,17 @@ class PriceManagerView(View):
 
     @discord.ui.button(label="➕ Thêm mục mới", style=discord.ButtonStyle.success, row=1)
     async def add_section(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.")
+        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_modal(AddPriceSectionModal())
 
     @discord.ui.button(label="🗑️ Xoá mục", style=discord.ButtonStyle.danger, row=1)
     async def del_section(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.")
+        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_message("Chọn mục muốn xoá:", view=DeletePriceSectionView())
 
     @discord.ui.button(label="🔄 Reset về mặc định", style=discord.ButtonStyle.grey, row=1)
     async def reset_sections(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.")
+        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         save_price_sections(_DEFAULT_PRICE_SECTIONS)
         await interaction.response.send_message("✅ Đã reset bảng giá về mặc định!")
 
@@ -280,7 +279,7 @@ class SettingsView(View):
                 self_inner.title   = title
             async def callback(self_inner, inter: discord.Interaction):
                 if inter.user.id not in ADMIN_IDS:
-                    return await inter.response.send_message("❌ Chỉ admin.")
+                    return await inter.response.send_message("❌ Chỉ admin.", ephemeral=True)
                 ch_id = int(self_inner.values[0])
                 save_cfg(self_inner.cfg_key, ch_id)
                 await inter.response.send_message(f"✅ Đã cài **{self_inner.title}** → <#{ch_id}>")
@@ -727,7 +726,7 @@ class ChannelConfigSelect(Select):
         self.cfg_key = cfg_key; self.title = title
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.")
+        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         ch_id = int(self.values[0])
         save_cfg(self.cfg_key, ch_id)
         await interaction.response.send_message(f"✅ Đã cài **{self.title}** → <#{ch_id}>")
@@ -738,7 +737,7 @@ class RoleConfigSelect(Select):
         self.cfg_key = cfg_key; self.title = title
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.")
+        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         role_id = int(self.values[0])
         save_cfg(self.cfg_key, role_id)
         await interaction.response.send_message(f"✅ Đã cài **{self.title}** → <@&{role_id}>")
@@ -753,13 +752,14 @@ class SetupMainView(View):
         self.ctx = ctx
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        # FIX: override này che mất interaction_check() của GuildContextView (View cha)
-        # nên phải tự set guild context ở đây, nếu không mọi callback bên trong View
-        # này sẽ chạy mà KHÔNG có guild context.
-        if interaction.guild_id:
-            set_current_guild(interaction.guild_id)
+        # FIX: gọi super() TRƯỚC — GuildContextView.interaction_check() vừa set guild
+        # context vừa áp AUTH_GATE (chặn nếu server chưa/hết ủy quyền). Override ở đây
+        # chỉ để cộng thêm điều kiện admin-only, KHÔNG được tự ý bỏ qua super() như
+        # trước (bug đã gặp thực tế — xem CHANGELOG v4.25.3).
+        if not await super().interaction_check(interaction):
+            return False
         if interaction.user.id not in ADMIN_IDS:
-            await interaction.response.send_message("❌ Chỉ admin.")
+            await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
             return False
         return True
 
@@ -1797,10 +1797,10 @@ class MkChannelView(View):
         self.add_item(lock_sel)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        # FIX: override này che mất interaction_check() của GuildContextView (View cha),
-        # tự set guild context ở đây (xem SetupMainView để biết chi tiết).
-        if interaction.guild_id:
-            set_current_guild(interaction.guild_id)
+        # FIX: gọi super() TRƯỚC (set guild context + AUTH_GATE) thay vì tự set
+        # guild context rồi bỏ qua ủy quyền — xem SetupMainView để biết chi tiết.
+        if not await super().interaction_check(interaction):
+            return False
         if interaction.user.id != self.ctx.author.id:
             await interaction.response.send_message("❌ Chỉ người gõ lệnh mới dùng được.", ephemeral=True)
             return False
@@ -2053,10 +2053,9 @@ class _PageView(View):
         self.next_btn.disabled = self.page >= len(self.embeds) - 1
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        # FIX: đồng bộ với các override khác — view này không đụng data nhưng set
-        # context ở đây cho nhất quán, phòng khi sau này thêm callback đụng data.
-        if interaction.guild_id:
-            set_current_guild(interaction.guild_id)
+        # FIX: gọi super() TRƯỚC (set guild context + AUTH_GATE) — xem SetupMainView.
+        if not await super().interaction_check(interaction):
+            return False
         return interaction.user.id == self.author_id
 
     @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)

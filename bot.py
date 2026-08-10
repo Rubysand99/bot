@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.25.1"
+BOT_VERSION = "4.25.3"
 BOT_UPDATED = "2026-08-10"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
@@ -28,9 +28,11 @@ if not TOKEN:
 intents = discord.Intents.all()
 
 
-# Lệnh dùng để ủy quyền/quản lý guild — LUÔN được phép chạy dù server chưa ủy quyền,
-# để admin có cách bật ủy quyền (xem AUTH_GATE bên dưới + cogs/admin.py .as/.aslist).
-AUTH_EXEMPT_COMMANDS = {"as", "aslist"}
+# Lệnh dùng để ủy quyền server — LUÔN được phép chạy dù server chưa ủy quyền, để admin
+# còn cách bật ủy quyền (xem AUTH_GATE bên dưới + cogs/admin.py `.as`). Xem trạng thái
+# ủy quyền của từng server bằng `.serverlist` (cogs/invite.py) — lệnh đó KHÔNG cần
+# exempt vì luôn được chạy từ 1 server ĐÃ ủy quyền hoặc qua DM.
+AUTH_EXEMPT_COMMANDS = {"as"}
 
 
 class GuildContextTree(app_commands.CommandTree):
@@ -68,7 +70,7 @@ async def _set_guild_context_prefix(ctx: commands.Context):
 @bot.check
 async def _global_guild_authorization_check(ctx: commands.Context) -> bool:
     """AUTH_GATE — chặn MỌI lệnh prefix (.command) ở server CHƯA được admin ủy quyền
-    qua `.as <id_server>`, trừ chính lệnh `.as`/`.aslist` (để admin còn cách bật).
+    qua `.as <id_server>`, trừ chính lệnh `.as` (để admin còn cách bật).
     DM luôn được phép (ctx.guild is None) — Ruby có thể ủy quyền server mới bằng cách
     DM bot `.as <id_server>` mà không cần vào server đó. Xem AI_CONTEXT.md mục Multi-guild."""
     if not ctx.guild:
