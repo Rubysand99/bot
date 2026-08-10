@@ -384,6 +384,40 @@ def save_global_data(data: dict):
     except Exception as e:
         log.error(f"[DATA] ❌ Lỗi tạo save task (global): {e}")
 
+# ══════════════════════════════════════════
+# GUILD AUTHORIZATION — server chỉ hoạt động sau khi admin ủy quyền qua .as
+# ══════════════════════════════════════════
+# Lưu ở global data ("_id": "main") vì đây là danh sách quyền, KHÔNG thuộc riêng
+# guild nào — phải đọc được kể cả khi guild đó chưa có document guild_<id> (mới join).
+def get_authorized_guilds() -> list[int]:
+    g = load_global_data()
+    return list(g.get("_authorized_guilds", []))
+
+def is_guild_authorized(guild_id: int) -> bool:
+    return guild_id in get_authorized_guilds()
+
+def add_authorized_guild(guild_id: int) -> bool:
+    """Ủy quyền 1 guild. Trả về True nếu MỚI thêm (chưa từng được ủy quyền)."""
+    g = load_global_data()
+    lst = g.setdefault("_authorized_guilds", [])
+    if guild_id in lst:
+        return False
+    lst.append(guild_id)
+    save_global_data(g)
+    return True
+
+def remove_authorized_guild(guild_id: int) -> bool:
+    """Thu hồi ủy quyền 1 guild. Trả về True nếu trước đó CÓ được ủy quyền."""
+    g = load_global_data()
+    lst = g.get("_authorized_guilds", [])
+    if guild_id not in lst:
+        return False
+    lst = [i for i in lst if i != guild_id]
+    g["_authorized_guilds"] = lst
+    save_global_data(g)
+    return True
+
+
 async def ensure_guild_loaded(guild_id: int) -> None:
     """Gọi khi bot join guild mới giữa chừng (on_guild_join) để guild đó có cache ngay,
     không phải đợi restart bot."""

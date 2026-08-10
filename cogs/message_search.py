@@ -121,6 +121,11 @@ class MessageSearchCog(commands.Cog):
         # chính trong bot.py — KHÔNG thừa hưởng guild context, phải tự set.
         set_current_guild(message.guild.id)
 
+        # AUTH_GATE — server chưa được admin ủy quyền qua .as → bỏ qua (xem bot.py + AI_CONTEXT.md)
+        from core.data import is_guild_authorized
+        if not is_guild_authorized(message.guild.id):
+            return
+
         data = load_data()
         search_channels = data.get("cfg_ai_search_channels", [])
         if message.channel.id not in search_channels:

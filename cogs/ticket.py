@@ -1441,6 +1441,11 @@ class TicketCog(commands.Cog):
         # load_data() bên dưới luôn đọc default (True) thay vì cấu hình thật của guild.
         if message.guild:
             set_current_guild(message.guild.id)
+        # AUTH_GATE — server chưa được admin ủy quyền qua .as → bỏ qua (xem bot.py + AI_CONTEXT.md)
+        if message.guild:
+            from core.data import is_guild_authorized
+            if not is_guild_authorized(message.guild.id):
+                return
         # Bỏ qua nếu tính năng đang bị tắt qua .st
         if not load_data().get("cfg_ticket_relay", True):
             return

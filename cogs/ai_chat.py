@@ -566,6 +566,11 @@ class AICog(commands.Cog):
             return
         if message.author.id not in ADMIN_IDS:
             return
+        # AUTH_GATE — server chưa được admin ủy quyền qua .as → bỏ qua (xem bot.py + AI_CONTEXT.md)
+        if message.guild:
+            from core.data import is_guild_authorized
+            if not is_guild_authorized(message.guild.id):
+                return
 
         # Reply trong forum PENDING (câu hỏi AI không chắc) hoặc RESOLVED (sửa đáp án)
         if isinstance(message.channel, discord.Thread):

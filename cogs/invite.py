@@ -436,8 +436,11 @@ class InviteCog(commands.Cog):
         if not guilds:
             return await ctx.reply("❌ Bot chưa vào server nào.")
 
+        from core.data import is_guild_authorized
+        n_auth = sum(1 for g in guilds if is_guild_authorized(g.id))
+
         embed = discord.Embed(
-            title     = f"🌐 Bot đang ở {len(guilds)} server",
+            title     = f"🌐 Bot đang ở {len(guilds)} server ({n_auth} đã ủy quyền)",
             color     = 0x5865F2,
             timestamp = datetime.now(timezone.utc),
         )
@@ -446,10 +449,12 @@ class InviteCog(commands.Cog):
             bots    = sum(1 for m in g.members if m.bot)
             humans  = g.member_count - bots
             owner   = str(g.owner) if g.owner else f"ID:{g.owner_id}"
+            auth_tag = "✅ Đã ủy quyền" if is_guild_authorized(g.id) else "🔒 CHƯA ủy quyền — `.as {}`".format(g.id)
             embed.add_field(
                 name  = f"{g.name}",
                 value = (
                     f"🆔 `{g.id}`\n"
+                    f"{auth_tag}\n"
                     f"👑 {owner}\n"
                     f"👥 {humans} người · 🤖 {bots} bot\n"
                     f"📅 <t:{int(g.created_at.timestamp())}:D>"
@@ -457,7 +462,7 @@ class InviteCog(commands.Cog):
                 inline = True,
             )
 
-        embed.set_footer(text=f"TuyTam Bot  •  {len(guilds)} servers")
+        embed.set_footer(text=f"TuyTam Bot  •  {len(guilds)} servers  •  .as <id> để bật/tắt ủy quyền")
         await ctx.reply(embed=embed)
 
     @commands.command(name="leaveguild", aliases=["leaveserver"])
@@ -836,6 +841,11 @@ class InviteCog(commands.Cog):
         # (đã xác nhận qua log lỗi thực tế: "load_data() được gọi mà KHÔNG có guild context").
         set_current_guild(member.guild.id)
 
+        # AUTH_GATE — server chưa được admin ủy quyền qua .as → bỏ qua (xem bot.py + AI_CONTEXT.md)
+        from core.data import is_guild_authorized
+        if not is_guild_authorized(member.guild.id):
+            return
+
         # Welcome ping (xóa sau 10s)
         ch_id = self.WELCOME_GUILDS.get(member.guild.id)
         if ch_id:
@@ -1122,6 +1132,11 @@ class InviteCog(commands.Cog):
         # FIX: cùng lý do với on_member_join — listener chạy Task riêng, phải tự set
         # guild context trước khi đụng vào cache_invites()/_add_invite()/save_*().
         set_current_guild(member.guild.id)
+
+        # AUTH_GATE — server chưa được admin ủy quyền qua .as → bỏ qua (xem bot.py + AI_CONTEXT.md)
+        from core.data import is_guild_authorized
+        if not is_guild_authorized(member.guild.id):
+            return
 
         await cache_invites(member.guild)
 

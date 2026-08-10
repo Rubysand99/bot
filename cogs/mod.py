@@ -1107,6 +1107,12 @@ class ModCog(commands.Cog):
         # on_message chính trong bot.py. Thiếu dòng này khiến _get_mod_data() gọi
         # load_data() mà không có guild context → automod luôn đọc config rỗng/mặc định.
         set_current_guild(message.guild.id)
+
+        # AUTH_GATE — server chưa được admin ủy quyền qua .as → bỏ qua (xem bot.py + AI_CONTEXT.md)
+        from core.data import is_guild_authorized
+        if not is_guild_authorized(message.guild.id):
+            return
+
         mod = _get_mod_data()
         am  = mod.get("automod", {})
         if not am.get("enabled"):

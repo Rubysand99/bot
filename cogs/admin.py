@@ -20,6 +20,8 @@ from core.data import (
     get_cfg_stock_category, get_cfg_sold_category,
     get_cfg_font, _uname_plain, is_staff_member,
     load_data, get_price_sections,
+    is_guild_authorized, add_authorized_guild, remove_authorized_guild,
+    ensure_guild_loaded,
     can_use_dangerous_cmd, parse_amount, fmt_amount,
     get_or_fetch_channel, set_current_guild,
     add_seller_sale, add_user_spent,
@@ -61,6 +63,42 @@ _BOT_START_TS = datetime.now(timezone.utc)
 class AdminCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    # ── .as — Ủy quyền / thu hồi quyền dùng bot cho 1 server (AUTH_GATE, xem bot.py) ──
+    @commands.command(name="as", aliases=["authorize", "uyquyen"])
+    async def authorize_server_cmd(self, ctx, guild_id: int = None):
+        if ctx.author.id not in ADMIN_IDS: return
+
+        if guild_id is None:
+            if ctx.guild:
+                guild_id = ctx.guild.id
+            else:
+                await ctx.reply("❌ Dùng: `.as <id_server>` (hoặc DM/gõ trong server cần bật).", mention_author=False)
+                return
+
+        guild_obj  = self.bot.get_guild(guild_id)
+        guild_name = guild_obj.name if guild_obj else "*(bot chưa/không còn ở server này)*"
+
+        if is_guild_authorized(guild_id):
+            remove_authorized_guild(guild_id)
+            embed = discord.Embed(
+                title="🔒 Đã THU HỒI ủy quyền",
+                description=f"**Server:** {guild_name}\n**ID:** `{guild_id}`\n\nBot sẽ ngừng hoạt động ở server này ngay lập tức.",
+                color=0xED4245,
+            )
+        else:
+            # Đảm bảo guild đó đã có cache/document riêng ngay, không cần đợi bot restart.
+            await ensure_guild_loaded(guild_id)
+            embed = discord.Embed(
+                title="🔓 Đã ỦY QUYỀN",
+                description=(
+                    f"**Server:** {guild_name}\n**ID:** `{guild_id}`\n\n"
+                    f"Bot đã có thể hoạt động ở server này. Data hoàn toàn riêng — "
+                    f"không dùng chung với bất kỳ server nào khác."
+                ),
+                color=0x57F287,
+            )
+        await ctx.reply(embed=embed, mention_author=False)
 
     # ── .settings ──
     @commands.command(name="settings", aliases=["setting", "caidat", "st"])
@@ -366,7 +404,10 @@ class AdminCog(commands.Cog):
                      "`.backfillip [số]` — Đọc lại lịch sử kênh log, backfill IP records vào DB (mặc định 2000 message)\n"
                      "`.testip` — Test kết nối verify server (chống VPN/multi-acc)", False),
                     ("🌐 Quản lý server bot (admin)",
-                     "`.serverlist` (alias `.servers`/`.guildlist`) — Danh sách server bot đang ở kèm ID\n"
+                     "`.serverlist` (alias `.servers`/`.guildlist`) — Danh sách server bot đang ở, kèm ID + trạng thái ủy quyền\n"
+                     "`.as <guild_id>` (alias `.authorize`/`.uyquyen`) — Bật/tắt (toggle) ủy quyền cho 1 server. "
+                     "Server CHƯA ủy quyền → bot không chạy bất kỳ lệnh/tính năng nào ở đó. "
+                     "Không truyền `guild_id` → áp dụng cho server đang gõ lệnh. Dùng được cả qua DM bot.\n"
                      "`.leaveguild <guild_id>` — Cho bot rời khỏi 1 server cụ thể", False),
                     ("🔷 Slash commands",
                      "`/invite` `/invitetop` `/resetinvite`", False),

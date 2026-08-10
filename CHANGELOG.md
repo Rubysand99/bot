@@ -1,5 +1,21 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.25.0] — 2026-08-10
+
+### ✨ Tính năng mới
+- `core/data.py` — Thêm hệ thống **ủy quyền server (AUTH_GATE)**: `get_authorized_guilds()`, `is_guild_authorized()`, `add_authorized_guild()`, `remove_authorized_guild()` — lưu ở global data (`_id: "main"`, key `_authorized_guilds`), không thuộc riêng guild nào.
+- `cogs/admin.py` — Lệnh `.as <guild_id>` (alias `.authorize`/`.uyquyen`, admin only): **toggle** ủy quyền cho 1 server — không truyền `guild_id` thì áp dụng luôn cho server đang gõ lệnh. Dùng được cả qua DM bot (không cần đang ở trong server đó), tiện cho Ruby ủy quyền server mới chỉ bằng ID.
+- `bot.py` — Server **CHƯA được ủy quyền** thì bot không chạy bất kỳ lệnh `.command`/slash command nào, cũng bỏ qua toàn bộ tính năng tự động (auto-sold, AI channel, legit/vouch) ở server đó:
+  - `_global_guild_authorization_check()` — global `bot.check` chặn mọi lệnh prefix, trừ `.as`/`.aslist`.
+  - `GuildContextTree.interaction_check()` — chặn slash command tương tự (báo ephemeral cho admin).
+  - `on_message` — bỏ qua auto-sold/AI channel/legit-vouch nếu guild chưa ủy quyền.
+  - `on_guild_join` — bot vẫn tự load cache riêng cho guild mới (không đổi), nhưng giờ DM ngay cho `ADMIN_IDS` báo server mới CHƯA được ủy quyền + hướng dẫn `.as <id>`.
+- `cogs/invite.py`, `cogs/mod.py`, `cogs/ticket.py`, `cogs/ai_chat.py`, `cogs/message_search.py` — thêm gate `is_guild_authorized()` ở đầu các listener chạy Task riêng (`on_member_join`, `on_member_remove`, automod `on_message`, ticket relay `on_message`, AI forum-reply `on_message`, AI search-index `on_message`) — các listener này KHÔNG đi qua `bot.py: on_message` nên phải tự chặn riêng, tương tự cách chúng đã tự `set_current_guild()` (xem AI_CONTEXT.md mục Multi-guild).
+- `cogs/invite.py` — `.serverlist`/`.servers`/`.guildlist` giờ hiển thị thêm trạng thái ✅ Đã ủy quyền / 🔒 CHƯA ủy quyền cho từng server, kèm tổng số server đã ủy quyền ở title.
+- `cogs/admin.py` — Mục `.help invite` (phần "🌐 Quản lý server bot") — cập nhật mô tả `.serverlist` + thêm hướng dẫn lệnh `.as`.
+
+---
+
 ## [v4.23.2] — 2026-08-05
 
 ### 🐛 Sửa lỗi
