@@ -67,20 +67,46 @@ async def wait_data_cache_ready() -> None:
 class GuildContextView(discord.ui.View):
     """Thay thế discord.ui.View — tự set guild context trước khi chạy callback của bất kỳ
     nút/select nào bên trong, để load_data()/save_data() thao tác đúng document của guild đó.
+    Đồng thời áp dụng AUTH_GATE (xem bot.py) — chặn nút bấm/select ở server CHƯA được
+    ủy quyền. Bắt buộc: mọi View có nút bấm/select đọc-ghi data theo guild PHẢI dùng class
+    này (không phải discord.ui.View trực tiếp), nếu không nút bấm sẽ hoạt động ngay cả khi
+    server đã bị `.as` thu hồi ủy quyền (bug đã gặp thực tế ở panel ticket/giveaway/settings).
     Dùng: từ discord.ui import Button, Select  (KHÔNG import View)
           from core.data import GuildContextView as View
     """
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild_id:
             set_current_guild(interaction.guild_id)
+            if interaction.guild_id not in get_authorized_guilds():
+                if interaction.user.id in ADMIN_IDS:
+                    try:
+                        await interaction.response.send_message(
+                            f"🔒 Server này (`{interaction.guild_id}`) chưa được ủy quyền.\n"
+                            f"Dùng `.as {interaction.guild_id}` để bật.",
+                            ephemeral=True,
+                        )
+                    except Exception:
+                        pass
+                return False
         return True
 
 
 class GuildContextModal(discord.ui.Modal):
-    """Tương tự GuildContextView nhưng cho Modal."""
+    """Tương tự GuildContextView nhưng cho Modal — cùng áp dụng AUTH_GATE, xem docstring trên."""
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild_id:
             set_current_guild(interaction.guild_id)
+            if interaction.guild_id not in get_authorized_guilds():
+                if interaction.user.id in ADMIN_IDS:
+                    try:
+                        await interaction.response.send_message(
+                            f"🔒 Server này (`{interaction.guild_id}`) chưa được ủy quyền.\n"
+                            f"Dùng `.as {interaction.guild_id}` để bật.",
+                            ephemeral=True,
+                        )
+                    except Exception:
+                        pass
+                return False
         return True
 
 
@@ -217,7 +243,8 @@ def _default_data_global() -> dict:
 # ══════════════════════════════════════════
 _save_locks: dict[int, asyncio.Lock] = {}
 _global_save_lock = None
-_ticket_lock  = None   # FIX: Lock tránh trùng số ticket
+_ticket_locks: dict[int, asyncio.Lock] = {}   # FIX: 1 lock/guild (không phải 1 lock chung
+                                               # cho mọi guild) — xem get_ticket_number().
 
 def _get_save_lock(guild_id: int) -> asyncio.Lock:
     if guild_id not in _save_locks:
@@ -230,11 +257,10 @@ def _get_global_save_lock() -> asyncio.Lock:
         _global_save_lock = asyncio.Lock()
     return _global_save_lock
 
-def _get_ticket_lock():
-    global _ticket_lock
-    if _ticket_lock is None:
-        _ticket_lock = asyncio.Lock()
-    return _ticket_lock
+def _get_ticket_lock(guild_id: int) -> asyncio.Lock:
+    if guild_id not in _ticket_locks:
+        _ticket_locks[guild_id] = asyncio.Lock()
+    return _ticket_locks[guild_id]
 
 
 # ══════════════════════════════════════════
@@ -448,10 +474,35 @@ async def ensure_guild_loaded(guild_id: int) -> None:
         log.info(f"[DATA] ✅ Đã load cache cho guild mới {guild_id}")
 
 async def init_data_cache(bot) -> None:
-    """Gọi 1 lần ở on_ready. Load riêng document cho TỪNG guild bot đang ở,
-    cộng thêm 1 document global (tempban/ip) và toàn bộ giveaways (tách theo message_id,
-    không thuộc guild nào cụ thể trong cache)."""
+    """Gọi ở on_ready. Load riêng document cho TỪNG guild bot đang ở, cộng thêm 1
+    document global (tempban/ip/ủy quyền) và toàn bộ giveaways.
+    ⚠️ FIX (lỗi nghiêm trọng, cùng gốc với bug .as ở CHANGELOG v4.25.1 nhưng ảnh hưởng
+    TOÀN BỘ data chứ không riêng ủy quyền): on_ready() KHÔNG chỉ chạy 1 lần lúc khởi
+    động — Discord gateway reconnect (rớt mạng, Railway restart container, session bị
+    Discord invalidate...) khiến on_ready() refire bất cứ lúc nào trong suốt vòng đời
+    bot. Bản cũ của hàm này UNCONDITIONALLY reset _data_cache/_global_cache/
+    _giveaways_cache = {} rồi load lại từ Mongo mỗi lần refire — nếu đúng lúc đó có 1
+    save_data()/save_global_data() nào vừa update RAM xong nhưng task ghi Mongo nền
+    (fire-and-forget) CHƯA kịp hoàn tất, thay đổi đó bị XOÁ SẠCH khỏi cache dù Mongo
+    volume chưa kịp nhận — y hệt kiểu bug `.as` đã gặp, nhưng ở đây ăn vào MỌI field
+    (giá, seller, invite count, ticket note...), không chỉ ủy quyền. Giờ chỉ full-load
+    ở LẦN GỌI ĐẦU TIÊN; các lần refire sau chỉ nạp thêm guild MỚI (phòng trường hợp bot
+    được mời vào lúc mất kết nối) — KHÔNG đụng vào cache/giveaways đã có sẵn."""
     global _data_cache, _global_cache, _giveaways_cache
+
+    first_boot = not _data_cache_ready.is_set()
+
+    if not first_boot:
+        # on_ready refire (reconnect) — giữ nguyên cache hiện có, chỉ nạp guild mới nếu có.
+        new_guilds = [g for g in bot.guilds if g.id not in _data_cache]
+        for guild in new_guilds:
+            _data_cache[guild.id] = await _mongo_load(guild.id)
+        if new_guilds:
+            log.info(f"[DATA] 🔁 on_ready refire — nạp thêm {len(new_guilds)} guild mới, giữ nguyên cache cũ.")
+        else:
+            log.info("[DATA] 🔁 on_ready refire (reconnect) — giữ nguyên cache hiện có, không reload.")
+        return
+
     _data_cache = {}
     for guild in bot.guilds:
         _data_cache[guild.id] = await _mongo_load(guild.id)
@@ -846,19 +897,26 @@ def remove_pending_sold_buyer(channel_id: int):
 
 async def get_ticket_number(guild_id: int) -> str:
     """FIX: async + Lock đảm bảo không bao giờ tạo 2 ticket trùng số.
-    Mỗi guild đếm ticket riêng (guild_id bắt buộc truyền vào từ nơi gọi, VD ctx.guild.id)."""
-    async with _get_ticket_lock():
+    Mỗi guild đếm ticket riêng (guild_id bắt buộc truyền vào từ nơi gọi, VD ctx.guild.id).
+    Lock cũng tách riêng theo guild (_get_ticket_lock(guild_id)) — 2 server tạo ticket
+    cùng lúc không còn phải xếp hàng chờ nhau dù chẳng liên quan gì đến nhau."""
+    async with _get_ticket_lock(guild_id):
         data = load_data()
         data["ticket"] = data.get("ticket", 0) + 1
         num = data["ticket"]
-        # Ghi trực tiếp vào MongoDB ngay lập tức (không dùng queue)
+        # FIX: update cache TRƯỚC khi await Mongo (không phải sau). `await col.update_one`
+        # bên dưới là 1 điểm yield — trong lúc chờ, 1 coroutine KHÁC (vd sửa danh sách
+        # seller) có thể load_data() (đọc số ticket CŨ, vì cache chưa kịp cập nhật) rồi
+        # save_data() — ghi đè NGUYÊN cache guild này bằng bản có số ticket cũ, làm cache
+        # "tụt" lại → lần .newticket kế tiếp sinh trùng số. Cập nhật cache trước khi có
+        # điểm yield nào đóng hẳn cửa sổ race này.
+        if guild_id in _data_cache:
+            _data_cache[guild_id]["ticket"] = num
         col, _ = _get_mongo()
         try:
             await col.update_one({"_id": f"guild_{guild_id}"}, {"$set": {"ticket": num}}, upsert=True)
         except Exception as e:
             log.error(f"[DATA] ❌ Lỗi cập nhật ticket counter (guild {guild_id}): {e}")
-        if guild_id in _data_cache:
-            _data_cache[guild_id]["ticket"] = num
         return f"{num:03d}"
 
 # ══════════════════════════════════════════

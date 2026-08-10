@@ -1,5 +1,39 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.25.4] — 2026-08-10
+
+### 🔍 Rà soát toàn bộ codebase — Phần 1/~10: `core/data.py`
+Bắt đầu rà soát có hệ thống toàn bộ code (chia nhỏ theo từng phần, không dồn 1 lần).
+Phần 1 là `core/data.py` — nền tảng cache/guild-isolation mà mọi cog khác phụ thuộc vào.
+
+### 🐛 Sửa lỗi
+- `core/data.py` — **`init_data_cache()` reset sạch cache mỗi lần `on_ready()` refire —
+  ăn vào MỌI data, không riêng ủy quyền.** Cùng gốc với bug `.as` đã sửa ở v4.25.1, nhưng
+  hoá ra nghiêm trọng hơn nhiều: `on_ready()` KHÔNG chỉ chạy 1 lần lúc khởi động — Discord
+  gateway reconnect (rớt mạng, Railway restart, session bị Discord invalidate...) khiến nó
+  refire bất cứ lúc nào. Bản cũ unconditionally reset `_data_cache`/`_global_cache`/
+  `_giveaways_cache = {}` rồi load lại từ Mongo MỖI LẦN refire — bất kỳ `save_data()`/
+  `save_global_data()` nào vừa update RAM xong nhưng task ghi Mongo nền chưa kịp hoàn tất
+  (giá, danh sách seller, invite count, ticket note, QR...) đều bị xoá sạch khỏi cache nếu
+  đúng lúc đó có 1 lần reconnect. Đã sửa: chỉ full-load ở lần gọi ĐẦU TIÊN; các lần refire
+  sau chỉ nạp thêm guild MỚI (phòng bot được mời lúc mất kết nối), giữ nguyên cache cũ.
+- `core/data.py` — **`get_ticket_number()` có thể sinh trùng số ticket dưới tải đồng thời.**
+  Cache được cập nhật SAU `await col.update_one(...)` — trong lúc chờ Mongo (1 điểm yield),
+  1 coroutine khác load_data() (đọc số ticket CŨ vì cache chưa kịp cập nhật) rồi save_data()
+  sẽ ghi đè NGUYÊN cache guild đó bằng bản có số cũ, làm cache "tụt" lại → lần tạo ticket kế
+  tiếp sinh trùng số. Đã chuyển việc cập nhật cache lên TRƯỚC điểm `await`, đóng cửa sổ race.
+- `core/data.py` — `get_ticket_number()` dùng 1 `asyncio.Lock` DUY NHẤT cho MỌI guild, khiến
+  2 server tạo ticket cùng lúc phải xếp hàng chờ nhau dù chẳng liên quan — đi ngược đúng mục
+  tiêu multi-guild. Đổi sang 1 lock riêng mỗi guild (`_get_ticket_lock(guild_id)`), giống
+  pattern `_save_locks` đã dùng cho việc ghi Mongo.
+
+### 📌 Lưu ý cho phần sau (chưa sửa ở bản này)
+- `bot.py: on_ready()` cũng chạy lại các bước "1 lần" khác mỗi lần refire (gửi lại embed
+  "Bot Khởi Động" vào kênh changelog, `bot.add_view()` ×4, sync slash command...) — sẽ rà ở
+  phần audit `bot.py` (Part 2), không sửa chung vào bản này để tránh 1 lần đổi quá nhiều file.
+
+---
+
 ## [v4.25.3] — 2026-08-10
 
 ### 🐛 Sửa lỗi
