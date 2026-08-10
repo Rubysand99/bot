@@ -20,7 +20,7 @@ from core.data import (
     get_cfg_stock_category, get_cfg_sold_category,
     get_cfg_font, _uname_plain, is_staff_member,
     load_data, get_price_sections,
-    is_guild_authorized, add_authorized_guild, remove_authorized_guild,
+    is_guild_authorized, set_guild_authorized,
     ensure_guild_loaded,
     can_use_dangerous_cmd, parse_amount, fmt_amount,
     get_or_fetch_channel, set_current_guild,
@@ -80,7 +80,7 @@ class AdminCog(commands.Cog):
         guild_name = guild_obj.name if guild_obj else "*(bot chưa/không còn ở server này)*"
 
         if is_guild_authorized(guild_id):
-            remove_authorized_guild(guild_id)
+            await set_guild_authorized(guild_id, False)
             embed = discord.Embed(
                 title="🔒 Đã THU HỒI ủy quyền",
                 description=f"**Server:** {guild_name}\n**ID:** `{guild_id}`\n\nBot sẽ ngừng hoạt động ở server này ngay lập tức.",
@@ -89,6 +89,7 @@ class AdminCog(commands.Cog):
         else:
             # Đảm bảo guild đó đã có cache/document riêng ngay, không cần đợi bot restart.
             await ensure_guild_loaded(guild_id)
+            await set_guild_authorized(guild_id, True)  # await xong (đã ghi Mongo) mới báo thành công
             embed = discord.Embed(
                 title="🔓 Đã ỦY QUYỀN",
                 description=(

@@ -397,25 +397,47 @@ def is_guild_authorized(guild_id: int) -> bool:
     return guild_id in get_authorized_guilds()
 
 def add_authorized_guild(guild_id: int) -> bool:
-    """Ủy quyền 1 guild. Trả về True nếu MỚI thêm (chưa từng được ủy quyền)."""
+    """Ủy quyền 1 guild. Trả về True nếu MỚI thêm (chưa từng được ủy quyền).
+    ⚠️ CỐ Ý dùng loop.create_task() bên trong (qua save_global_data) KHÔNG đủ an toàn
+    ở đây: on_ready() có thể refire bất cứ lúc nào (Discord gateway reconnect — không
+    chỉ chạy 1 lần lúc khởi động) và unconditionally RESET _global_cache từ Mongo
+    (xem init_data_cache()). Nếu chỉ update RAM rồi ghi Mongo nền (fire-and-forget) mà
+    chưa kịp xong, 1 lần reconnect ngay sau `.as` có thể làm MẤT ủy quyền vừa bật dù
+    bot đã báo thành công (đã gặp thực tế). Ủy quyền là thao tác hiếm/nhạy cảm nên
+    hàm này là async — GỌI KÈM `await` — và tự ghi Mongo NGAY, đảm bảo đã lưu chắc
+    chắn trước khi trả kết quả cho lệnh `.as`."""
+    global _global_cache
     g = load_global_data()
     lst = g.setdefault("_authorized_guilds", [])
     if guild_id in lst:
         return False
     lst.append(guild_id)
-    save_global_data(g)
+    _global_cache = g
     return True
 
 def remove_authorized_guild(guild_id: int) -> bool:
-    """Thu hồi ủy quyền 1 guild. Trả về True nếu trước đó CÓ được ủy quyền."""
+    """Thu hồi ủy quyền 1 guild. Trả về True nếu trước đó CÓ được ủy quyền.
+    Cùng lý do với add_authorized_guild() ở trên — hàm này KHÔNG tự ghi Mongo,
+    dùng bản async_* bên dưới để đảm bảo ghi xong trước khi phản hồi admin."""
+    global _global_cache
     g = load_global_data()
     lst = g.get("_authorized_guilds", [])
     if guild_id not in lst:
         return False
     lst = [i for i in lst if i != guild_id]
     g["_authorized_guilds"] = lst
-    save_global_data(g)
+    _global_cache = g
     return True
+
+async def set_guild_authorized(guild_id: int, authorized: bool) -> bool:
+    """Bản AWAIT được — dùng cho lệnh `.as` (cogs/admin.py). Update RAM NGAY (đồng bộ,
+    như add/remove_authorized_guild ở trên) rồi `await` ghi thẳng xuống Mongo trước khi
+    trả về, để tránh race với on_ready() refire (xem giải thích ở add_authorized_guild).
+    Trả về True nếu trạng thái THỰC SỰ đổi (False nếu đã ở đúng trạng thái đó rồi)."""
+    changed = add_authorized_guild(guild_id) if authorized else remove_authorized_guild(guild_id)
+    if changed:
+        await _mongo_save_global(_global_cache)
+    return changed
 
 
 async def ensure_guild_loaded(guild_id: int) -> None:

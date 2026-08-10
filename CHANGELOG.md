@@ -1,5 +1,21 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.25.1] — 2026-08-10
+
+### 🐛 Sửa lỗi
+- `core/data.py`, `cogs/admin.py` — `.as <guild_id>` báo ỦY QUYỀN thành công nhưng lệnh
+  ngay sau đó vẫn bị chặn "chưa được ủy quyền". Nguyên nhân: `add_authorized_guild()`/
+  `remove_authorized_guild()` ghi Mongo qua `save_global_data()` — chạy nền
+  (`loop.create_task`, fire-and-forget). Discord gateway reconnect có thể khiến
+  `on_ready()` refire bất cứ lúc nào (không chỉ 1 lần lúc khởi động) và
+  `init_data_cache()` unconditionally RESET `_global_cache` từ Mongo — nếu refire xảy
+  ra trước khi task ghi nền kịp hoàn tất, ủy quyền vừa bật bị mất dù bot đã báo
+  thành công. Thêm `set_guild_authorized(guild_id, bool)` (async, `.as` giờ `await`
+  hàm này) — ghi thẳng xuống Mongo và đợi xong TRƯỚC KHI gửi embed xác nhận, đảm bảo
+  chắc chắn đã lưu, không còn phụ thuộc task nền.
+
+---
+
 ## [v4.25.0] — 2026-08-10
 
 ### ✨ Tính năng mới
