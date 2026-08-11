@@ -543,6 +543,11 @@ def get_cfg_proof_channel()   -> int: return load_data().get("cfg_proof_channel"
 def get_cfg_ai_channel()      -> int: return load_data().get("cfg_ai_channel", 0)
 def get_cfg_legit_emoji()     -> str: return load_data().get("cfg_legit_emoji", "✅")
 def get_cfg_vouch_emoji()     -> str: return load_data().get("cfg_vouch_emoji", "✅")
+def get_cfg_giveaway_require_verify() -> bool:
+    """Bắt buộc verify (role Verify) mới được bấm 🎉 Tham gia giveaway hay không.
+    Mặc định True — GIỮ ĐÚNG hành vi cũ trước khi có toggle này (check verify vốn
+    luôn bật cứng trong cogs/giveaway.py: GiveawayView.join). Bật/tắt qua `.gwverify`."""
+    return bool(load_data().get("cfg_giveaway_require_verify", True))
 
 def set_cfg_font(font: str):
     data = load_data(); data["cfg_font"] = font; save_data(data)
@@ -552,6 +557,9 @@ def set_cfg_legit_emoji(emoji: str):
 
 def set_cfg_vouch_emoji(emoji: str):
     save_cfg("cfg_vouch_emoji", emoji.strip())
+
+def set_cfg_giveaway_require_verify(enabled: bool):
+    save_cfg("cfg_giveaway_require_verify", bool(enabled))
 
 def save_cfg(key: str, value):
     data = load_data(); data[key] = value; save_data(data)

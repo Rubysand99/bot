@@ -16,6 +16,7 @@ from discord.ui import Button, Select
 from core.data import (
     ADMIN_IDS, load_giveaways_data, save_giveaways_data,
     _uname, _uname_plain, get_or_fetch_channel,
+    get_cfg_giveaway_require_verify, set_cfg_giveaway_require_verify,
     GuildContextView as View, GuildContextModal as Modal,
 )
 
@@ -143,18 +144,19 @@ class GiveawayView(View):
 
         uid = interaction.user.id
 
-        # Kiểm tra role Verify
+        # Kiểm tra role Verify — bật/tắt được qua .gwverify (mặc định BẬT)
         try:
-            from cogs.invite import _get_verify_role_id
-            member = interaction.guild.get_member(uid) if interaction.guild else None
-            if member:
-                verify_role_id = _get_verify_role_id(interaction.guild.id)
-                if not any(r.id == verify_role_id for r in member.roles):
-                    return await interaction.response.send_message(
-                        "❌ Bạn cần **xác minh tài khoản** trước khi tham gia giveaway.\n"
-                        "Gõ `.verify` để nhận link xác minh.",
-                        ephemeral=True,
-                    )
+            if get_cfg_giveaway_require_verify():
+                from cogs.invite import _get_verify_role_id
+                member = interaction.guild.get_member(uid) if interaction.guild else None
+                if member:
+                    verify_role_id = _get_verify_role_id(interaction.guild.id)
+                    if not any(r.id == verify_role_id for r in member.roles):
+                        return await interaction.response.send_message(
+                            "❌ Bạn cần **xác minh tài khoản** trước khi tham gia giveaway.\n"
+                            "Gõ `.verify` để nhận link xác minh.",
+                            ephemeral=True,
+                        )
         except Exception:
             pass
 
@@ -474,6 +476,27 @@ class GiveawayCog(commands.Cog):
             f"**GW #{ref} — {len(entries)} người tham gia:**\n{mentions[:1900]}", ephemeral=True
         )
 
+
+    @commands.command(name="gwverify", aliases=["gwvr", "gwverifyreq"])
+    async def gwverify_toggle(self, ctx):
+        """Bật/tắt yêu cầu verify (role Verify) mới được tham gia giveaway. Mặc định: BẬT."""
+        if ctx.author.id not in ADMIN_IDS:
+            return
+        new_state = not get_cfg_giveaway_require_verify()
+        set_cfg_giveaway_require_verify(new_state)
+        embed = discord.Embed(
+            title=f"{'🔒 Yêu cầu verify: BẬT' if new_state else '🔓 Yêu cầu verify: TẮT'}",
+            description=(
+                "User giờ phải có role **Verify** mới bấm 🎉 Tham gia được. "
+                "Chưa verify sẽ bị chặn + gợi ý gõ `.verify`."
+                if new_state else
+                "User giờ có thể bấm 🎉 Tham gia mà **không cần** verify trước. "
+                "Check IP trùng (chống 1 người dùng nhiều tài khoản) vẫn giữ nguyên, không tắt theo."
+            ),
+            color=0x57F287 if new_state else 0xED4245,
+        )
+        embed.set_footer(text="Áp dụng cho giveaway MỚI bấm Tham gia kể từ bây giờ — không ảnh hưởng người đã tham gia trước đó.")
+        await ctx.reply(embed=embed, mention_author=False)
 
     @commands.command(name="gwstatus")
     async def gwstatus(self, ctx):

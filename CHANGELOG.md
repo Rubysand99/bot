@@ -1,5 +1,21 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.26.0] — 2026-08-10
+
+### ✨ Tính năng mới
+- Lệnh `.gwverify` (alias `.gwvr`/`.gwverifyreq`, admin only) — **bật/tắt** yêu cầu
+  xác minh (role Verify) mới được bấm 🎉 Tham gia giveaway. Trước đây check này BẮT
+  BUỘC, hardcode luôn bật trong `GiveawayView.join()` — giờ mỗi server tự chọn bật/tắt
+  qua 1 lệnh, mặc định **giữ nguyên hành vi cũ (BẬT)** nên không phá server đang chạy.
+  Lưu qua `cfg_giveaway_require_verify` trong data riêng của guild (không ảnh hưởng
+  server khác) — `get_cfg_giveaway_require_verify()`/`set_cfg_giveaway_require_verify()`
+  ở `core/data.py`. TẮT chỉ bỏ check verify — check IP trùng (chống 1 người nhiều tài
+  khoản) vẫn giữ nguyên không đổi theo.
+- `cogs/admin.py` — Cập nhật `.help giveaway` (embed lệnh) + mục `.help` tổng quan để
+  liệt kê `.gwverify`.
+
+---
+
 ## [v4.25.4] — 2026-08-10
 
 ### 🔍 Rà soát toàn bộ codebase — Phần 1/~10: `core/data.py`

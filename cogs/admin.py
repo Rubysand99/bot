@@ -434,7 +434,8 @@ class AdminCog(commands.Cog):
                     ("🔧 Prefix commands (admin)",
                      "`.gwstatus` — Xem toàn bộ giveaway đang chạy & đã kết thúc\n"
                      "`.gwpick <gw_id> <@user>` — Chọn tay winner cho giveaway\n"
-                     "`.gwreset <gw_id>` — Reset giveaway (xoá danh sách người tham gia)", False),
+                     "`.gwreset <gw_id>` — Reset giveaway (xoá danh sách người tham gia)\n"
+                     "`.gwverify` (alias `.gwvr`) — Bật/tắt yêu cầu verify mới được tham gia giveaway (mặc định: BẬT)", False),
                 ]
             },
             "mod": {
@@ -647,7 +648,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🎫 Ticket",    value="`.panel` `.mmpanel` `.panelbuttons` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke` `.setsl` `.setrole`", inline=True)
         embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite` `.verify`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
-        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick` `.gwreset`", inline=True)
+        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick` `.gwreset` `.gwverify`", inline=True)
         embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.timeout` `.tempban`\n`.warn` `.modlog` `.xoa` `.automod`", inline=True)
         embed.add_field(name="🤖 AI Chat",   value="`.aireset` `.mychat` `.aisearch`", inline=True)
         embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo` `.baocao`", inline=True)
