@@ -27,7 +27,7 @@ from core.data import (
     set_current_guild, get_or_fetch_channel,
 )
 from verify_server import (
-    create_token, build_verify_url, VERIFY_CALLBACKS,
+    create_token, build_verify_url, VERIFY_CALLBACKS, discard_token,
 )
 
 # ── Role IDs (fallback defaults, sẽ được cập nhật động khi _ensure_roles chạy) ──
@@ -944,10 +944,12 @@ class InviteCog(commands.Cog):
                 guild_id=member.guild.id,
             )
             VERIFY_CALLBACKS.pop(token, None)
+            discard_token(token)  # FIX: dọn luôn _tokens ở verify_server.py, xem discard_token()
 
         async def _timeout():
             await asyncio.sleep(600)
             if VERIFY_CALLBACKS.pop(token, None):
+                discard_token(token)  # FIX: cùng lý do — token hết hạn thì dọn cả 2 nơi
                 await send_log(self.bot, "INVITE_VERIFY", "Hết hạn verify (không nhấn link)",
                     fields=[
                         ("👤 Thành viên", f"{member} (`{member.id}`)", True),

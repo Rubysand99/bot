@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.26.0"
+BOT_VERSION = "4.27.0"
 BOT_UPDATED = "2026-08-10"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
@@ -151,8 +151,31 @@ async def load_cogs():
 # ══════════════════════════════════════════
 # ON READY
 # ══════════════════════════════════════════
+_on_ready_first_boot_done = False   # FIX: xem giải thích trong on_ready() bên dưới
+
 @bot.event
 async def on_ready():
+    """⚠️ on_ready() KHÔNG chỉ chạy 1 lần lúc khởi động — Discord gateway reconnect
+    (rớt mạng, Railway restart container, session bị Discord invalidate...) khiến nó
+    REFIRE bất cứ lúc nào trong suốt vòng đời bot. Nhiều bước "resume 1 lần" bên dưới
+    trước đây chạy lại MỖI LẦN refire, gây bug thật đã xác nhận:
+      • gw_cog.resume_active_giveaways() tạo THÊM 1 task đếm giờ cho MỖI giveaway đang
+        chạy mà KHÔNG huỷ task cũ (không giống _resume_pending_renames() — hàm đó đã tự
+        check `.done()` trước khi tạo task mới) → khi hết giờ, CẢ 2 task cùng gọi
+        end_giveaway(), giveaway bị công bố kết thúc + random winner 2 LẦN (có thể ra
+        2 winner khác nhau, đã sửa thêm 1 lớp phòng thủ ở chính end_giveaway() —
+        xem cogs/giveaway.py).
+      • resume_pending_sold_views() cùng lỗi — tạo thêm task escalate cho đơn đang chờ
+        giá/buyer, ping Ruby trùng lặp.
+      • Embed "Bot Khởi Động" gửi lại vào kênh changelog mỗi lần reconnect → spam.
+    Fix: mọi bước CHỈ AN TOÀN CHẠY 1 LẦN được gom vào khối `if first_boot:` — chỉ chạy
+    ở lần on_ready đầu tiên sau khi PROCESS khởi động (không phải lần đầu sau mỗi
+    reconnect). init_data_cache() KHÔNG cần gom vào đây vì đã tự guard bên trong
+    (xem CHANGELOG v4.25.4) — gọi lại mỗi lần refire vẫn an toàn.
+    cache_invites()/sync_ticket_counter() CỐ Ý vẫn chạy mỗi lần refire: invite cache có
+    thể lệch thật sau khi mất kết nối (cần refresh), còn ticket counter chỉ tăng chứ
+    không giảm nên gọi lại vô hại."""
+    global _on_ready_first_boot_done
     from core.data import init_data_cache, set_current_guild
     from cogs.ticket import TicketPanel, TicketButtons, MiddlemanPanelView, sync_ticket_counter
     from cogs.giveaway import GiveawayView
@@ -160,40 +183,50 @@ async def on_ready():
 
     await init_data_cache(bot)
 
-    # Resume hàng đợi rename legit/vouch bị rate limit dở dang từ trước khi bot restart
-    await _resume_pending_renames(bot)
+    first_boot = not _on_ready_first_boot_done
+    _on_ready_first_boot_done = True
 
-    # Resume giveaways (không cần guild context — giveaway tách theo message_id, xem core/data.py)
-    gw_cog = bot.cogs.get("GiveawayCog")
-    if gw_cog:
-        await gw_cog.resume_active_giveaways()
+    if first_boot:
+        # Resume hàng đợi rename legit/vouch bị rate limit dở dang từ trước khi bot restart
+        await _resume_pending_renames(bot)
 
-    # Register persistent views
-    bot.add_view(TicketPanel())
-    bot.add_view(TicketButtons())
-    bot.add_view(MiddlemanPanelView())
-    bot.add_view(GiveawayView())
+        # Resume giveaways (không cần guild context — giveaway tách theo message_id, xem core/data.py)
+        gw_cog = bot.cogs.get("GiveawayCog")
+        if gw_cog:
+            await gw_cog.resume_active_giveaways()
 
-    # Resume nút DM "Nhập giá" sold-stock (đơn pending chưa được admin xử lý)
-    # Hàm này tự loop qua từng guild bên trong (vì pending_sold_price giờ tách theo guild).
-    await resume_pending_sold_views(bot)
+        # Register persistent views
+        bot.add_view(TicketPanel())
+        bot.add_view(TicketButtons())
+        bot.add_view(MiddlemanPanelView())
+        bot.add_view(GiveawayView())
+
+        # Resume nút DM "Nhập giá" sold-stock (đơn pending chưa được admin xử lý)
+        # Hàm này tự loop qua từng guild bên trong (vì pending_sold_price giờ tách theo guild).
+        await resume_pending_sold_views(bot)
 
     # Sync invite cache & ticket counter — set context TRƯỚC mỗi guild vì cache_invites()/
-    # sync_ticket_counter() đều gọi load_data()/save_data() bên trong.
+    # sync_ticket_counter() đều gọi load_data()/save_data() bên trong. CỐ Ý chạy mỗi lần
+    # refire, xem docstring ở trên.
     from cogs.invite import cache_invites
     for guild in bot.guilds:
         set_current_guild(guild.id)
         await cache_invites(guild)
         await sync_ticket_counter(bot, guild)
 
-    # Sync slash commands
-    try:
-        synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash commands")
-    except Exception as e:
-        print(f"❌ Slash sync error: {e}")
+    if first_boot:
+        # Sync slash commands — Discord rate-limit sync toàn cục, không cần (và không nên)
+        # gọi lại mỗi lần reconnect vì slash command không đổi giữa các lần reconnect.
+        try:
+            synced = await bot.tree.sync()
+            print(f"✅ Synced {len(synced)} slash commands")
+        except Exception as e:
+            print(f"❌ Slash sync error: {e}")
 
-    print(f"✅ Bot online: {bot.user} | {len(bot.guilds)} server(s)")
+    print(f"✅ Bot online: {bot.user} | {len(bot.guilds)} server(s)" + ("" if first_boot else " (reconnect)"))
+
+    if not first_boot:
+        return  # Phần dưới (backfill legit + embed changelog) CHỈ chạy lúc khởi động thật
 
     # Quét lại legit channel — thả ✅ cho tin nhắn bị bỏ sót lúc bot offline
     asyncio.create_task(_backfill_legit())

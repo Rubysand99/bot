@@ -45,6 +45,14 @@ def _get_net_invites_from_cog(user_id: int) -> tuple:
 # ══════════════════════════════════════════
 async def end_giveaway(message_id, channel, winners_count, prize, host_id):
     gw = active_giveaways.get(message_id) or active_giveaways.get(str(message_id))
+    # FIX (phòng thủ thêm — nguyên nhân gốc đã sửa ở bot.py: on_ready() từng resume
+    # giveaway lại mỗi lần Discord reconnect, tạo 2 task đếm giờ độc lập cho cùng 1
+    # giveaway → cả 2 cùng gọi end_giveaway() khi hết giờ). Check `ended` TRƯỚC khi set
+    # (không phải sau) — nếu giveaway ĐÃ ended rồi (gọi lần 2, dù từ đâu tới) thì dừng
+    # ngay, KHÔNG random winner lại lần nữa (có thể ra người khác) và KHÔNG gửi thêm
+    # 1 tin "🎊 Chúc mừng..."/"❌ không ai tham gia" trùng lặp vào kênh.
+    if gw and gw.get("ended"):
+        return
     if gw:
         gw["ended"] = True
     save_giveaways_data(active_giveaways)

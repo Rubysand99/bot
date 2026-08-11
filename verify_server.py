@@ -71,6 +71,18 @@ def get_token_data(token: str) -> dict | None:
     return data
 
 
+def discard_token(token: str) -> None:
+    """FIX: _tokens trước đây CHỈ được dọn khi user THỰC SỰ bấm link verify
+    (get_token_data() tự pop lúc đó) — nếu user không bao giờ bấm (rất phổ biến: DM
+    tắt, lười, offline...), entry nằm mãi trong RAM vì không có gì proactively dọn nó,
+    dẫn tới rò rỉ bộ nhớ tăng dần theo số lượt join không verify (không giới hạn, vì bot
+    không tự restart thường xuyên trên các host như Railway). invite.py đã tự dọn
+    VERIFY_CALLBACKS khi hết hạn 10 phút (_timeout()) hoặc khi DM gửi thất bại
+    (Forbidden), nhưng QUÊN dọn luôn _tokens ở module này — 2 dict lẽ ra phải cùng
+    vòng đời nhưng bị lệch. Gọi hàm này ở đúng những chỗ đó để 2 dict luôn khớp nhau."""
+    _tokens.pop(token, None)
+
+
 def build_verify_url(token: str) -> str:
     return f"{VERIFY_BASE_URL}/verify?token={token}"
 

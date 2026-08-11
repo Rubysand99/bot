@@ -1,5 +1,62 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.27.0] — 2026-08-10
+
+### 🔍 Rà soát toàn bộ codebase — Phần 2/~10: `bot.py` + `verify_server.py`
+
+### 🐛 Sửa lỗi
+- `bot.py: on_ready()` — **cùng gốc bệnh "refire mỗi lần reconnect" đã sửa ở
+  `init_data_cache()` (v4.25.4), nhưng lần này gây hậu quả trực tiếp hơn nhiều: TẠO
+  TASK TRÙNG LẶP.** `on_ready()` gọi hàng loạt hàm "resume 1 lần lúc khởi động" —
+  nhưng chạy lại y hệt mỗi lần Discord gateway reconnect (rớt mạng, Railway restart
+  container...). Hậu quả xác nhận:
+  - `gw_cog.resume_active_giveaways()` tạo THÊM 1 task đếm giờ cho MỖI giveaway đang
+    chạy mà không huỷ task cũ → khi hết giờ, **cả 2 task cùng gọi `end_giveaway()`,
+    giveaway bị công bố kết thúc + random winner 2 LẦN (có thể ra 2 winner khác nhau)**.
+  - `resume_pending_sold_views()` — tạo thêm task escalate cho đơn sold-stock đang chờ
+    giá/buyer → ping Ruby trùng lặp.
+  - Embed "🔄 Bot Khởi Động" gửi lại vào kênh changelog mỗi lần reconnect → spam.
+  Fix: gom toàn bộ các bước "chỉ an toàn chạy 1 lần" vào khối `if first_boot:` (guard
+  bằng cờ module-level `_on_ready_first_boot_done`) — chỉ chạy ở lần on_ready đầu tiên
+  sau khi PROCESS khởi động, không phải lần đầu sau MỖI reconnect.
+  `cache_invites()`/`sync_ticket_counter()` CỐ Ý vẫn chạy mỗi lần refire (an toàn/cần
+  thiết — xem docstring trong code).
+- `cogs/giveaway.py: end_giveaway()` — Thêm 1 lớp phòng thủ độc lập với fix trên: check
+  `gw.get("ended")` NGAY ĐẦU hàm, TRƯỚC KHI set `ended=True` (không phải sau) — nếu
+  giveaway đã ended từ trước (gọi lần 2, dù từ đâu tới) thì dừng ngay, không random lại
+  winner / không gửi trùng thông báo. Bảo vệ luôn cả những đường gọi trùng khác trong
+  tương lai, không riêng bug reconnect ở trên.
+- `verify_server.py` + `cogs/invite.py` — **Rò rỉ bộ nhớ ở `_tokens`** (dict token verify
+  trong RAM). Token chỉ được dọn khi user THỰC SỰ bấm link verify (`verify_page()` tự
+  pop) — nếu user KHÔNG BAO GIỜ bấm (rất phổ biến: tắt DM, lười, offline...), entry nằm
+  mãi trong RAM vì không có gì proactively dọn. `invite.py` đã tự dọn dict
+  `VERIFY_CALLBACKS` của riêng nó khi hết hạn 10 phút hoặc DM gửi thất bại, nhưng QUÊN
+  dọn `_tokens` ở `verify_server.py` — 2 dict lẽ ra cùng vòng đời bị lệch nhau, tích luỹ
+  không giới hạn theo số lượt join không verify (bot không tự restart thường xuyên nên
+  không tự "reset" định kỳ). Thêm `discard_token()` ở `verify_server.py`, gọi kèm ở cả
+  2 chỗ `invite.py` dọn `VERIFY_CALLBACKS`.
+
+### ⚠️ Rủi ro đã rà nhưng CHƯA sửa — cần bạn xác nhận trước khi đổi code
+- `verify_server.py` dòng ~113: `ip = request.headers.get("x-forwarded-for", ...).split(",")[0]`
+  — lấy IP client từ header `X-Forwarded-For`, vốn là header **client tự set được**
+  trừ khi proxy phía trước ghi đè/lọc nó. Toàn bộ hệ thống chống gian lận của bot (chặn
+  1 IP nhiều tài khoản, phát hiện VPN, ai được tham gia giveaway) dựa vào IP đọc từ đây
+  — nếu header này bị giả mạo được, toàn bộ hệ thống chống gian lận bị vô hiệu hoá.
+  Đã tra cứu kỹ (tài liệu chính thức Railway + nhiều thảo luận cộng đồng) nhưng **không
+  tìm được câu trả lời chắc chắn** cho hành vi cụ thể hiện tại của Railway với header
+  này — tài liệu chính thức không đề cập, các thảo luận cộng đồng MÂU THUẪN nhau (có
+  nơi nói Railway lọc sạch giá trị client gửi lên, có nơi nói Railway CHỈ append vào
+  cuối chuỗi chứ không lọc — 2 hành vi này cần cách đọc IP HOÀN TOÀN khác nhau, đọc sai
+  chiều sẽ khiến verify hỏng thật sự chứ không chỉ là rủi ro lý thuyết). Sửa nhầm chiều
+  còn tệ hơn giữ nguyên, nên chưa tự ý đổi code. Cách tự kiểm tra chắc chắn cho đúng
+  server của bạn: gửi 1 request có sẵn header `X-Forwarded-For` giả (vd
+  `curl -H "X-Forwarded-For: 1.2.3.4" https://<domain-bot-của-bạn>/verify?token=test`)
+  rồi xem log của bot in ra IP nào — nếu ra đúng `1.2.3.4` (giá trị giả) thay vì IP thật
+  của máy bạn, nghĩa là ĐANG bị giả mạo được, cần đổi sang lấy phần tử cuối
+  (`.split(",")[-1]`) thay vì đầu.
+
+---
+
 ## [v4.26.0] — 2026-08-10
 
 ### ✨ Tính năng mới
