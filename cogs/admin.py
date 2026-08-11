@@ -22,6 +22,7 @@ from core.data import (
     load_data, get_price_sections,
     is_guild_authorized, set_guild_authorized,
     ensure_guild_loaded,
+    get_cfg_done_role, set_cfg_done_role,
     can_use_dangerous_cmd, parse_amount, fmt_amount,
     get_or_fetch_channel, set_current_guild,
     add_seller_sale, add_user_spent,
@@ -167,6 +168,23 @@ class AdminCog(commands.Cog):
         embed.add_field(name="👤 Thành viên", value=member.mention, inline=True)
         embed.add_field(name="🏷️ Role",       value=role.mention,   inline=True)
         await ctx.reply(embed=embed)
+
+    # ── .donerole — cấu hình role "Đã Mua Hàng" riêng cho từng guild (FIX multi-guild) ──
+    @commands.command(name="donerole", aliases=["setdonerole"])
+    async def donerole_cmd(self, ctx, role: discord.Role = None):
+        """Xem/đổi role tự động tặng cho buyer khi đơn hoàn thành (.done / sold-stock).
+        Dùng: `.donerole` để xem role hiện tại, `.donerole @role` để đổi."""
+        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền.")
+        if role is None:
+            current = ctx.guild.get_role(get_cfg_done_role())
+            return await ctx.reply(
+                f"🎖️ Role \"Đã Mua Hàng\" hiện tại: {current.mention if current else '*(chưa cài / không tồn tại ở server này)*'}\n"
+                f"Đổi bằng: `.donerole @role`"
+            )
+        if role >= ctx.guild.me.top_role:
+            return await ctx.reply("❌ Role này cao hơn role của bot — bot sẽ không tặng được, chọn role thấp hơn.")
+        set_cfg_done_role(role.id)
+        await ctx.reply(f"✅ Từ giờ buyer hoàn thành đơn sẽ được tặng {role.mention} tự động (chỉ ở server này).")
 
     # ── .emoji / .delemoji ──
     @commands.command(name="emoji")
@@ -558,6 +576,7 @@ class AdminCog(commands.Cog):
                      "`.clear <n>` — Xóa n tin nhắn\n"
                      "`.addrole @user @role` — Thêm role\n"
                      "`.removerole @user @role` — Xóa role\n"
+                     "`.donerole [@role]` — Xem/đổi role tự động tặng buyer khi hoàn thành đơn (riêng theo server)\n"
                      "`.userinfo [@user]` — Thông tin thành viên\n"
                      "`.serverinfo` — Thông tin server\n"
                      "`.backfill [số]` — Quét lại kênh legit, thả ✅ cho tin bị bỏ sót (mặc định 25)", False),
@@ -707,15 +726,23 @@ class AdminCog(commands.Cog):
                 await msg.add_reaction("✅")
             except Exception:
                 pass
-            # Đổi tên kênh +1, fetch lại để tránh số đếm sai
+            # FIX: dùng CHUNG cơ chế hàng đợi rate-limit của bot.py (_next_rename_target +
+            # _queue_or_rename) thay vì channel.edit() trần trụi + bare except như trước.
+            # .backfill tồn tại ĐỂ xử lý NHIỀU tin nhắn bị bỏ sót cùng lúc — đúng kịch bản
+            # dễ dính rate limit Discord nhất (tối đa 2 lần đổi tên kênh / 10 phút). Code cũ
+            # nuốt lỗi rate-limit im lặng → kênh bị "đếm thiếu" dù MỌI tin nhắn đều đã có ✅
+            # (trông như xử lý xong hoàn chỉnh nhưng số đếm trên tên kênh thực ra bị hụt).
+            # _next_rename_target() cũng quan trọng không kém _queue_or_rename(): nó ưu tiên
+            # đọc số ĐANG CHỜ trong hàng đợi (nếu tin trước đó trong CHÍNH vòng lặp này chưa
+            # kịp đổi tên xong) thay vì đọc thẳng channel.name có thể đang stale — thiếu bước
+            # này thì 2 tin liên tiếp có thể cùng nhắm vào 1 số y hệt.
             try:
-                channel = await channel.guild.fetch_channel(channel.id)  # refresh
-                name = channel.name
-                match = _re.search(r"-(\d+)$", name)
-                new_num = (int(match.group(1)) + 1) if match else 1
-                base = name[:match.start()] if match else name
-                new_name = f"{base}-{new_num}"
-                await channel.edit(name=new_name, reason=f"Backfill +1 legit bởi {ctx.author}")
+                from bot import _next_rename_target, _queue_or_rename
+                channel = await channel.guild.fetch_channel(channel.id)  # refresh tên mới nhất
+                base, new_num = _next_rename_target(channel)
+                if base is None:
+                    base, new_num = channel.name, 1
+                await _queue_or_rename(channel, base, new_num, f"Backfill +1 legit bởi {ctx.author}", "backfill")
                 fixed += 1
             except Exception:
                 pass
@@ -730,6 +757,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📝 Khớp +1legit", value=f"**{scanned}** tin", inline=True)
         embed.add_field(name="✅ Đã xử lý", value=f"**{fixed}** tin bị bỏ sót", inline=True)
         embed.add_field(name="📌 Kênh", value=f"`{name_before}` → `{name_after}`", inline=False)
+        embed.set_footer(text="Nếu dính rate limit đổi tên kênh (Discord giới hạn 2 lần/10 phút), phần còn lại sẽ tự đổi tiếp ở nền — số trên tên kênh có thể cập nhật chậm hơn vài phút so với số ✅ đã thả.")
         await msg_status.edit(content=None, embed=embed)
 
     # ── PREFIX commands cho các slash ──
@@ -1163,12 +1191,14 @@ class AdminCog(commands.Cog):
         elif isinstance(error, commands.MissingPermissions): await ctx.reply("❌ Bạn không có quyền thực hiện lệnh này.")
 
 
-STOCK_CATEGORY_ID = 1506520186063163423
-SOLD_CATEGORY_ID  = 1506652491779932240
 SOLD_ESCALATE_AFTER_SECONDS = 24 * 3600  # 24h không ai xử lý → escalate sang Ruby
-# Role "Đã Mua Hàng" — tặng cho buyer khi đơn được cộng tiền, dùng chung bởi
-# .done (cogs/ticket.py) và luồng sold-stock (_SoldBuyerModal bên dưới).
-DONE_ROLE_ID = 1515393691206811901
+# FIX: đã xoá STOCK_CATEGORY_ID/SOLD_CATEGORY_ID/DONE_ROLE_ID hardcode ở đây — dead code
+# (2 cái đầu không hề được dùng ở đâu trong file, handle_sold() dùng get_cfg_stock_category()/
+# get_cfg_sold_category() từ core/data.py) và DONE_ROLE_ID là hằng số CHUNG cho mọi guild dù
+# role ID là duy nhất theo guild trên Discord — sang guild khác role này không tồn tại, tính
+# năng tặng role "Đã Mua Hàng" im lặng không chạy. Giờ dùng get_cfg_done_role()/
+# set_cfg_done_role() (per-guild, xem core/data.py) + lệnh `.donerole` bên dưới để mỗi
+# guild tự cấu hình role riêng.
 
 # ══════════════════════════════════════════
 # SOLD-STOCK — parse giá từ tên kênh
@@ -1379,7 +1409,17 @@ class _SoldBuyerModal(Modal, title="🧑 Người mua đơn sold"):
         # ⚠️ Chạy trong DM admin — set_current_guild() thủ công từ guild_id đã lưu trong
         # pending (đọc từ global data, không cần context) TRƯỚC khi gọi add_user_spent/
         # auto_give_buy_roles (data + role theo-guild).
-        guild_id = pending["guild_id"]
+        # FIX: dùng .get() thay vì pending["guild_id"] — mọi nơi TẠO record buyer-pending
+        # hiện tại đều truyền guild_id nên rủi ro rất thấp, nhưng lỡ có record cũ/tương lai
+        # thiếu field này thì .get() báo lỗi rõ ràng cho admin thay vì crash KeyError im lặng
+        # (Discord chỉ hiện "Tương tác thất bại" chung chung, không rõ nguyên nhân).
+        guild_id = pending.get("guild_id")
+        if not guild_id:
+            return await interaction.response.send_message(
+                "❌ Đơn này thiếu thông tin server (guild_id) — không thể xác định nơi cộng tiền. "
+                "Báo cho dev kiểm tra lại record này.",
+                ephemeral=True,
+            )
         set_current_guild(guild_id)
 
         bot_ref = interaction.client
@@ -1408,7 +1448,7 @@ class _SoldBuyerModal(Modal, title="🧑 Người mua đơn sold"):
         from cogs.admin_views import auto_give_buy_roles
         role_cfg = await auto_give_buy_roles(guild, buyer, new_total)
 
-        done_role = guild.get_role(DONE_ROLE_ID)
+        done_role = guild.get_role(get_cfg_done_role())
         done_role_given = False
         if done_role:
             try:
@@ -1416,7 +1456,7 @@ class _SoldBuyerModal(Modal, title="🧑 Người mua đơn sold"):
                     await buyer.add_roles(done_role, reason=f"Sold-stock — cộng tiền qua DM bởi {_uname_plain(interaction.user)}")
                 done_role_given = True
             except Exception as _e:
-                log_msg = f"[SOLD] Không thể give role {DONE_ROLE_ID} cho {buyer}: {_e}"
+                log_msg = f"[SOLD] Không thể give role {get_cfg_done_role()} cho {buyer}: {_e}"
                 print(log_msg)
 
         remove_pending_sold_buyer(self.channel_id)

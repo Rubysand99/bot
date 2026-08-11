@@ -29,6 +29,7 @@ from core.data import (
     BUILDER_BASE_ROLE_ID as _BUILDER_ROLE_ID,
     get_ticket_role_ids, set_ticket_role_ids, get_all_ticket_multi_roles,
     get_ruby_shop_options, add_ruby_shop_option, remove_ruby_shop_option, rename_ruby_shop_option,
+    get_cfg_done_role,
     GuildContextView as View,
     GuildContextModal as Modal,
     set_current_guild,
@@ -1637,9 +1638,10 @@ class TicketCog(commands.Cog):
         from cogs.admin_views import auto_give_buy_roles
         role_cfg = await auto_give_buy_roles(ctx.guild, buyer, new_total)
 
-        # Tặng role "Đã Mua Hàng"
-        DONE_ROLE_ID = 1515393691206811901
-        done_role = ctx.guild.get_role(DONE_ROLE_ID)
+        # Tặng role "Đã Mua Hàng" — FIX: giờ đọc theo guild qua get_cfg_done_role() thay
+        # vì hardcode 1 role ID chung cho mọi guild (xem cogs/admin.py cùng đợt fix, hoặc
+        # CHANGELOG). Cấu hình qua `.donerole @role`.
+        done_role = ctx.guild.get_role(get_cfg_done_role())
         done_role_given = False
         if done_role:
             try:
@@ -1647,7 +1649,7 @@ class TicketCog(commands.Cog):
                     await buyer.add_roles(done_role, reason=f"Hoàn thành đơn — xác nhận bởi {_uname_plain(ctx.author)}")
                 done_role_given = True
             except Exception as _e:
-                log.warning(f"[DONE] Không thể give role {DONE_ROLE_ID} cho {buyer}: {_e}")
+                log.warning(f"[DONE] Không thể give role {get_cfg_done_role()} cho {buyer}: {_e}")
 
         embed = discord.Embed(title="✅ Hoàn Thành Đơn", color=0x57F287, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="👤 Buyer",       value=buyer.mention,               inline=True)

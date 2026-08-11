@@ -1,5 +1,52 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.28.0] — 2026-08-10
+
+### 🔍 Rà soát toàn bộ codebase — Phần 3/~10: `cogs/admin.py`
+
+### 🐛 Sửa lỗi
+- `core/data.py` + `cogs/admin.py` + `cogs/ticket.py` — **`DONE_ROLE_ID` (role "Đã Mua
+  Hàng" tự động tặng cho buyer khi hoàn thành đơn) là hằng số hardcode DÙNG CHUNG cho
+  MỌI guild**, trong khi role ID trên Discord là duy nhất theo từng server — vi phạm
+  đúng nguyên tắc "mỗi server data riêng, không dùng chung". Mọi ID tương tự khác
+  (`cfg_ticket_category`, `cfg_support_role`, `cfg_stock_category`...) đều đã được đưa
+  vào hệ thống `cfg_*` per-guild từ trước — riêng `DONE_ROLE_ID` bị bỏ sót, tự định
+  nghĩa CỤC BỘ giống hệt nhau ở cả `cogs/admin.py` (`_SoldBuyerModal`) LẪN
+  `cogs/ticket.py` (`.done`). Hậu quả: với bất kỳ guild nào khác ngoài TuyTam Community,
+  `guild.get_role(DONE_ROLE_ID)` luôn trả `None` → tính năng tặng role **im lặng không
+  chạy**, không lỗi không log, admin server đó không có cách nào biết hay tự cấu hình.
+  Đã thêm `cfg_done_role` (per-guild, default = ID cũ nên TuyTam không đổi hành vi) +
+  `get_cfg_done_role()`/`set_cfg_done_role()` ở `core/data.py`, cập nhật cả 2 nơi dùng,
+  và thêm lệnh `.donerole [@role]` (admin, alias `.setdonerole`) để mỗi server tự xem/
+  đổi role riêng. Dọn luôn `STOCK_CATEGORY_ID`/`SOLD_CATEGORY_ID` khai báo cục bộ ở
+  `cogs/admin.py` — dead code, không được dùng ở đâu (logic thật đã dùng đúng
+  `get_cfg_stock_category()`/`get_cfg_sold_category()` từ lâu).
+- `cogs/admin.py: .backfill` — Vòng lặp đổi tên kênh dùng `channel.edit()` trần + nuốt
+  lỗi im lặng (`except Exception: pass`) thay vì cơ chế hàng đợi rate-limit đã có sẵn ở
+  `bot.py` (`_next_rename_target`/`_queue_or_rename`, dùng cho +1 legit/vouch thường
+  ngày). `.backfill` tồn tại ĐỂ xử lý NHIỀU tin nhắn bị bỏ sót cùng lúc — đúng kịch bản
+  dễ dính rate limit Discord nhất (tối đa 2 lần đổi tên kênh / 10 phút). Code cũ khiến
+  số đếm trên tên kênh bị hụt dù MỌI tin nhắn đều đã có ✅ (trông như xử lý xong hoàn
+  chỉnh nhưng không phải). Đã chuyển sang dùng chung cơ chế hàng đợi, thêm ghi chú ở
+  footer embed kết quả để admin biết nếu bị rate limit thì số sẽ tự cập nhật tiếp ở nền.
+- `cogs/admin.py: _SoldBuyerModal.on_submit` — đọc `pending["guild_id"]` trực tiếp
+  (crash `KeyError` nếu thiếu field, hiện lỗi chung chung "Tương tác thất bại" cho
+  admin) thay vì `.get()` an toàn với thông báo rõ ràng như modal chị em
+  `_SoldPriceModal.on_submit` đã làm — nay đồng bộ 2 nơi.
+
+### ✅ Đã rà soát kỹ, xác nhận KHÔNG có bug
+- Luồng khôi phục guild context trong DM (`_SoldPriceModal`/`_SoldBuyerModal` — cả 2
+  đều chạy trong DM admin nên `GuildContextModal` không tự set được context) — đã có
+  sẵn code đọc `guild_id` lưu trong pending record và `set_current_guild()` thủ công
+  TRƯỚC khi gọi các hàm theo-guild, kèm comment giải thích rõ ràng.
+- `add_seller_sale()` không cần tham số `guild_id` riêng vì dựa đúng vào contextvar đã
+  được set từ `bot.py: on_message` trước khi gọi `handle_sold()`.
+- Rủi ro tạo task escalate trùng lặp ở `resume_pending_sold_views()` (nêu ở v4.27.0)
+  đã được đóng hoàn toàn nhờ fix `on_ready()` guard ở Phần 2 — không cần sửa thêm gì
+  ở file này.
+
+---
+
 ## [v4.27.0] — 2026-08-10
 
 ### 🔍 Rà soát toàn bộ codebase — Phần 2/~10: `bot.py` + `verify_server.py`

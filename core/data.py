@@ -129,6 +129,15 @@ FEEDBACK_CHANNEL_ID   = 1502464872686948403
 STOCK_CATEGORY_ID     = 1506520186063163423
 SOLD_CATEGORY_ID      = 1506652491779932240
 CHANGELOG_CHANNEL_ID  = 1486967511839801414
+# FIX: DONE_ROLE_ID (role "Đã Mua Hàng" tặng cho buyer khi đơn hoàn thành — cogs/ticket.py
+# .done + cogs/admin.py _SoldBuyerModal) bị BỎ SÓT khỏi hệ thống cfg_* per-guild này —
+# 2 nơi trên trước đây tự định nghĩa hằng số CỤC BỘ y hệt giá trị dưới đây, dùng CHUNG
+# cho MỌI guild thay vì qua get_cfg_done_role()/set_cfg_done_role() như các ID khác ở
+# trên. Role ID là duy nhất theo guild trên Discord — guild khác TuyTam Community chắc
+# chắn không có role này, nghĩa là tính năng tặng role im lặng KHÔNG chạy ở mọi server
+# khác (không lỗi, không log, chỉ đơn giản là không có gì xảy ra). Coi hằng số này như
+# các hằng số fallback khác ở trên: CHỈ đúng cho TuyTam Community.
+DONE_ROLE_ID          = 1515393691206811901
 # ADMIN_IDS — đọc từ 2 biến riêng biệt:
 #   ADMIN_RUBY_ID   — Ruby (phát triển, quản lý bot & server)
 #   ADMIN_TUYTAM_ID — TuyTam (giao dịch, buôn bán)
@@ -201,6 +210,7 @@ def _default_data(guild_id: int) -> dict:
         "cfg_ai_channel":      0,
         "cfg_stock_category":  STOCK_CATEGORY_ID,
         "cfg_sold_category":   SOLD_CATEGORY_ID,
+        "cfg_done_role":       DONE_ROLE_ID,   # FIX: xem ghi chú ở khai báo DONE_ROLE_ID phía trên
         "cfg_font":            "normal",
         "dangerous_cmd_overrides": {},
         "sellers":          [],
@@ -535,6 +545,7 @@ def get_cfg_font()            -> str: return load_data().get("cfg_font", "normal
 def get_cfg_category()        -> int: return load_data().get("cfg_ticket_category", TICKET_CATEGORY_ID)
 def get_cfg_stock_category()  -> int: return load_data().get("cfg_stock_category",  STOCK_CATEGORY_ID)
 def get_cfg_sold_category()   -> int: return load_data().get("cfg_sold_category",   SOLD_CATEGORY_ID)
+def get_cfg_done_role()       -> int: return load_data().get("cfg_done_role",       DONE_ROLE_ID)
 def get_cfg_support_role()    -> int: return load_data().get("cfg_support_role", SUPPORT_ROLE_ID)
 def get_cfg_seller_role()     -> int: return load_data().get("cfg_seller_role", SELLER_ROLE_ID)
 def get_cfg_counter_channel() -> int: return load_data().get("cfg_counter_channel", COUNTER_CHANNEL_ID)
@@ -560,6 +571,9 @@ def set_cfg_vouch_emoji(emoji: str):
 
 def set_cfg_giveaway_require_verify(enabled: bool):
     save_cfg("cfg_giveaway_require_verify", bool(enabled))
+
+def set_cfg_done_role(role_id: int):
+    save_cfg("cfg_done_role", int(role_id))
 
 def save_cfg(key: str, value):
     data = load_data(); data[key] = value; save_data(data)
