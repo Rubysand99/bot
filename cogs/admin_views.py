@@ -213,7 +213,7 @@ class PriceManagerView(View):
     @discord.ui.button(label="🗑️ Xoá mục", style=discord.ButtonStyle.danger, row=1)
     async def del_section(self, interaction: discord.Interaction, button: Button):
         if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
-        await interaction.response.send_message("Chọn mục muốn xoá:", view=DeletePriceSectionView())
+        await interaction.response.send_message("Chọn mục muốn xoá:", view=DeletePriceSectionView(), ephemeral=True)
 
     @discord.ui.button(label="🔄 Reset về mặc định", style=discord.ButtonStyle.grey, row=1)
     async def reset_sections(self, interaction: discord.Interaction, button: Button):
@@ -263,7 +263,7 @@ class SettingsView(View):
             options = [discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id)) for ch in channels]
             select = ChannelConfigSelect(cfg_key=cfg_key, title=title, options=options)
             view   = View(timeout=60); view.add_item(select)
-            return await interaction.response.send_message(f"📌 **{description}**\nChọn kênh:", view=view)
+            return await interaction.response.send_message(f"📌 **{description}**\nChọn kênh:", view=view, ephemeral=True)
 
         # >25 kênh: phân trang theo category
         groups: dict[str, list] = {}
@@ -290,14 +290,13 @@ class SettingsView(View):
             placeholder="Chọn nhóm kênh…",
         ))
         await interaction.response.send_message(
-            f"📌 **{description}**\nServer có **{len(channels)}** kênh — chọn nhóm trước:", view=v
-        )
+            f"📌 **{description}**\nServer có **{len(channels)}** kênh — chọn nhóm trước:", view=v, ephemeral=True)
 
     async def _send_role_select(self, interaction, cfg_key, title):
         options = [discord.SelectOption(label=r.name[:100], value=str(r.id)) for r in sorted(self.guild.roles, key=lambda r: -r.position) if r.name != "@everyone"][:25]
         select  = RoleConfigSelect(cfg_key=cfg_key, title=title, options=options)
         view    = View(timeout=60); view.add_item(select)
-        await interaction.response.send_message(f"🏷️ **{title}**\nChọn role:", view=view)
+        await interaction.response.send_message(f"🏷️ **{title}**\nChọn role:", view=view, ephemeral=True)
 
     async def _send_category_select(self, interaction, cfg_key, title, description):
         categories = [ch for ch in interaction.guild.channels if isinstance(ch, discord.CategoryChannel)]
@@ -323,7 +322,7 @@ class SettingsView(View):
 
         v = View(timeout=60)
         v.add_item(_CategorySelect())
-        await interaction.response.send_message(f"📁 **{description}**\nChọn category:", view=v)
+        await interaction.response.send_message(f"📁 **{description}**\nChọn category:", view=v, ephemeral=True)
 
     @discord.ui.button(label="📋 Log Channel",      style=discord.ButtonStyle.primary,   row=0)
     async def log(self,      i, b): await self._send_channel_select(i, "cfg_log_rudy",        "Log Rudy",         "Kênh log rudy — nhận toàn bộ hoạt động bot")
@@ -767,33 +766,25 @@ class SetupMainView(View):
     async def btn_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             embed=_setup_channel_embed(),
-            view=SetupChannelView(interaction),
-           
-        )
+            view=SetupChannelView(interaction), ephemeral=True)
 
     @discord.ui.button(label="🗂️ Danh mục", style=discord.ButtonStyle.primary, row=0)
     async def btn_category(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             embed=_setup_category_embed(),
-            view=SetupCategoryView(interaction),
-           
-        )
+            view=SetupCategoryView(interaction), ephemeral=True)
 
     @discord.ui.button(label="🏷️ Role", style=discord.ButtonStyle.primary, row=0)
     async def btn_role(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             embed=_setup_role_embed(),
-            view=SetupRoleView(interaction),
-           
-        )
+            view=SetupRoleView(interaction), ephemeral=True)
 
     @discord.ui.button(label="⚙️ Server", style=discord.ButtonStyle.success, row=0)
     async def btn_server(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             embed=_setup_server_embed(interaction.guild),
-            view=SetupServerView(interaction),
-           
-        )
+            view=SetupServerView(interaction), ephemeral=True)
 
 
 # ─── helpers ───────────────────────────────
@@ -862,6 +853,20 @@ class SetupChannelView(View):
         super().__init__(timeout=180)
         self.src = src_interaction
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # FIX (bảo vệ thêm — lớp phòng thủ thứ 2, lớp thứ 1 là gửi ephemeral=True ở
+        # SetupMainView.btn_channel): trước đây view này KHÔNG có admin check riêng,
+        # chỉ dựa vào GuildContextView gốc (chỉ check server đã ủy quyền chưa, KHÔNG
+        # check người bấm có phải admin không) — kết hợp với việc message trước đây gửi
+        # KHÔNG ephemeral, bất kỳ member nào cũng bấm được nút Tạo/Xoá/Đổi tên kênh dù
+        # không phải admin. Xem CHANGELOG cho toàn bộ 4 view Setup*View bị lỗi tương tự.
+        if not await super().interaction_check(interaction):
+            return False
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+            return False
+        return True
+
     @discord.ui.button(label="➕ Tạo kênh",   style=discord.ButtonStyle.success,   row=0)
     async def create(self, interaction, _):  await interaction.response.send_modal(CreateChannelModal())
 
@@ -897,7 +902,7 @@ class SetupChannelView(View):
         font_opts = [discord.SelectOption(label=lbl[:100], value=key) for key, lbl in FONT_LABELS.items()]
         v = View(timeout=120)
         v.add_item(_FontAllSelect(font_opts))
-        await interaction.response.send_message(embed=embed, view=v)
+        await interaction.response.send_message(embed=embed, view=v, ephemeral=True)
 
 
 class CreateChannelModal(Modal, title="➕ Tạo Kênh Mới"):
@@ -1011,7 +1016,7 @@ class _FontChannelSelect(Select):
         if not ch: return await interaction.response.send_message("❌ Không tìm thấy kênh.")
         font_opts = [discord.SelectOption(label=lbl[:100], value=key) for key, lbl in FONT_LABELS.items()]
         v = View(timeout=60); v.add_item(_ApplyFontChannelSelect(ch, font_opts))
-        await interaction.response.send_message(f"🔤 Chọn font cho `#{ch.name}`:", view=v)
+        await interaction.response.send_message(f"🔤 Chọn font cho `#{ch.name}`:", view=v, ephemeral=True)
 
 class _ApplyFontChannelSelect(Select):
     def __init__(self, ch, opts):
@@ -1102,8 +1107,7 @@ class _PagedChannelCategorySelect(Select):
         v = View(timeout=60)
         v.add_item(self.next_select_cls(ch_opts))
         await interaction.response.send_message(
-            f"📂 **{cat_name}** — Chọn kênh:", view=v
-        )
+            f"📂 **{cat_name}** — Chọn kênh:", view=v, ephemeral=True)
 
 
 async def _send_channel_select_paged(
@@ -1129,7 +1133,7 @@ async def _send_channel_select_paged(
         opts = [discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id)) for ch in channels]
         v = View(timeout=60)
         v.add_item(next_select_cls(opts))
-        return await interaction.response.send_message(prompt, view=v)
+        return await interaction.response.send_message(prompt, view=v, ephemeral=True)
 
     # >25: nhóm theo category
     groups: dict[str, list] = {}
@@ -1140,8 +1144,7 @@ async def _send_channel_select_paged(
     v = View(timeout=60)
     v.add_item(_PagedChannelCategorySelect(groups, next_select_cls, placeholder="Chọn nhóm kênh…"))
     await interaction.response.send_message(
-        f"📂 Server có **{len(channels)}** kênh — chọn nhóm trước:\n{prompt}", view=v
-    )
+        f"📂 Server có **{len(channels)}** kênh — chọn nhóm trước:\n{prompt}", view=v, ephemeral=True)
 
 
 class _FontAllSelect(Select):
@@ -1205,6 +1208,15 @@ class SetupCategoryView(View):
         super().__init__(timeout=180)
         self.src = src
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # FIX (bảo vệ thêm — xem ghi chú đầy đủ ở SetupChannelView.interaction_check())
+        if not await super().interaction_check(interaction):
+            return False
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+            return False
+        return True
+
     @discord.ui.button(label="➕ Tạo category",   style=discord.ButtonStyle.success,   row=0)
     async def create(self, interaction, _): await interaction.response.send_modal(CreateCategoryModal())
 
@@ -1213,14 +1225,14 @@ class SetupCategoryView(View):
         opts = [discord.SelectOption(label=c.name[:100], value=str(c.id)) for c in interaction.guild.categories][:25]
         if not opts: return await interaction.response.send_message("❌ Không có category nào.")
         v = View(timeout=60); v.add_item(_DeleteCategorySelect(opts))
-        await interaction.response.send_message("🗑️ Chọn category cần xoá:", view=v)
+        await interaction.response.send_message("🗑️ Chọn category cần xoá:", view=v, ephemeral=True)
 
     @discord.ui.button(label="✏️ Đổi tên / Font", style=discord.ButtonStyle.secondary, row=0)
     async def rename(self, interaction, _):
         opts = [discord.SelectOption(label=c.name[:100], value=str(c.id)) for c in interaction.guild.categories][:25]
         if not opts: return await interaction.response.send_message("❌ Không có category nào.")
         v = View(timeout=60); v.add_item(_RenameCategorySelect(opts))
-        await interaction.response.send_message("✏️ Chọn category cần đổi tên:", view=v)
+        await interaction.response.send_message("✏️ Chọn category cần đổi tên:", view=v, ephemeral=True)
 
     @discord.ui.button(label="📂 Di chuyển kênh", style=discord.ButtonStyle.secondary, row=1)
     async def move(self, interaction, _):
@@ -1307,7 +1319,7 @@ class _MoveChannelSelect(Select):
         cat_opts = [discord.SelectOption(label=c.name[:100], value=str(c.id)) for c in interaction.guild.categories][:25]
         cat_opts.insert(0, discord.SelectOption(label="(Không có category)", value="0"))
         v = View(timeout=60); v.add_item(_MoveToCategorySelect(ch, cat_opts))
-        await interaction.response.send_message(f"📂 Chọn category đích cho `#{ch.name}`:", view=v)
+        await interaction.response.send_message(f"📂 Chọn category đích cho `#{ch.name}`:", view=v, ephemeral=True)
 
 class _MoveToCategorySelect(Select):
     def __init__(self, ch, opts):
@@ -1336,6 +1348,19 @@ class SetupRoleView(View):
         super().__init__(timeout=180)
         self.src = src
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # FIX (bảo vệ thêm — xem ghi chú đầy đủ ở SetupChannelView.interaction_check()).
+        # Đặc biệt quan trọng ở view NÀY: thiếu check này trước đây nghĩa là bất kỳ
+        # member nào cũng có thể tự GÁN ROLE cho chính mình qua nút "✅ Gán role"
+        # (AssignRoleModal action="give") — leo thang đặc quyền thật sự, không chỉ là
+        # xem/sửa nhầm cấu hình.
+        if not await super().interaction_check(interaction):
+            return False
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+            return False
+        return True
+
     @discord.ui.button(label="➕ Tạo role",   style=discord.ButtonStyle.success,   row=0)
     async def create(self, interaction, _): await interaction.response.send_modal(CreateRoleModal())
 
@@ -1346,7 +1371,7 @@ class SetupRoleView(View):
                 if r.name != "@everyone"][:25]
         if not opts: return await interaction.response.send_message("❌ Không có role.")
         v = View(timeout=60); v.add_item(_DeleteRoleSelect(opts))
-        await interaction.response.send_message("🗑️ Chọn role cần xoá:", view=v)
+        await interaction.response.send_message("🗑️ Chọn role cần xoá:", view=v, ephemeral=True)
 
     @discord.ui.button(label="✅ Gán role",   style=discord.ButtonStyle.secondary, row=0)
     async def give(self, interaction, _): await interaction.response.send_modal(AssignRoleModal(action="give"))
@@ -1357,12 +1382,10 @@ class SetupRoleView(View):
     @discord.ui.button(label="🛒 Buy Roles", style=discord.ButtonStyle.primary, row=1)
     async def buy_roles_btn(self, interaction: discord.Interaction, _):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.")
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_message(
             embed=_buy_roles_embed(),
-            view=BuyRolesView(),
-           
-        )
+            view=BuyRolesView(), ephemeral=True)
 
     @discord.ui.button(label="🔐 Quyền Role", style=discord.ButtonStyle.secondary, row=2)
     async def set_perm_btn(self, interaction: discord.Interaction, _):
@@ -1492,13 +1515,13 @@ class BuyRolesView(View):
     @discord.ui.button(label="➕ Thêm tier", style=discord.ButtonStyle.success, row=0)
     async def add(self, interaction: discord.Interaction, _):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.")
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_modal(AddBuyRoleModal())
 
     @discord.ui.button(label="🗑️ Xóa tier", style=discord.ButtonStyle.danger, row=0)
     async def delete(self, interaction: discord.Interaction, _):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.")
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         buy_roles = get_buy_roles()
         if not buy_roles:
             return await interaction.response.send_message("❌ Chưa có tier nào.")
@@ -1512,7 +1535,7 @@ class BuyRolesView(View):
         ]
         v = View(timeout=60)
         v.add_item(_DeleteBuyRoleSelect(opts))
-        await interaction.response.send_message("🗑️ Chọn tier cần xóa:", view=v)
+        await interaction.response.send_message("🗑️ Chọn tier cần xóa:", view=v, ephemeral=True)
 
     @discord.ui.button(label="👁️ Xem lại", style=discord.ButtonStyle.secondary, row=0)
     async def refresh(self, interaction: discord.Interaction, _):
@@ -1521,7 +1544,7 @@ class BuyRolesView(View):
     @discord.ui.button(label="🔍 Auto Detect", style=discord.ButtonStyle.primary, row=1)
     async def auto_detect(self, interaction: discord.Interaction, _):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.")
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         import re
         # Format: "Buyer Xk-Yk", "Buyer Xtr-Ytr", "Buyer Xm-Ym", max có thể bỏ trống (∞)
         pattern = re.compile(
@@ -1611,7 +1634,7 @@ class _DeleteBuyRoleSelect(Select):
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id not in ADMIN_IDS:
-            return await interaction.response.send_message("❌ Chỉ admin.")
+            return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         idx = int(self.values[0])
         buy_roles = get_buy_roles()
         if idx >= len(buy_roles):
@@ -1633,6 +1656,15 @@ class SetupServerView(View):
         super().__init__(timeout=180)
         self.src = src
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # FIX (bảo vệ thêm — xem ghi chú đầy đủ ở SetupChannelView.interaction_check())
+        if not await super().interaction_check(interaction):
+            return False
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+            return False
+        return True
+
     def _ch_select(self, guild, placeholder):
         return [discord.SelectOption(label=f"#{ch.name}"[:100], value=str(ch.id))
                 for ch in sorted(guild.text_channels, key=lambda c: c.position)][:25]
@@ -1646,28 +1678,28 @@ class SetupServerView(View):
         opts = self._ch_select(interaction.guild, "Welcome")
         if not opts: return await interaction.response.send_message("❌ Không có kênh.")
         v = View(timeout=60); v.add_item(_ServerChannelSelect("cfg_welcome_channel", "Welcome Channel", opts))
-        await interaction.response.send_message("👋 Chọn kênh **Welcome**:", view=v)
+        await interaction.response.send_message("👋 Chọn kênh **Welcome**:", view=v, ephemeral=True)
 
     @discord.ui.button(label="👋 Goodbye Channel", style=discord.ButtonStyle.secondary, row=0)
     async def goodbye(self, interaction, _):
         opts = self._ch_select(interaction.guild, "Goodbye")
         if not opts: return await interaction.response.send_message("❌ Không có kênh.")
         v = View(timeout=60); v.add_item(_ServerChannelSelect("cfg_goodbye_channel", "Goodbye Channel", opts))
-        await interaction.response.send_message("👋 Chọn kênh **Goodbye**:", view=v)
+        await interaction.response.send_message("👋 Chọn kênh **Goodbye**:", view=v, ephemeral=True)
 
     @discord.ui.button(label="📋 Log Channel", style=discord.ButtonStyle.secondary, row=0)
     async def log(self, interaction, _):
         opts = self._ch_select(interaction.guild, "Log")
         if not opts: return await interaction.response.send_message("❌ Không có kênh.")
         v = View(timeout=60); v.add_item(_ServerChannelSelect("cfg_log_rudy", "Log Channel", opts))
-        await interaction.response.send_message("📋 Chọn kênh **Log**:", view=v)
+        await interaction.response.send_message("📋 Chọn kênh **Log**:", view=v, ephemeral=True)
 
     @discord.ui.button(label="🎭 Auto-role Join", style=discord.ButtonStyle.secondary, row=1)
     async def autorole(self, interaction, _):
         opts = self._role_select(interaction.guild)
         if not opts: return await interaction.response.send_message("❌ Không có role.")
         v = View(timeout=60); v.add_item(_ServerRoleSelect("cfg_autorole_join", "Auto-role khi Join", opts))
-        await interaction.response.send_message("🎭 Chọn role **tự động gán** khi member join:", view=v)
+        await interaction.response.send_message("🎭 Chọn role **tự động gán** khi member join:", view=v, ephemeral=True)
 
     @discord.ui.button(label="🔤 Đặt Prefix Bot", style=discord.ButtonStyle.primary, row=1)
     async def prefix(self, interaction, _): await interaction.response.send_modal(SetPrefixModal())
@@ -1707,7 +1739,16 @@ class SetPrefixModal(Modal, title="🔤 Đặt Prefix Bot"):
         prefix = self.prefix_input.value.strip()
         if not prefix: return await interaction.response.send_message("❌ Prefix không được để trống.")
         save_cfg("cfg_prefix", prefix)
-        await interaction.response.send_message(f"✅ Prefix bot đã đổi thành `{prefix}`.")
+        # FIX: trước đây báo "thành công" nhưng bot.py hardcode command_prefix="." tĩnh —
+        # đổi ở đây không có tác dụng gì thật sự, dù bot nói đã đổi (xem CHANGELOG). Giờ
+        # bot.py đã đọc prefix riêng theo từng guild nên lệnh này ĐÃ có tác dụng thật —
+        # nhưng mọi ví dụ/help text khác trong bot (`.setup`, `.as`, `.gwstatus`...) vẫn
+        # hiển thị "." cứng, KHÔNG tự đổi theo — cảnh báo rõ để admin không bất ngờ.
+        await interaction.response.send_message(
+            f"✅ Prefix bot đã đổi thành `{prefix}` — có hiệu lực NGAY (không cần restart).\n"
+            f"⚠️ Lưu ý: các ví dụ lệnh trong `.help`/hướng dẫn khác của bot vẫn hiển thị "
+            f"dấu `.` cũ (chưa cập nhật theo), nhưng lệnh thật sự đã dùng `{prefix}`."
+        )
 
 
 # ══════════════════════════════════════════
@@ -2165,7 +2206,7 @@ class RolePermFlow:
         # ── Bước 1: chọn role ──
         role_embeds, roles = _role_list_embeds(guild)
         pv_role = _PageView(role_embeds, interaction.user.id)
-        await interaction.response.send_message(embed=role_embeds[0], view=pv_role)
+        await interaction.response.send_message(embed=role_embeds[0], view=pv_role, ephemeral=True)
 
         raw = await wait_reply()
         if raw is None: return

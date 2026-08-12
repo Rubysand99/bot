@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.28.1"
+BOT_VERSION = "4.29.0"
 BOT_UPDATED = "2026-08-10"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
@@ -58,7 +58,18 @@ class GuildContextTree(app_commands.CommandTree):
         return True
 
 
-bot = commands.Bot(command_prefix=".", intents=intents, help_command=None, tree_cls=GuildContextTree)
+async def _get_prefix(bot_: commands.Bot, message: discord.Message):
+    """FIX: prefix trước đây hardcode "." tĩnh — SetPrefixModal (cogs/admin_views.py)
+    cho admin đổi + báo thành công nhưng KHÔNG có gì đọc lại, nên đổi prefix im lặng
+    không có tác dụng gì (xem get_guild_prefix() ở core/data.py để biết chi tiết).
+    Giờ đọc riêng theo từng guild — DM (message.guild is None) và guild chưa cấu hình
+    đều fallback "." như cũ, không đổi hành vi mặc định."""
+    if message.guild:
+        from core.data import get_guild_prefix
+        return get_guild_prefix(message.guild.id)
+    return "."
+
+bot = commands.Bot(command_prefix=_get_prefix, intents=intents, help_command=None, tree_cls=GuildContextTree)
 
 @bot.before_invoke
 async def _set_guild_context_prefix(ctx: commands.Context):

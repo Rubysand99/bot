@@ -546,6 +546,23 @@ def get_cfg_category()        -> int: return load_data().get("cfg_ticket_categor
 def get_cfg_stock_category()  -> int: return load_data().get("cfg_stock_category",  STOCK_CATEGORY_ID)
 def get_cfg_sold_category()   -> int: return load_data().get("cfg_sold_category",   SOLD_CATEGORY_ID)
 def get_cfg_done_role()       -> int: return load_data().get("cfg_done_role",       DONE_ROLE_ID)
+
+def get_guild_prefix(guild_id: int) -> str:
+    """FIX: SetPrefixModal (cogs/admin_views.py) lưu "cfg_prefix" và báo THÀNH CÔNG cho
+    admin, nhưng KHÔNG có gì từng đọc lại field này — bot.py hardcode command_prefix="."
+    (chuỗi tĩnh) nên đổi prefix trước đây không có tác dụng gì, dù bot báo đổi thành công.
+    Hàm này để bot.py dùng làm command_prefix CALLABLE (đọc TRỰC TIẾP từ _data_cache,
+    KHÔNG qua load_data()/contextvar — hàm callable này chạy RẤT SỚM trong pipeline xử lý
+    message của discord.py, trước khi before_invoke kịp set_current_guild()). Luôn có
+    fallback "." an toàn nếu chưa load cache hoặc guild chưa cấu hình gì."""
+    try:
+        d = _data_cache.get(guild_id)
+        if d:
+            p = d.get("cfg_prefix", ".")
+            return p if p else "."
+    except Exception:
+        pass
+    return "."
 def get_cfg_support_role()    -> int: return load_data().get("cfg_support_role", SUPPORT_ROLE_ID)
 def get_cfg_seller_role()     -> int: return load_data().get("cfg_seller_role", SELLER_ROLE_ID)
 def get_cfg_counter_channel() -> int: return load_data().get("cfg_counter_channel", COUNTER_CHANNEL_ID)

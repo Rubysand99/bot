@@ -1,5 +1,54 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.29.0] — 2026-08-10 — 🔴 SECURITY
+
+### 🔍 Rà soát toàn bộ codebase — Phần 4/~10: `cogs/admin_views.py`
+
+### 🚨 Lỗi nghiêm trọng nhất tìm được trong toàn bộ đợt rà soát — leo thang đặc quyền
+Sau khi admin gõ `.setup`, 4 nhánh chính — **Kênh / Danh mục / Role / Server** — đều:
+1. Được gửi ra kênh **CÔNG KHAI** (không `ephemeral=True`) — ai trong kênh cũng thấy.
+2. Bản thân 4 View đó (`SetupChannelView`, `SetupCategoryView`, `SetupRoleView`,
+   `SetupServerView`) **KHÔNG có check admin riêng** — chỉ kế thừa
+   `GuildContextView.interaction_check()` gốc, vốn CHỈ kiểm tra server đã ủy quyền hay
+   chưa, KHÔNG kiểm tra người bấm có phải admin không.
+
+Kết hợp lại: trong tối đa 180 giây sau khi 1 admin bấm vào 1 trong 4 nhánh này, **BẤT KỲ
+member nào nhìn thấy tin nhắn đó** (không cần là admin) đều có thể bấm nút và:
+- Tạo / xoá / đổi tên / clone kênh, đổi font toàn bộ kênh & category trong server.
+- Tạo / xoá category, di chuyển kênh giữa các category.
+- **Tạo / xoá role, và đặc biệt — tự GÁN ROLE CHO CHÍNH MÌNH** qua nút "✅ Gán role"
+  (`AssignRoleModal action="give"`) — đây là leo thang đặc quyền thật sự, không chỉ
+  xem/sửa nhầm cấu hình.
+- Đổi kênh welcome/goodbye/log, role tự động gán khi member mới join, prefix bot.
+
+Rà soát kỹ hơn phát hiện lỗi này lan rộng khắp toàn bộ cây `.setup`, không riêng 4 view
+chính — tổng cộng **25 chỗ** gửi tin nhắn kèm nút bấm/menu chọn mà thiếu `ephemeral=True`
+(mọi Select con: xoá/đổi tên/clone kênh, xoá/đổi tên category, xoá role, xoá buy-role
+tier, xoá mục giá, chọn kênh welcome/goodbye/log...).
+
+**Đã sửa:**
+- Thêm `ephemeral=True` cho toàn bộ **25 chỗ** gửi tin nhắn kèm `view=` — đây là lớp bảo
+  vệ CHÍNH: tin nhắn ephemeral chỉ người bấm tự thấy/tự bấm được, Discord đảm bảo ở tầng
+  nền tảng, không phụ thuộc logic Python có đúng hay không.
+- Thêm `interaction_check()` (check admin, giống hệt `SetupMainView` — đã sửa ở
+  v4.25.3) cho cả 4 view `SetupChannelView`/`SetupCategoryView`/`SetupRoleView`/
+  `SetupServerView` — lớp bảo vệ THỨ 2, phòng trường hợp 1 thay đổi code sau này lỡ gửi
+  lại 1 trong các view này mà quên `ephemeral=True`.
+
+### 🐛 Sửa lỗi khác
+- `core/data.py` + `bot.py` + `cogs/admin_views.py: SetPrefixModal` — **Đổi prefix bot
+  không có tác dụng gì dù báo thành công.** `SetPrefixModal` lưu `cfg_prefix` và báo
+  "✅ Prefix đã đổi", nhưng `bot.py` hardcode `command_prefix="."` (chuỗi tĩnh) — không
+  có gì từng đọc lại `cfg_prefix`. Đã thêm `get_guild_prefix()` (đọc trực tiếp cache,
+  không qua contextvar vì đây là hàm chạy sớm nhất trong pipeline xử lý message) +
+  chuyển `bot.py` sang dùng prefix CALLABLE theo từng guild. `SetPrefixModal` giờ cảnh
+  báo thêm: help text nơi khác trong bot vẫn hiển thị `.` cứng, chưa tự cập nhật theo.
+- `cogs/admin_views.py` — **5 chỗ** khác còn sót `"❌ Chỉ admin."` thiếu `ephemeral=True`
+  (Part 1 — v4.25.3 — chỉ bắt được biến thể 1 dòng, bỏ sót biến thể xuống dòng riêng).
+  Đã quét lại toàn bộ file bằng script thay vì sửa tay từng dòng, xác nhận hết sạch.
+
+---
+
 ## [v4.28.1] — 2026-08-10 — HOTFIX
 
 ### 🐛 Sửa lỗi (do chính bản vá trước gây ra — xin lỗi vì lỗi này)
