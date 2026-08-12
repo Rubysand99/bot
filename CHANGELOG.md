@@ -1,5 +1,37 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.28.1] — 2026-08-10 — HOTFIX
+
+### 🐛 Sửa lỗi (do chính bản vá trước gây ra — xin lỗi vì lỗi này)
+- `cogs/giveaway.py: end_giveaway()` — **giveaway kết thúc mà KHÔNG có bất kỳ thông báo
+  nào** (không random winner, không edit embed, không gửi "🎊 Chúc mừng...", không cả
+  "❌ không ai tham gia"). Nguyên nhân: fix chống trùng lặp thêm ở v4.27.0 kiểm tra field
+  `"ended"` ngay đầu hàm — nhưng CẢ 3 nơi gọi `end_giveaway()` (`_giveaway_timer_task`
+  khi hết giờ tự nhiên, `/gend`, dropdown "Kết thúc" trong `/gwlist`) đều TỰ
+  `gw["ended"]=True` NGAY TRƯỚC KHI gọi hàm này (coi đó là bước "claim" của riêng họ,
+  để hủy task timer đang chờ) — nên field đó LUÔN thấy `True` ngay từ lần gọi đầu tiên,
+  hàm return ngay lập tức, 100% mọi giveaway kết thúc đều không thông báo. Đã đổi sang
+  dùng marker RIÊNG `"_announce_done"` — chỉ do chính `end_giveaway()` ghi/đọc, không
+  đụng cờ `"ended"` mà 3 nơi gọi trên tự quản lý, nhưng vẫn giữ được mục đích gốc: chặn
+  2 caller khác nhau lọt qua do có `await` xen giữa lúc check và lúc set ở phía họ.
+- `cogs/giveaway.py: .gwreset` — Cũng cập nhật: reset thêm `_announce_done=False`
+  (nếu không, giveaway bị stuck do lỗi trên vẫn tiếp tục không thông báo được kể cả sau
+  `.gwreset`). **Quan trọng hơn**: trước đây `.gwreset` từ chối thẳng nếu giveaway đã
+  quá giờ kết thúc ("❌ ... không thể khôi phục") — nhưng giveaway bị lỗi trên LUÔN đã
+  quá giờ (đó chính là lúc bug xảy ra), nên bản cũ không bao giờ cứu được đúng giveaway
+  nó sinh ra để cứu. Giờ nếu đã quá giờ, `.gwreset` kích hoạt lại NGAY LẬP TỨC thay vì
+  từ chối — giveaway sẽ tự công bố kết quả trong giây lát.
+- `cogs/giveaway.py: .gwstatus` — Thêm dấu ⚠️ riêng cho giveaway "ended nhưng có người
+  tham gia mà chưa có winner" (nghi bị stuck) — phân biệt rõ với 🔴 (kết thúc bình
+  thường), kèm dòng gợi ý `.gwreset <gw_id>` ở phần tổng quan nếu có GW nào đang stuck.
+
+### 📋 Cần làm sau khi cập nhật
+Nếu có giveaway nào đã kết thúc (đúng lúc/sau khi v4.27.0 chạy) mà không thấy thông báo
+— chạy `.gwstatus`, tìm dòng có dấu ⚠️, rồi chạy `.gwreset <gw_id>` cho từng cái để công
+bố lại kết quả đúng.
+
+---
+
 ## [v4.28.0] — 2026-08-10
 
 ### 🔍 Rà soát toàn bộ codebase — Phần 3/~10: `cogs/admin.py`

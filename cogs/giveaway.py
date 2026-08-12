@@ -45,21 +45,29 @@ def _get_net_invites_from_cog(user_id: int) -> tuple:
 # ══════════════════════════════════════════
 async def end_giveaway(message_id, channel, winners_count, prize, host_id):
     gw = active_giveaways.get(message_id) or active_giveaways.get(str(message_id))
-    # FIX (phòng thủ thêm — nguyên nhân gốc đã sửa ở bot.py: on_ready() từng resume
-    # giveaway lại mỗi lần Discord reconnect, tạo 2 task đếm giờ độc lập cho cùng 1
-    # giveaway → cả 2 cùng gọi end_giveaway() khi hết giờ). Check `ended` TRƯỚC khi set
-    # (không phải sau) — nếu giveaway ĐÃ ended rồi (gọi lần 2, dù từ đâu tới) thì dừng
-    # ngay, KHÔNG random winner lại lần nữa (có thể ra người khác) và KHÔNG gửi thêm
-    # 1 tin "🎊 Chúc mừng..."/"❌ không ai tham gia" trùng lặp vào kênh.
-    if gw and gw.get("ended"):
+    # FIX (sửa lại — bản trước ở CHANGELOG v4.27.0 vô tình làm HỎNG HẲN thông báo kết
+    # thúc cho MỌI giveaway, xin lỗi vì lỗi này): dùng marker RIÊNG "_announce_done" thay
+    # vì đọc lại field "ended". Cả 3 nơi gọi hàm này (_giveaway_timer_task, /gend, dropdown
+    # "Kết thúc giveaway" trong /gwlist) đều TỰ gw["ended"]=True NGAY TRƯỚC KHI gọi hàm
+    # này — coi đó là bước "claim quyền kết thúc" của riêng họ (để hủy task timer đang chờ,
+    # tránh việc chính callback đó bị gọi lại). Bản sửa trước đọc lại ĐÚNG field "ended" đó
+    # ngay đầu hàm → luôn thấy True (vì caller vừa set) → return ngay lập tức, KHÔNG BAO
+    # GIỜ thực sự fetch message / random winner / gửi thông báo — mọi giveaway "kết thúc"
+    # mà không có bất kỳ thông báo nào (đúng bug đã gặp thực tế).
+    # "_announce_done" chỉ do CHÍNH hàm này ghi/đọc, không đụng cờ "ended" của caller —
+    # vẫn giữ được mục đích gốc của bản sửa trước: chặn 2 caller KHÁC NHAU cùng lọt qua
+    # (vd timer tự nhiên hết giờ ĐÚNG lúc admin gõ /gend — cả 2 đều có `await` xen giữa
+    # lúc check "ended" và lúc set nó ở phía caller, nên về lý thuyết vẫn có thể trùng).
+    if gw and gw.get("_announce_done"):
         return
     if gw:
-        gw["ended"] = True
+        gw["_announce_done"] = True
     save_giveaways_data(active_giveaways)
 
     try:
         msg = await channel.fetch_message(message_id)
-    except Exception:
+    except Exception as e:
+        print(f"[GIVEAWAY] ❌ Không fetch được message {message_id} để kết thúc giveaway: {e}")
         return
 
     entries = list(gw.get("entries", set())) if gw else []
@@ -579,12 +587,24 @@ class GiveawayCog(commands.Cog):
         now       = datetime.now(timezone.utc).timestamp()
         remaining = int(end_time - now)
 
+        # FIX: TRƯỚC ĐÂY nếu đã hết giờ (remaining <= 0) thì từ chối thẳng — nhưng đây lại
+        # CHÍNH LÀ trường hợp .gwreset cần dùng nhất: 1 giveaway bị đánh dấu "ended" mà
+        # không có thông báo gì (lỗi cũ ở end_giveaway(), xem sửa phía trên — hoặc bất kỳ lý
+        # do nào khác trong tương lai) LUÔN có end_time đã ở QUÁ KHỨ, vì timer đã tự bắn rồi
+        # mới sinh ra tình trạng "kết thúc nhầm" này. Bản cũ .gwreset không bao giờ cứu được
+        # đúng những giveaway nó sinh ra để cứu. Giờ nếu đã hết giờ, kích hoạt lại NGAY LẬP
+        # TỨC (remaining=0) thay vì từ chối — end_giveaway() sẽ chạy lại ngay và (nhờ
+        # _announce_done đã reset ở dưới) thông báo bình thường như chưa từng lỗi.
         if remaining <= 0:
-            return await ctx.reply("❌ Giveaway này đã hết giờ rồi, không thể khôi phục.")
+            remaining = 0
 
         # Reset trạng thái
         found_gw["ended"]         = False
         found_gw["picked_winner"] = None
+        found_gw["_announce_done"] = False  # FIX: xem end_giveaway() — nếu không reset luôn
+        # field này, giveaway bị stuck do lỗi cũ (hoặc bất kỳ lý do gì khác) sẽ VẪN không
+        # thông báo được sau khi .gwreset, vì end_giveaway() thấy _announce_done vẫn True
+        # từ lần chạy trước và tự chặn lại y hệt.
         save_giveaways_data(active_giveaways)
 
         # Khởi động lại timer
@@ -620,7 +640,10 @@ class GiveawayCog(commands.Cog):
 
         h, r = divmod(remaining, 3600)
         m, s = divmod(r, 60)
-        await ctx.reply(f"✅ Đã khôi phục **GW #{ref}**! Còn **{h}h {m}m {s}s** đến khi kết thúc.")
+        if remaining <= 0:
+            await ctx.reply(f"✅ Đã khôi phục **GW #{ref}**! Đã quá giờ kết thúc từ trước — sẽ tự công bố kết quả ngay trong giây lát.")
+        else:
+            await ctx.reply(f"✅ Đã khôi phục **GW #{ref}**! Còn **{h}h {m}m {s}s** đến khi kết thúc.")
 
 
 class GwStatusView(View):
@@ -696,6 +719,10 @@ class GwStatusView(View):
         slice_  = all_flat[page * self.PAGE_SIZE: (page + 1) * self.PAGE_SIZE]
         n_run   = len(running)
         n_end   = len(ended)
+        n_stuck = sum(
+            1 for item in all_flat
+            if (lambda g: g.get("ended") and g.get("winner_ids") is None and g.get("entries"))(active_giveaways.get(item["mid"], {}))
+        )
 
         embed = discord.Embed(
             title     = "📋  Trạng Thái Giveaway",
@@ -704,9 +731,12 @@ class GwStatusView(View):
         )
 
         # Header counts
+        overview = f"🟢 Đang chạy: **{n_run}**  •  🔴 Đã kết thúc: **{n_end}**"
+        if n_stuck:
+            overview += f"\n⚠️ **{n_stuck}** GW đã kết thúc nhưng CHƯA công bố kết quả — dùng `.gwreset <gw_id>` để công bố lại."
         embed.add_field(
             name  = "📊 Tổng quan",
-            value = f"🟢 Đang chạy: **{n_run}**  •  🔴 Đã kết thúc: **{n_end}**",
+            value = overview,
             inline= False,
         )
 
@@ -714,7 +744,17 @@ class GwStatusView(View):
             embed.add_field(name="*(Không có giveaway nào)*", value="\u200b", inline=False)
         else:
             for item in slice_:
-                status = "🟢" if not active_giveaways.get(item["mid"], {}).get("ended") else "🔴"
+                gw_data = active_giveaways.get(item["mid"], {})
+                if not gw_data.get("ended"):
+                    status = "🟢"
+                elif gw_data.get("winner_ids") is not None or not gw_data.get("entries"):
+                    status = "🔴"  # kết thúc bình thường: có winner, hoặc không ai tham gia
+                else:
+                    # FIX: ended=True nhưng CÓ người tham gia mà chưa có winner_ids —
+                    # nghi bị "stuck" (vd đúng bug end_giveaway() ở CHANGELOG trước khiến
+                    # giveaway kết thúc mà không thông báo). Đánh dấu riêng để dễ nhận ra
+                    # cần `.gwreset <gw_id>` thay vì lẫn với giveaway đã xong bình thường.
+                    status = "⚠️"
                 embed.add_field(
                     name  = f"{status} GW #{item['gw_id']} — {item['prize'][:40]}",
                     value = item["line"],
