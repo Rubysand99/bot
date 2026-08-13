@@ -1,5 +1,45 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.30.0] — 2026-08-10
+
+### 🔍 Rà soát toàn bộ codebase — Phần 5/~10: `cogs/ticket.py`
+
+### 🐛 Sửa lỗi
+- `cogs/ticket.py` — **`_open_tickets` (cache "user nào đang có ticket mở") không phân
+  biệt theo guild**, chỉ key theo `user_id`. Với 1 user là member của NHIỀU guild bot
+  đang phục vụ (đúng mục đích multi-guild) — có ticket mở ở guild A, rồi thử mở ticket
+  ở guild B: `has_ticket(guild_B, user)` tra nhầm `channel_id` của guild A, guild_B
+  không tìm thấy kênh đó (đúng — nó thuộc guild khác) → tưởng nhầm "ticket không còn
+  tồn tại" → **TỰ XOÁ LUÔN cache của guild A dù ticket ở đó vẫn đang mở bình thường**.
+  User sau đó mở được ticket THỨ 2 ở guild A dù ticket đầu chưa đóng — phá vỡ luật
+  "1 ticket/user". Đã đổi key cache thành `(guild_id, user_id)` — mỗi guild theo dõi
+  độc lập, cập nhật cả 9 chỗ gọi liên quan.
+- `core/data.py` + `cogs/ticket.py` — **`TRANSCRIPT_CHANNEL_ID` (kênh lưu transcript khi
+  đóng ticket) là hằng số hardcode dùng chung cho MỌI guild** — cùng lớp bug với
+  `DONE_ROLE_ID` đã sửa ở Phần 3 (v4.28.0), lần này chưa từng được đưa vào hệ thống
+  `cfg_*` per-guild. Guild khác TuyTam Community chắc chắn không có kênh ID này →
+  transcript đóng ticket **im lặng không được lưu**, không lỗi không log. Đã thêm
+  `cfg_transcript_channel` (per-guild, default = ID cũ nên TuyTam không đổi hành vi) +
+  `get_cfg_transcript_channel()`/`set_cfg_transcript_channel()`, cùng lệnh
+  `.transcriptchannel [#kênh]` (admin, alias `.settranscript`) để mỗi server tự cấu
+  hình. `FEEDBACK_CHANNEL_ID` cùng khu vực constants nhưng xác nhận là dead code —
+  không được dùng ở bất kỳ đâu trong toàn bộ codebase, không cần sửa.
+- `cogs/ticket.py: .done` — Dòng báo lỗi "Không tìm thấy role" khi role tặng chưa cấu
+  hình đúng còn sót hardcode số ID CŨ (`1515393691206811901`) từ TRƯỚC khi
+  `DONE_ROLE_ID` được chuyển sang `cfg_done_role` ở Phần 3 — guild khác cấu hình role
+  khác thì lỗi vẫn hiện đúng số ID đó, không liên quan gì role họ thật sự đã đặt. Giờ
+  hiện đúng ID đang cấu hình cho guild đang chạy lệnh, kèm gợi ý `.donerole @role`.
+
+### ✅ Đã rà soát kỹ, xác nhận KHÔNG có bug
+- Không có `interaction_check()` override nào trong file này — mọi View dùng chung base
+  `GuildContextView` (đúng, vì hầu hết View trong `ticket.py` CỐ Ý cho member thường
+  dùng, ví dụ mở ticket). Các action admin-only (đóng ticket, hoàn thành đơn, bật/tắt
+  nút panel) đều tự kiểm tra `ADMIN_IDS`/`is_staff_member()` + `ephemeral=True` đúng
+  cách ở từng callback — quét toàn bộ 0 chỗ nào thiếu (khác hẳn `admin_views.py` ở
+  Phần 4, nơi cả object View thiếu check hoàn toàn).
+
+---
+
 ## [v4.29.0] — 2026-08-10 — 🔴 SECURITY
 
 ### 🔍 Rà soát toàn bộ codebase — Phần 4/~10: `cogs/admin_views.py`

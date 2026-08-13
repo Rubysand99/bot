@@ -577,6 +577,7 @@ class AdminCog(commands.Cog):
                      "`.addrole @user @role` — Thêm role\n"
                      "`.removerole @user @role` — Xóa role\n"
                      "`.donerole [@role]` — Xem/đổi role tự động tặng buyer khi hoàn thành đơn (riêng theo server)\n"
+                     "`.transcriptchannel [#kênh]` — Xem/đổi kênh lưu transcript khi đóng ticket (riêng theo server)\n"
                      "`.userinfo [@user]` — Thông tin thành viên\n"
                      "`.serverinfo` — Thông tin server\n"
                      "`.backfill [số]` — Quét lại kênh legit, thả ✅ cho tin bị bỏ sót (mặc định 25)", False),

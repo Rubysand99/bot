@@ -14,7 +14,8 @@ from discord.ext import commands
 from discord.ui import Button, Select, TextInput
 
 from core.data import (
-    ADMIN_IDS, ADMIN_TUYTAM_ID, TRANSCRIPT_CHANNEL_ID,
+    ADMIN_IDS, ADMIN_TUYTAM_ID,
+    get_cfg_transcript_channel, set_cfg_transcript_channel,
     get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
     get_cfg_counter_channel,
     save_panel_channel_id,
@@ -70,24 +71,34 @@ _ITEM_OPTIONS = [
 # ══════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════
-# Cache: user_id → channel_id (ticket đang mở)
-_open_tickets: dict[int, int] = {}
+# Cache: (guild_id, user_id) → channel_id (ticket đang mở)
+# FIX: trước đây key CHỈ có user_id, KHÔNG phân biệt guild. Với 1 user là member của
+# NHIỀU guild bot đang phục vụ (đúng mục đích multi-guild của bot — xem AI_CONTEXT.md),
+# có ticket mở ở guild A rồi thử mở ở guild B khiến has_ticket(guild_B, user) tra nhầm
+# channel_id của guild A vào guild B → guild_B.get_channel(...) trả None (channel đó
+# không thuộc guild B) → tưởng nhầm "ticket không còn tồn tại" → TỰ XOÁ LUÔN cache của
+# guild A dù ticket ở đó vẫn đang mở bình thường! User sau đó có thể mở ticket THỨ 2 ở
+# guild A (ticket đầu vẫn còn), phá vỡ luật "1 ticket/user" xuyên guild. Giờ key có thêm
+# guild_id nên mỗi guild theo dõi độc lập hoàn toàn — đúng tinh thần "mỗi server data
+# riêng, không dùng chung" của toàn bộ hệ thống multi-guild.
+_open_tickets: dict[tuple[int, int], int] = {}
 
-def _register_ticket(user_id: int, channel_id: int):
-    _open_tickets[user_id] = channel_id
+def _register_ticket(user_id: int, channel_id: int, guild_id: int):
+    _open_tickets[(guild_id, user_id)] = channel_id
 
-def _unregister_ticket(user_id: int):
-    _open_tickets.pop(user_id, None)
+def _unregister_ticket(user_id: int, guild_id: int):
+    _open_tickets.pop((guild_id, user_id), None)
 
 async def has_ticket(guild, user) -> bool:
-    """Kiểm tra user có ticket đang mở không — dùng cache O(1) thay vì quét toàn bộ kênh."""
-    channel_id = _open_tickets.get(user.id)
+    """Kiểm tra user có ticket đang mở Ở ĐÚNG GUILD NÀY không — dùng cache O(1) thay vì
+    quét toàn bộ kênh."""
+    channel_id = _open_tickets.get((guild.id, user.id))
     if channel_id:
         ch = guild.get_channel(channel_id)
         if ch:
             return True
-        # Kênh không còn tồn tại → dọn cache
-        _unregister_ticket(user.id)
+        # Kênh không còn tồn tại → dọn cache (CHỈ của guild này, không đụng guild khác)
+        _unregister_ticket(user.id, guild.id)
     return False
 
 async def read_counter_from_channel(bot) -> int:
@@ -398,14 +409,14 @@ async def _close_ticket(channel, bot_instance, closer: discord.Member = None):
     if creator:    embed.set_thumbnail(url=creator.display_avatar.url)
     embed.set_footer(text="TuyTam Store • Ticket System")
 
-    transcript_ch = await get_or_fetch_channel(bot_instance, TRANSCRIPT_CHANNEL_ID)
+    transcript_ch = await get_or_fetch_channel(bot_instance, get_cfg_transcript_channel())
     if transcript_ch:
         file2 = discord.File(io.BytesIO(html.encode("utf-8")), filename=f"transcript-{channel.name}.html")
         await transcript_ch.send(embed=embed, file=file2)
 
     # Dọn cache open ticket
     if user_id:
-        _unregister_ticket(user_id)
+        _unregister_ticket(user_id, channel.guild.id)
 
     # Dọn completed_key để tránh document MongoDB phình to
     channel_id = channel.id
@@ -666,7 +677,7 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
         await channel.send(f"{ping_target} | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        _register_ticket(interaction.user.id, channel.id)
+        _register_ticket(interaction.user.id, channel.id, channel.guild.id)
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
 
         await send_log(
@@ -714,7 +725,7 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        _register_ticket(interaction.user.id, channel.id)
+        _register_ticket(interaction.user.id, channel.id, channel.guild.id)
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
     except Exception as e:
         try: await interaction.followup.send(f"❌ Có lỗi xảy ra: `{e}`")
@@ -758,7 +769,7 @@ async def create_accpre_ticket(interaction: discord.Interaction, trade_type: str
         ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        _register_ticket(interaction.user.id, channel.id)
+        _register_ticket(interaction.user.id, channel.id, channel.guild.id)
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
 
         await send_log(
@@ -813,7 +824,7 @@ async def create_build_ticket(interaction: discord.Interaction, trade_type: str)
         ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        _register_ticket(interaction.user.id, channel.id)
+        _register_ticket(interaction.user.id, channel.id, channel.guild.id)
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
 
         await send_log(
@@ -866,7 +877,7 @@ async def create_ruby_ticket(interaction: discord.Interaction, option_label: str
         ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        _register_ticket(interaction.user.id, channel.id)
+        _register_ticket(interaction.user.id, channel.id, channel.guild.id)
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
 
         await send_log(
@@ -929,7 +940,7 @@ async def create_middleman_ticket(interaction: discord.Interaction, partner_id: 
             ping_str = f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        _register_ticket(interaction.user.id, channel.id)
+        _register_ticket(interaction.user.id, channel.id, channel.guild.id)
         await interaction.followup.send(f"✅ Ticket giao dịch trung gian đã tạo! Vào đây: {channel.mention}", ephemeral=True)
 
         await send_log(
@@ -987,7 +998,7 @@ async def create_direct_order_ticket(interaction: discord.Interaction, server_ke
             ping = f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping} | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        _register_ticket(interaction.user.id, channel.id)
+        _register_ticket(interaction.user.id, channel.id, channel.guild.id)
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
 
         await send_log(
@@ -1049,7 +1060,7 @@ async def create_listing_ticket(interaction: discord.Interaction, ign: str, pric
         ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
-        _register_ticket(interaction.user.id, channel.id)
+        _register_ticket(interaction.user.id, channel.id, channel.guild.id)
         await interaction.followup.send(f"✅ Ticket đã tạo! Vào đây: {channel.mention}", ephemeral=True)
 
         await send_log(
@@ -1495,6 +1506,21 @@ class TicketCog(commands.Cog):
         await ctx.send(embed=build_panel_embed(ctx.guild), view=TicketPanel(ctx.guild.id))
         await ctx.message.delete()
 
+    # ── .transcriptchannel — cấu hình kênh lưu transcript riêng cho từng guild (FIX multi-guild) ──
+    @commands.command(name="transcriptchannel", aliases=["settranscript"])
+    async def transcriptchannel_cmd(self, ctx, channel: discord.TextChannel = None):
+        """Xem/đổi kênh lưu transcript khi đóng ticket. Dùng: `.transcriptchannel` để xem,
+        `.transcriptchannel #kênh` để đổi (riêng theo server)."""
+        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền.")
+        if channel is None:
+            current = ctx.guild.get_channel(get_cfg_transcript_channel())
+            return await ctx.reply(
+                f"📄 Kênh transcript hiện tại: {current.mention if current else '*(chưa cài / không tồn tại ở server này)*'}\n"
+                f"Đổi bằng: `.transcriptchannel #kênh`"
+            )
+        set_cfg_transcript_channel(channel.id)
+        await ctx.reply(f"✅ Transcript khi đóng ticket từ giờ sẽ lưu vào {channel.mention} (chỉ ở server này).")
+
     @commands.command(name="mmpanel", aliases=["middlemanpanel"])
     async def mmpanel_cmd(self, ctx):
         """Gửi panel Giao Dịch Trung Gian (AutoMM) vào kênh hiện tại."""
@@ -1678,7 +1704,12 @@ class TicketCog(commands.Cog):
                 inline=False,
             )
         else:
-            embed.add_field(name="🎖️ Role tặng", value="⚠️ Không tìm thấy role `1515393691206811901`", inline=False)
+            # FIX: trước đây hardcode số ID cũ (1515393691206811901) trong text lỗi —
+            # sót lại từ trước khi DONE_ROLE_ID được chuyển thành cfg_done_role per-guild
+            # (xem CHANGELOG). Guild khác cấu hình role KHÁC thì lỗi vẫn hiện đúng số ID
+            # đó, không liên quan gì đến role họ thật sự đã đặt — rất khó hiểu. Giờ hiện
+            # đúng ID đang cấu hình cho guild này.
+            embed.add_field(name="🎖️ Role tặng", value=f"⚠️ Không tìm thấy role `{get_cfg_done_role()}` — dùng `.donerole @role` để cấu hình lại", inline=False)
 
         embed.set_footer(text=f"Xác nhận bởi {_uname_plain(ctx.author)}")
         await ctx.reply(embed=embed)

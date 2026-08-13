@@ -124,6 +124,11 @@ BUILDER_BASE_ROLE_ID  = 1484158340849205308
 COUNTER_CHANNEL_ID    = 0
 LEGIT_CHANNEL_ID      = 0
 PROOF_CHANNEL_ID      = 1469647159560241318
+# FIX: TRANSCRIPT_CHANNEL_ID (kênh lưu transcript khi đóng ticket — cogs/ticket.py:
+# _close_ticket) CŨNG bị bỏ sót khỏi hệ thống cfg_* per-guild giống hệt DONE_ROLE_ID —
+# dùng thẳng làm tham số cho get_or_fetch_channel() thay vì qua get_cfg_transcript_channel().
+# Guild khác TuyTam Community chắc chắn không có kênh ID này → get_or_fetch_channel() trả
+# None → transcript đóng ticket im lặng KHÔNG được lưu ở guild khác, không lỗi không log.
 TRANSCRIPT_CHANNEL_ID = 1464430574524436679
 FEEDBACK_CHANNEL_ID   = 1502464872686948403
 STOCK_CATEGORY_ID     = 1506520186063163423
@@ -211,6 +216,7 @@ def _default_data(guild_id: int) -> dict:
         "cfg_stock_category":  STOCK_CATEGORY_ID,
         "cfg_sold_category":   SOLD_CATEGORY_ID,
         "cfg_done_role":       DONE_ROLE_ID,   # FIX: xem ghi chú ở khai báo DONE_ROLE_ID phía trên
+        "cfg_transcript_channel": TRANSCRIPT_CHANNEL_ID,  # FIX: xem ghi chú ở khai báo TRANSCRIPT_CHANNEL_ID phía trên
         "cfg_font":            "normal",
         "dangerous_cmd_overrides": {},
         "sellers":          [],
@@ -546,6 +552,7 @@ def get_cfg_category()        -> int: return load_data().get("cfg_ticket_categor
 def get_cfg_stock_category()  -> int: return load_data().get("cfg_stock_category",  STOCK_CATEGORY_ID)
 def get_cfg_sold_category()   -> int: return load_data().get("cfg_sold_category",   SOLD_CATEGORY_ID)
 def get_cfg_done_role()       -> int: return load_data().get("cfg_done_role",       DONE_ROLE_ID)
+def get_cfg_transcript_channel() -> int: return load_data().get("cfg_transcript_channel", TRANSCRIPT_CHANNEL_ID)
 
 def get_guild_prefix(guild_id: int) -> str:
     """FIX: SetPrefixModal (cogs/admin_views.py) lưu "cfg_prefix" và báo THÀNH CÔNG cho
@@ -591,6 +598,9 @@ def set_cfg_giveaway_require_verify(enabled: bool):
 
 def set_cfg_done_role(role_id: int):
     save_cfg("cfg_done_role", int(role_id))
+
+def set_cfg_transcript_channel(channel_id: int):
+    save_cfg("cfg_transcript_channel", int(channel_id))
 
 def save_cfg(key: str, value):
     data = load_data(); data[key] = value; save_data(data)
