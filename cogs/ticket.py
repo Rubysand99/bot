@@ -15,7 +15,7 @@ from discord.ui import Button, Select, TextInput
 
 from core.data import (
     ADMIN_IDS, ADMIN_TUYTAM_ID,
-    get_cfg_transcript_channel, set_cfg_transcript_channel,
+    get_cfg_transcript_channel,
     get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
     get_cfg_counter_channel,
     save_panel_channel_id,
@@ -27,10 +27,10 @@ from core.data import (
     save_seller_category,
     remove_seller_category, get_all_seller_categories,
     get_or_fetch_channel,
-    BUILDER_BASE_ROLE_ID as _BUILDER_ROLE_ID,
     get_ticket_role_ids, set_ticket_role_ids, get_all_ticket_multi_roles,
     get_ruby_shop_options, add_ruby_shop_option, remove_ruby_shop_option, rename_ruby_shop_option,
     get_cfg_done_role,
+    get_cfg_builder_role, set_cfg_builder_role,
     GuildContextView as View,
     GuildContextModal as Modal,
     set_current_guild,
@@ -38,8 +38,6 @@ from core.data import (
 from cogs.logger import send_log
 
 # BOT_VERSION được import từ bot.py khi cần — không hardcode lại ở đây
-
-BUILDER_BASE_ROLE_ID = _BUILDER_ROLE_ID
 
 # ── Server keys cho mua/bán ──
 SERVER_DONUT  = "donut"
@@ -187,7 +185,7 @@ def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None
         if seller_role:
             overwrites[seller_role] = _staff_perm
     elif role_group == "builder":
-        builder_role = guild.get_role(BUILDER_BASE_ROLE_ID)
+        builder_role = guild.get_role(get_cfg_builder_role())
         if builder_role:
             overwrites[builder_role] = _staff_perm
     elif role_group == "admin":
@@ -240,7 +238,7 @@ def _build_ticket_overwrites_multi(guild, user, role_ids: list, seller_id: int |
         seller_role = guild.get_role(get_cfg_seller_role())
         if seller_role:
             overwrites[seller_role] = _staff_perm
-        builder_role = guild.get_role(BUILDER_BASE_ROLE_ID)
+        builder_role = guild.get_role(get_cfg_builder_role())
         if builder_role:
             overwrites[builder_role] = _staff_perm
 
@@ -1506,20 +1504,7 @@ class TicketCog(commands.Cog):
         await ctx.send(embed=build_panel_embed(ctx.guild), view=TicketPanel(ctx.guild.id))
         await ctx.message.delete()
 
-    # ── .transcriptchannel — cấu hình kênh lưu transcript riêng cho từng guild (FIX multi-guild) ──
-    @commands.command(name="transcriptchannel", aliases=["settranscript"])
-    async def transcriptchannel_cmd(self, ctx, channel: discord.TextChannel = None):
-        """Xem/đổi kênh lưu transcript khi đóng ticket. Dùng: `.transcriptchannel` để xem,
-        `.transcriptchannel #kênh` để đổi (riêng theo server)."""
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền.")
-        if channel is None:
-            current = ctx.guild.get_channel(get_cfg_transcript_channel())
-            return await ctx.reply(
-                f"📄 Kênh transcript hiện tại: {current.mention if current else '*(chưa cài / không tồn tại ở server này)*'}\n"
-                f"Đổi bằng: `.transcriptchannel #kênh`"
-            )
-        set_cfg_transcript_channel(channel.id)
-        await ctx.reply(f"✅ Transcript khi đóng ticket từ giờ sẽ lưu vào {channel.mention} (chỉ ở server này).")
+    # (Lệnh `.transcriptchannel` đã gộp vào `.st` — nút "📄 Transcript Channel", xem cogs/admin_views.py: SettingsView)
 
     @commands.command(name="mmpanel", aliases=["middlemanpanel"])
     async def mmpanel_cmd(self, ctx):
@@ -1664,9 +1649,9 @@ class TicketCog(commands.Cog):
         from cogs.admin_views import auto_give_buy_roles
         role_cfg = await auto_give_buy_roles(ctx.guild, buyer, new_total)
 
-        # Tặng role "Đã Mua Hàng" — FIX: giờ đọc theo guild qua get_cfg_done_role() thay
-        # vì hardcode 1 role ID chung cho mọi guild (xem cogs/admin.py cùng đợt fix, hoặc
-        # CHANGELOG). Cấu hình qua `.donerole @role`.
+        # Tặng role "Đã Mua Hàng" — đọc theo guild qua get_cfg_done_role() (per-guild,
+        # cấu hình qua `.st` → nút "🎖️ Done Role"), không còn hardcode ID chung cho mọi
+        # guild như trước (xem CHANGELOG).
         done_role = ctx.guild.get_role(get_cfg_done_role())
         done_role_given = False
         if done_role:
@@ -1709,7 +1694,7 @@ class TicketCog(commands.Cog):
             # (xem CHANGELOG). Guild khác cấu hình role KHÁC thì lỗi vẫn hiện đúng số ID
             # đó, không liên quan gì đến role họ thật sự đã đặt — rất khó hiểu. Giờ hiện
             # đúng ID đang cấu hình cho guild này.
-            embed.add_field(name="🎖️ Role tặng", value=f"⚠️ Không tìm thấy role `{get_cfg_done_role()}` — dùng `.donerole @role` để cấu hình lại", inline=False)
+            embed.add_field(name="🎖️ Role tặng", value=f"⚠️ Chưa cài / role `{get_cfg_done_role()}` không tồn tại — dùng `.st` → nút \"🎖️ Done Role\" để cấu hình", inline=False)
 
         embed.set_footer(text=f"Xác nhận bởi {_uname_plain(ctx.author)}")
         await ctx.reply(embed=embed)
@@ -2084,7 +2069,7 @@ class TicketCog(commands.Cog):
 
         Dùng @role      → thêm role vào danh sách multi-role của key đó.
         Dùng seller     → thêm role seller đang cấu hình (get_cfg_seller_role).
-        Dùng builder    → thêm role builder mặc định (BUILDER_BASE_ROLE_ID).
+        Dùng builder    → thêm role builder mặc định (cfg_builder_role, cấu hình qua .st).
         Dùng admin      → không cần gán gì, admin luôn có quyền sẵn (bỏ qua).
         Dùng none/reset → xóa toàn bộ danh sách role của key đó.
 
@@ -2150,7 +2135,7 @@ class TicketCog(commands.Cog):
             )
 
         if value_l in ("seller", "builder"):
-            role_id = get_cfg_seller_role() if value_l == "seller" else BUILDER_BASE_ROLE_ID
+            role_id = get_cfg_seller_role() if value_l == "seller" else get_cfg_builder_role()
             role = ctx.guild.get_role(role_id)
             if not role:
                 return await ctx.reply(f"❌ Không tìm thấy role `{value_l}` (ID `{role_id}`) trong server.")

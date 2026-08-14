@@ -1,5 +1,42 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.31.0] — 2026-08-10
+
+### 🏗️ Thay đổi kiến trúc — KHÔNG còn ID nào hardcode trong code, tất cả qua `.st`
+Theo yêu cầu: gỡ bỏ hoàn toàn việc lưu ID role/kênh/category cụ thể trong code làm giá
+trị mặc định. Trước đây nhiều nơi (constants ở `core/data.py`, hoặc tệ hơn là hardcode
+cục bộ trong từng file) coi ID của TuyTam Community là "mặc định" cho MỌI guild — dù
+comment ghi rõ "chỉ đúng cho server chính". Cách này không đáng tin cậy (đã tìm ra 3 lần
+bị vi phạm ở Phần 3 và Phần 5: `DONE_ROLE_ID`, `TRANSCRIPT_CHANNEL_ID`, `BUILDER_BASE_ROLE_ID`
+hoàn toàn không qua hệ thống `cfg_*`, im lặng không chạy ở guild khác).
+
+**Giờ:**
+- `core/data.py: _default_data()` — KHÔNG còn ID nào hardcode. Mọi guild (kể cả TuyTam
+  Community) bắt đầu ở trạng thái "chưa cài" (0) cho: Ticket Category, Support Role,
+  Seller Role, Builder Role, Legit Channel, Proof Channel, Stock/Sold Category, Done
+  Role, Transcript Channel.
+- **TuyTam Community được bảo toàn cấu hình cũ tự động, 1 lần duy nhất**: thêm
+  `_TUYTAM_LEGACY_CFG_MIGRATION` (dict riêng, chỉ dùng cho việc migrate, KHÔNG phải
+  default cho ai khác) + `_mongo_load()` tự backfill các field còn trống (0) của
+  **đúng 1 document** `guild_<TuyTam ID>` khi bot load lần kế tiếp — admin không cần
+  làm gì, server hiện tại không bị gián đoạn. Field nào ĐÃ có giá trị (kể cả do admin
+  từng đổi qua `.st`) sẽ KHÔNG bị ghi đè.
+- Toàn bộ 9 mục trên giờ cấu hình **duy nhất qua `.st`** (nút bấm — chọn role/kênh/
+  category trực tiếp từ dropdown Discord, không cần nhớ cú pháp lệnh): thêm 3 nút mới
+  "🔨 Builder Role", "🎖️ Done Role", "📄 Transcript Channel" vào `SettingsView`
+  (`cogs/admin_views.py`) — dùng chung helper `_send_role_select`/`_send_channel_select`
+  đã có sẵn cho các mục khác, không phải code mới từ đầu.
+- **Xoá 2 lệnh riêng** `.donerole` và `.transcriptchannel` (thêm ở Phần 3/5) — đã gộp
+  hoàn toàn vào `.st`, tránh có 2 cách làm 1 việc. Dọn `.help` theo.
+- `.st` — embed hiển thị cũng bỏ luôn 2 chỗ hardcode ID fallback còn sót (Support Role,
+  Proof Channel hiện "Chưa cài" đúng nghĩa thay vì hiện nhầm mention của TuyTam ở guild
+  khác), thêm 3 field hiển thị mới (Builder/Done Role, Transcript Channel), và sửa luôn
+  title embed hardcode "TuyTam Store" → hiện đúng tên server đang chạy lệnh.
+- `core/data.py: is_staff_member()` — hàm dùng CHUNG toàn bộ bot cũng dính hardcode
+  `BUILDER_BASE_ROLE_ID` trực tiếp, không qua `cfg_*` — đã sửa theo.
+
+---
+
 ## [v4.30.0] — 2026-08-10
 
 ### 🔍 Rà soát toàn bộ codebase — Phần 5/~10: `cogs/ticket.py`

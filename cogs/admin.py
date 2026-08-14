@@ -22,7 +22,7 @@ from core.data import (
     load_data, get_price_sections,
     is_guild_authorized, set_guild_authorized,
     ensure_guild_loaded,
-    get_cfg_done_role, set_cfg_done_role,
+    get_cfg_done_role,
     can_use_dangerous_cmd, parse_amount, fmt_amount,
     get_or_fetch_channel, set_current_guild,
     add_seller_sale, add_user_spent,
@@ -107,18 +107,22 @@ class AdminCog(commands.Cog):
     async def settings_cmd(self, ctx):
         if ctx.author.id not in ADMIN_IDS: return
         data = load_data()
-        embed = discord.Embed(title="⚙️  Bot Settings — TuyTam Store", color=0x5865F2, timestamp=datetime.now(timezone.utc))
-        def ch(k, d): c = data.get(k, d); return f"<#{c}>" if c else "Chưa cài"
-        def ro(k, d): r = data.get(k, d); return f"<@&{r}>" if r else "Chưa cài"
-        embed.add_field(name="📋 Log Channel (Rudy)", value=ch("cfg_log_rudy", 0),                                    inline=True)
-        embed.add_field(name="🎫 Ticket Category",    value=ch("cfg_ticket_category", 0),                              inline=True)
-        embed.add_field(name="🛡️ Support Role",      value=ro("cfg_support_role",    1474572393908404305), inline=True)
-        embed.add_field(name="🏪 Seller Role",       value=ro("cfg_seller_role",     0),                   inline=True)
-        embed.add_field(name="✅ Legit Channel",     value=ch("cfg_legit_channel",   0),                   inline=True)
-        embed.add_field(name="📸 Proof Channel",    value=ch("cfg_proof_channel",   1469647159560241318), inline=True)
-        embed.add_field(name="🤖 AI Channel",        value=ch("cfg_ai_channel",      0),                   inline=True)
-        embed.add_field(name="📦 Stock Category",    value=ch("cfg_stock_category",  0),                   inline=True)
-        embed.add_field(name="✅ Sold Category",     value=ch("cfg_sold_category",   0),                   inline=True)
+        # FIX: title trước đây hardcode "TuyTam Store" — hiện sai tên cho mọi guild khác.
+        embed = discord.Embed(title=f"⚙️  Bot Settings — {ctx.guild.name}", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+        def ch(k): c = data.get(k, 0); return f"<#{c}>" if c else "Chưa cài"
+        def ro(k): r = data.get(k, 0); return f"<@&{r}>" if r else "Chưa cài"
+        embed.add_field(name="📋 Log Channel (Rudy)", value=ch("cfg_log_rudy"),        inline=True)
+        embed.add_field(name="🎫 Ticket Category",    value=ch("cfg_ticket_category"), inline=True)
+        embed.add_field(name="🛡️ Support Role",      value=ro("cfg_support_role"),    inline=True)
+        embed.add_field(name="🏪 Seller Role",       value=ro("cfg_seller_role"),     inline=True)
+        embed.add_field(name="🔨 Builder Role",      value=ro("cfg_builder_role"),    inline=True)
+        embed.add_field(name="🎖️ Done Role",         value=ro("cfg_done_role"),       inline=True)
+        embed.add_field(name="✅ Legit Channel",     value=ch("cfg_legit_channel"),   inline=True)
+        embed.add_field(name="📸 Proof Channel",    value=ch("cfg_proof_channel"),   inline=True)
+        embed.add_field(name="📄 Transcript Channel", value=ch("cfg_transcript_channel"), inline=True)
+        embed.add_field(name="🤖 AI Channel",        value=ch("cfg_ai_channel"),      inline=True)
+        embed.add_field(name="📦 Stock Category",    value=ch("cfg_stock_category"),  inline=True)
+        embed.add_field(name="✅ Sold Category",     value=ch("cfg_sold_category"),   inline=True)
         embed.add_field(name="🔤 Font server",       value=FONT_LABELS.get(data.get("cfg_font","normal"),"normal"), inline=True)
         shop_status = "🟢 Bật" if get_cfg_shop_orders_enabled() else "🔴 Tắt"
         embed.add_field(name="🧪 Shop Orders (thử nghiệm)", value=shop_status, inline=True)
@@ -169,22 +173,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🏷️ Role",       value=role.mention,   inline=True)
         await ctx.reply(embed=embed)
 
-    # ── .donerole — cấu hình role "Đã Mua Hàng" riêng cho từng guild (FIX multi-guild) ──
-    @commands.command(name="donerole", aliases=["setdonerole"])
-    async def donerole_cmd(self, ctx, role: discord.Role = None):
-        """Xem/đổi role tự động tặng cho buyer khi đơn hoàn thành (.done / sold-stock).
-        Dùng: `.donerole` để xem role hiện tại, `.donerole @role` để đổi."""
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền.")
-        if role is None:
-            current = ctx.guild.get_role(get_cfg_done_role())
-            return await ctx.reply(
-                f"🎖️ Role \"Đã Mua Hàng\" hiện tại: {current.mention if current else '*(chưa cài / không tồn tại ở server này)*'}\n"
-                f"Đổi bằng: `.donerole @role`"
-            )
-        if role >= ctx.guild.me.top_role:
-            return await ctx.reply("❌ Role này cao hơn role của bot — bot sẽ không tặng được, chọn role thấp hơn.")
-        set_cfg_done_role(role.id)
-        await ctx.reply(f"✅ Từ giờ buyer hoàn thành đơn sẽ được tặng {role.mention} tự động (chỉ ở server này).")
+    # (Lệnh `.donerole` đã gộp vào `.st` — nút "🎖️ Done Role", xem cogs/admin_views.py: SettingsView)
 
     # ── .emoji / .delemoji ──
     @commands.command(name="emoji")
@@ -576,8 +565,6 @@ class AdminCog(commands.Cog):
                      "`.clear <n>` — Xóa n tin nhắn\n"
                      "`.addrole @user @role` — Thêm role\n"
                      "`.removerole @user @role` — Xóa role\n"
-                     "`.donerole [@role]` — Xem/đổi role tự động tặng buyer khi hoàn thành đơn (riêng theo server)\n"
-                     "`.transcriptchannel [#kênh]` — Xem/đổi kênh lưu transcript khi đóng ticket (riêng theo server)\n"
                      "`.userinfo [@user]` — Thông tin thành viên\n"
                      "`.serverinfo` — Thông tin server\n"
                      "`.backfill [số]` — Quét lại kênh legit, thả ✅ cho tin bị bỏ sót (mặc định 25)", False),
@@ -1197,9 +1184,9 @@ SOLD_ESCALATE_AFTER_SECONDS = 24 * 3600  # 24h không ai xử lý → escalate s
 # (2 cái đầu không hề được dùng ở đâu trong file, handle_sold() dùng get_cfg_stock_category()/
 # get_cfg_sold_category() từ core/data.py) và DONE_ROLE_ID là hằng số CHUNG cho mọi guild dù
 # role ID là duy nhất theo guild trên Discord — sang guild khác role này không tồn tại, tính
-# năng tặng role "Đã Mua Hàng" im lặng không chạy. Giờ dùng get_cfg_done_role()/
-# set_cfg_done_role() (per-guild, xem core/data.py) + lệnh `.donerole` bên dưới để mỗi
-# guild tự cấu hình role riêng.
+# năng tặng role "Đã Mua Hàng" im lặng không chạy. Giờ dùng get_cfg_done_role() (per-guild,
+# xem core/data.py) — cấu hình qua `.st` → nút "🎖️ Done Role" (cogs/admin_views.py:
+# SettingsView), không còn hardcode ID nào trong code nữa.
 
 # ══════════════════════════════════════════
 # SOLD-STOCK — parse giá từ tên kênh

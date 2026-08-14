@@ -113,36 +113,37 @@ class GuildContextModal(discord.ui.Modal):
 # ══════════════════════════════════════════
 # CONSTANTS
 # ══════════════════════════════════════════
-# ⚠️ Các ID dưới đây là fallback mặc định — CHỈ đúng cho server chính (Tuytam Community).
-# Server thứ 2 (hoặc bất kỳ guild mới nào) PHẢI tự cấu hình lại qua các lệnh .set*/.st,
-# nếu không các hàm get_cfg_* sẽ trả về ID này (không tồn tại ở guild khác) → coi như "chưa cài".
-LOG_CHANNEL           = 1482234024868053083
-TICKET_CATEGORY_ID    = 1464426174611456195
-SUPPORT_ROLE_ID       = 1474572393908404305
-SELLER_ROLE_ID        = 0
-BUILDER_BASE_ROLE_ID  = 1484158340849205308
-COUNTER_CHANNEL_ID    = 0
-LEGIT_CHANNEL_ID      = 0
-PROOF_CHANNEL_ID      = 1469647159560241318
-# FIX: TRANSCRIPT_CHANNEL_ID (kênh lưu transcript khi đóng ticket — cogs/ticket.py:
-# _close_ticket) CŨNG bị bỏ sót khỏi hệ thống cfg_* per-guild giống hệt DONE_ROLE_ID —
-# dùng thẳng làm tham số cho get_or_fetch_channel() thay vì qua get_cfg_transcript_channel().
-# Guild khác TuyTam Community chắc chắn không có kênh ID này → get_or_fetch_channel() trả
-# None → transcript đóng ticket im lặng KHÔNG được lưu ở guild khác, không lỗi không log.
-TRANSCRIPT_CHANNEL_ID = 1464430574524436679
-FEEDBACK_CHANNEL_ID   = 1502464872686948403
-STOCK_CATEGORY_ID     = 1506520186063163423
-SOLD_CATEGORY_ID      = 1506652491779932240
-CHANGELOG_CHANNEL_ID  = 1486967511839801414
-# FIX: DONE_ROLE_ID (role "Đã Mua Hàng" tặng cho buyer khi đơn hoàn thành — cogs/ticket.py
-# .done + cogs/admin.py _SoldBuyerModal) bị BỎ SÓT khỏi hệ thống cfg_* per-guild này —
-# 2 nơi trên trước đây tự định nghĩa hằng số CỤC BỘ y hệt giá trị dưới đây, dùng CHUNG
-# cho MỌI guild thay vì qua get_cfg_done_role()/set_cfg_done_role() như các ID khác ở
-# trên. Role ID là duy nhất theo guild trên Discord — guild khác TuyTam Community chắc
-# chắn không có role này, nghĩa là tính năng tặng role im lặng KHÔNG chạy ở mọi server
-# khác (không lỗi, không log, chỉ đơn giản là không có gì xảy ra). Coi hằng số này như
-# các hằng số fallback khác ở trên: CHỈ đúng cho TuyTam Community.
-DONE_ROLE_ID          = 1515393691206811901
+LOG_CHANNEL           = 1482234024868053083   # (không dùng ở đâu trong code hiện tại — giữ lại phòng dùng sau, giống FEEDBACK_CHANNEL_ID)
+CHANGELOG_CHANNEL_ID  = 1486967511839801414   # bot.py gửi embed "Bot Khởi Động" — kênh cố định của dev để theo dõi deploy, không phải setting của guild nào cả
+FEEDBACK_CHANNEL_ID   = 1502464872686948403   # (không dùng ở đâu trong code hiện tại — giữ lại phòng dùng sau)
+
+# FIX: TRƯỚC ĐÂY toàn bộ role/channel/category ID riêng của từng guild (ticket category,
+# support role, seller role, stock/sold category, done role, transcript channel, builder
+# role...) được HARDCODE thẳng trong code làm giá trị "mặc định" cho MỌI guild — dù comment
+# ghi rõ "chỉ đúng cho TuyTam Community". Nhiều chỗ dùng SAI CÁCH (import thẳng hằng số,
+# không qua get_cfg_*), khiến tính năng liên quan im lặng không chạy ở server khác (xem
+# CHANGELOG các bản trước — DONE_ROLE_ID, TRANSCRIPT_CHANNEL_ID). Theo yêu cầu: KHÔNG còn
+# lưu ID nào trong code nữa — mọi guild (kể cả TuyTam) đều bắt đầu ở trạng thái "chưa cài"
+# (0) và admin PHẢI tự cấu hình qua `.st`. _default_data() bên dưới không còn tham chiếu
+# tới bất kỳ ID nào ở đây.
+#
+# _TUYTAM_LEGACY_CFG_MIGRATION chỉ tồn tại để giữ TuyTam Community KHÔNG bị "mất cấu hình"
+# đột ngột khi đợt sửa này lên (server đó đang chạy dựa vào các ID hardcode cũ, admin CHƯA
+# từng cần bấm `.st` cho từng mục vì nó "tự nhiên đúng"). _migrate_tuytam_legacy_cfg() ở
+# dưới sẽ TỰ backfill các giá trị này vào ĐÚNG 1 LẦN cho DUY NHẤT document của
+# LEGACY_MAIN_GUILD_ID nếu field đó vẫn đang trống — sau lần đó, TuyTam có giá trị lưu
+# TƯỜNG MINH trong DB như mọi guild khác, dict này không còn được dùng tới cho guild đó
+# nữa. KHÔNG guild nào khác (kể cả guild mới) nhận các giá trị này.
+_TUYTAM_LEGACY_CFG_MIGRATION = {
+    "cfg_ticket_category":    1464426174611456195,
+    "cfg_support_role":       1474572393908404305,
+    "cfg_proof_channel":      1469647159560241318,
+    "cfg_stock_category":     1506520186063163423,
+    "cfg_sold_category":      1506652491779932240,
+    "cfg_done_role":          1515393691206811901,
+    "cfg_transcript_channel": 1464430574524436679,
+    "cfg_builder_role":       1484158340849205308,
+}
 # ADMIN_IDS — đọc từ 2 biến riêng biệt:
 #   ADMIN_RUBY_ID   — Ruby (phát triển, quản lý bot & server)
 #   ADMIN_TUYTAM_ID — TuyTam (giao dịch, buôn bán)
@@ -204,19 +205,24 @@ def _default_data(guild_id: int) -> dict:
         "panel_channel_id": None,
         "qr_path": None,
         "cfg_log_rudy":        0,
-        "cfg_ticket_category": TICKET_CATEGORY_ID,
-        "cfg_support_role":    SUPPORT_ROLE_ID,
-        "cfg_seller_role":     SELLER_ROLE_ID,
-        "cfg_counter_channel": COUNTER_CHANNEL_ID,
-        "cfg_legit_channel":   LEGIT_CHANNEL_ID,
-        "cfg_proof_channel":   PROOF_CHANNEL_ID,
+        # FIX: KHÔNG còn hardcode ID nào ở đây nữa — MỌI guild (kể cả TuyTam Community)
+        # đều bắt đầu ở trạng thái "chưa cài" (0), admin tự cấu hình qua `.st`. TuyTam
+        # Community cụ thể được backfill giá trị lịch sử ĐÚNG 1 LẦN bởi
+        # _migrate_tuytam_legacy_cfg() — xem _TUYTAM_LEGACY_CFG_MIGRATION phía trên.
+        "cfg_ticket_category": 0,
+        "cfg_support_role":    0,
+        "cfg_seller_role":     0,
+        "cfg_counter_channel": 0,
+        "cfg_legit_channel":   0,
+        "cfg_proof_channel":   0,
         "cfg_legit_emoji":     "✅",   # Emoji bot thả khi +1legit — đổi qua .st
         "cfg_vouch_emoji":     "✅",   # Emoji bot thả khi done (vouch) — đổi qua .st
         "cfg_ai_channel":      0,
-        "cfg_stock_category":  STOCK_CATEGORY_ID,
-        "cfg_sold_category":   SOLD_CATEGORY_ID,
-        "cfg_done_role":       DONE_ROLE_ID,   # FIX: xem ghi chú ở khai báo DONE_ROLE_ID phía trên
-        "cfg_transcript_channel": TRANSCRIPT_CHANNEL_ID,  # FIX: xem ghi chú ở khai báo TRANSCRIPT_CHANNEL_ID phía trên
+        "cfg_stock_category":  0,
+        "cfg_sold_category":   0,
+        "cfg_done_role":       0,
+        "cfg_transcript_channel": 0,
+        "cfg_builder_role":    0,
         "cfg_font":            "normal",
         "dangerous_cmd_overrides": {},
         "sellers":          [],
@@ -313,6 +319,22 @@ async def _mongo_load(guild_id: int) -> dict:
                     changed = True
             if changed:
                 await _mongo_save(guild_id, doc)
+
+        # FIX: backfill giá trị lịch sử CHỈ cho TuyTam Community, xem
+        # _TUYTAM_LEGACY_CFG_MIGRATION phía trên. Chạy SAU CÙNG nên tác động lên mọi
+        # nhánh ở trên (doc mới tạo / migrate từ "main" / doc cũ thiếu field) như nhau.
+        # Field nào ĐÃ có giá trị thật rồi (kể cả do admin tự đổi sang giá trị khác qua
+        # `.st`) sẽ KHÔNG bị ghi đè — chỉ backfill field đang thật sự trống (0/thiếu).
+        if guild_id == LEGACY_MAIN_GUILD_ID:
+            legacy_changed = False
+            for k, v in _TUYTAM_LEGACY_CFG_MIGRATION.items():
+                if not doc.get(k):
+                    doc[k] = v
+                    legacy_changed = True
+            if legacy_changed:
+                await _mongo_save(guild_id, doc)
+                log.info("[DATA] 🔀 Đã backfill cấu hình role/kênh cũ cho TuyTam Community (1 lần)")
+
         return doc
     except Exception as e:
         log.error(f"[DATA] ❌ Lỗi đọc MongoDB (guild {guild_id}): {e}")
@@ -548,11 +570,12 @@ async def init_data_cache(bot) -> None:
 # ══════════════════════════════════════════
 def get_cfg_log_rudy()        -> int: return load_data().get("cfg_log_rudy", 0)
 def get_cfg_font()            -> str: return load_data().get("cfg_font", "normal")
-def get_cfg_category()        -> int: return load_data().get("cfg_ticket_category", TICKET_CATEGORY_ID)
-def get_cfg_stock_category()  -> int: return load_data().get("cfg_stock_category",  STOCK_CATEGORY_ID)
-def get_cfg_sold_category()   -> int: return load_data().get("cfg_sold_category",   SOLD_CATEGORY_ID)
-def get_cfg_done_role()       -> int: return load_data().get("cfg_done_role",       DONE_ROLE_ID)
-def get_cfg_transcript_channel() -> int: return load_data().get("cfg_transcript_channel", TRANSCRIPT_CHANNEL_ID)
+def get_cfg_category()        -> int: return load_data().get("cfg_ticket_category", 0)
+def get_cfg_stock_category()  -> int: return load_data().get("cfg_stock_category",  0)
+def get_cfg_sold_category()   -> int: return load_data().get("cfg_sold_category",   0)
+def get_cfg_done_role()       -> int: return load_data().get("cfg_done_role",       0)
+def get_cfg_transcript_channel() -> int: return load_data().get("cfg_transcript_channel", 0)
+def get_cfg_builder_role()    -> int: return load_data().get("cfg_builder_role",    0)
 
 def get_guild_prefix(guild_id: int) -> str:
     """FIX: SetPrefixModal (cogs/admin_views.py) lưu "cfg_prefix" và báo THÀNH CÔNG cho
@@ -570,11 +593,11 @@ def get_guild_prefix(guild_id: int) -> str:
     except Exception:
         pass
     return "."
-def get_cfg_support_role()    -> int: return load_data().get("cfg_support_role", SUPPORT_ROLE_ID)
-def get_cfg_seller_role()     -> int: return load_data().get("cfg_seller_role", SELLER_ROLE_ID)
-def get_cfg_counter_channel() -> int: return load_data().get("cfg_counter_channel", COUNTER_CHANNEL_ID)
-def get_cfg_legit_channel()   -> int: return load_data().get("cfg_legit_channel", LEGIT_CHANNEL_ID)
-def get_cfg_proof_channel()   -> int: return load_data().get("cfg_proof_channel", PROOF_CHANNEL_ID)
+def get_cfg_support_role()    -> int: return load_data().get("cfg_support_role", 0)
+def get_cfg_seller_role()     -> int: return load_data().get("cfg_seller_role", 0)
+def get_cfg_counter_channel() -> int: return load_data().get("cfg_counter_channel", 0)
+def get_cfg_legit_channel()   -> int: return load_data().get("cfg_legit_channel", 0)
+def get_cfg_proof_channel()   -> int: return load_data().get("cfg_proof_channel", 0)
 def get_cfg_ai_channel()      -> int: return load_data().get("cfg_ai_channel", 0)
 def get_cfg_legit_emoji()     -> str: return load_data().get("cfg_legit_emoji", "✅")
 def get_cfg_vouch_emoji()     -> str: return load_data().get("cfg_vouch_emoji", "✅")
@@ -601,6 +624,9 @@ def set_cfg_done_role(role_id: int):
 
 def set_cfg_transcript_channel(channel_id: int):
     save_cfg("cfg_transcript_channel", int(channel_id))
+
+def set_cfg_builder_role(role_id: int):
+    save_cfg("cfg_builder_role", int(role_id))
 
 def save_cfg(key: str, value):
     data = load_data(); data[key] = value; save_data(data)
@@ -1227,7 +1253,7 @@ def is_staff_member(member) -> bool:
     if sr and sr in member.roles: return True
     slr = guild.get_role(get_cfg_seller_role())
     if slr and slr in member.roles: return True
-    bbr = guild.get_role(BUILDER_BASE_ROLE_ID)
+    bbr = guild.get_role(get_cfg_builder_role())
     if bbr and bbr in member.roles: return True
     return False
 
