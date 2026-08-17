@@ -25,6 +25,8 @@ from core.data import (
     get_ip_records,
     atomic_register_ip, get_ip_users_mongo,
     set_current_guild, get_or_fetch_channel,
+    get_cfg_welcome_channel,
+    get_cfg_verify_extra_roles,
 )
 from verify_server import (
     create_token, build_verify_url, VERIFY_CALLBACKS, discard_token,
@@ -34,13 +36,10 @@ from verify_server import (
 UNVERIFY_ROLE_ID = 0  # sẽ được set động bởi _ensure_roles
 VERIFY_ROLE_ID   = 0  # sẽ được set động bởi _ensure_roles
 
-# ── Các role được gán khi verify thành công (ngoài role Verify tự tạo) ──
-MEMBER_ROLE_IDS = [
-    1500512964065755288,  # ping Stock
-    1500513085096726528,  # ping Notification
-    1464411190808805540,  # Member
-    1500512893139943455,  # ping media
-]
+# FIX: MEMBER_ROLE_IDS/WELCOME_GUILDS trước đây hardcode role/kênh riêng của 1 guild cụ
+# thể, dùng chung cho MỌI guild — cùng lớp bug với DONE_ROLE_ID/TRANSCRIPT_CHANNEL_ID đã
+# sửa ở các phần trước. Giờ dùng get_cfg_verify_extra_roles()/get_cfg_welcome_channel()
+# (per-guild, cấu hình qua `.st`), xem core/data.py.
 
 
 # ── Per-guild role ID cache ──
@@ -367,7 +366,7 @@ class InviteCog(commands.Cog):
                 roles_to_add = []
                 if verify_role:
                     roles_to_add.append(verify_role)
-                for rid in MEMBER_ROLE_IDS:
+                for rid in get_cfg_verify_extra_roles():
                     role = guild.get_role(rid)
                     if role and role not in member.roles:
                         roles_to_add.append(role)
@@ -829,10 +828,11 @@ class InviteCog(commands.Cog):
 
     # ── Events ──
 
-    WELCOME_GUILDS = {
-        950363132679831642: 1276087208150827070,
-    }
-
+    # FIX: trước đây WELCOME_GUILDS hardcode {950363132679831642: 1276087208150827070} —
+    # guild_id đó KHÔNG PHẢI TuyTam Community (LEGACY_MAIN_GUILD_ID thật =
+    # 1464407860640219189) nên tính năng này thực ra đã im lặng không chạy ở TuyTam từ
+    # trước. Giờ dùng get_cfg_welcome_channel() (per-guild, cấu hình qua `.st` → nút
+    # "👋 Welcome Channel") — server nào muốn bật thì admin tự chọn kênh.
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         # FIX: listener này chạy trên 1 Task RIÊNG do discord.py tự dispatch, KHÔNG
@@ -847,7 +847,7 @@ class InviteCog(commands.Cog):
             return
 
         # Welcome ping (xóa sau 10s)
-        ch_id = self.WELCOME_GUILDS.get(member.guild.id)
+        ch_id = get_cfg_welcome_channel()
         if ch_id:
             channel = member.guild.get_channel(ch_id)
             if channel:
@@ -1019,7 +1019,7 @@ class InviteCog(commands.Cog):
                 roles_to_add = []
                 if verify_role and verify_role not in m.roles:
                     roles_to_add.append(verify_role)
-                for rid in MEMBER_ROLE_IDS:
+                for rid in get_cfg_verify_extra_roles():
                     role = guild.get_role(rid)
                     if role and role not in m.roles:
                         roles_to_add.append(role)

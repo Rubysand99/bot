@@ -298,6 +298,13 @@ class SettingsView(View):
         view    = View(timeout=60); view.add_item(select)
         await interaction.response.send_message(f"🏷️ **{title}**\nChọn role:", view=view, ephemeral=True)
 
+    async def _send_multi_role_select(self, interaction, cfg_key, title):
+        options = [discord.SelectOption(label=r.name[:100], value=str(r.id)) for r in sorted(self.guild.roles, key=lambda r: -r.position) if r.name != "@everyone"][:25]
+        current = set(load_data().get(cfg_key, []))
+        select  = MultiRoleConfigSelect(cfg_key=cfg_key, title=title, options=options, current_ids=current)
+        view    = View(timeout=60); view.add_item(select)
+        await interaction.response.send_message(f"🏷️ **{title}**\nChọn 1 hoặc nhiều role (bấm lại để bỏ chọn):", view=view, ephemeral=True)
+
     async def _send_category_select(self, interaction, cfg_key, title, description):
         categories = [ch for ch in interaction.guild.channels if isinstance(ch, discord.CategoryChannel)]
         categories.sort(key=lambda c: c.position)
@@ -330,6 +337,8 @@ class SettingsView(View):
     async def cat(self,      i, b): await self._send_category_select(i, "cfg_ticket_category", "Ticket Category",  "Category chứa các ticket")
     @discord.ui.button(label="🛡️ Support Role",     style=discord.ButtonStyle.secondary, row=0)
     async def support(self,  i, b): await self._send_role_select(i, "cfg_support_role",   "Support Role")
+    @discord.ui.button(label="👋 Welcome Channel",   style=discord.ButtonStyle.secondary, row=0)
+    async def welcome(self,  i, b): await self._send_channel_select(i, "cfg_welcome_channel", "Welcome Channel", "Kênh ping chào mừng khi member mới join (xoá sau 10s)")
     @discord.ui.button(label="🏪 Seller Role",      style=discord.ButtonStyle.secondary, row=1)
     async def seller(self,   i, b): await self._send_role_select(i, "cfg_seller_role",    "Seller Role")
     @discord.ui.button(label="🔨 Builder Role",     style=discord.ButtonStyle.secondary, row=1)
@@ -357,6 +366,8 @@ class SettingsView(View):
     async def stock_cat(self, i, b): await self._send_category_select(i, "cfg_stock_category", "Stock Category", "Category chứa hàng đang bán (auto-sold)")
     @discord.ui.button(label="✅ Sold Category",    style=discord.ButtonStyle.secondary, row=3)
     async def sold_cat(self,  i, b): await self._send_category_select(i, "cfg_sold_category",  "Sold Category",  "Category chứa hàng đã bán")
+    @discord.ui.button(label="🎁 Verify Extra Roles", style=discord.ButtonStyle.secondary, row=3)
+    async def verify_extra(self, i, b): await self._send_multi_role_select(i, "cfg_verify_extra_roles", "Verify Extra Roles")
 
     @discord.ui.button(label="🪄 Relay Tin Admin (Ticket)", style=discord.ButtonStyle.secondary, row=4)
     async def ticket_relay_toggle(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -746,6 +757,28 @@ class RoleConfigSelect(Select):
         role_id = int(self.values[0])
         save_cfg(self.cfg_key, role_id)
         await interaction.response.send_message(f"✅ Đã cài **{self.title}** → <@&{role_id}>")
+
+
+class MultiRoleConfigSelect(Select):
+    """Giống RoleConfigSelect nhưng cho CHỌN NHIỀU role cùng lúc — lưu list vào cfg_key
+    thay vì 1 giá trị đơn. Dùng cho các cấu hình kiểu "danh sách role phụ" (vd role phụ
+    gán kèm khi verify — cfg_verify_extra_roles)."""
+    def __init__(self, cfg_key, title, options, current_ids):
+        super().__init__(
+            placeholder=f"Chọn role cho {title}... (có thể chọn nhiều / để trống = xoá hết)",
+            options=options, min_values=0, max_values=len(options),
+        )
+        self.cfg_key = cfg_key; self.title = title
+        for opt in self.options:
+            if int(opt.value) in current_ids:
+                opt.default = True
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        role_ids = [int(v) for v in self.values]
+        save_cfg(self.cfg_key, role_ids)
+        mentions = " ".join(f"<@&{r}>" for r in role_ids) if role_ids else "*(không role nào)*"
+        await interaction.response.send_message(f"✅ Đã cài **{self.title}** → {mentions}")
 
 
 # ══════════════════════════════════════════

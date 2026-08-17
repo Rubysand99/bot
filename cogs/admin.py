@@ -114,6 +114,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📋 Log Channel (Rudy)", value=ch("cfg_log_rudy"),        inline=True)
         embed.add_field(name="🎫 Ticket Category",    value=ch("cfg_ticket_category"), inline=True)
         embed.add_field(name="🛡️ Support Role",      value=ro("cfg_support_role"),    inline=True)
+        embed.add_field(name="👋 Welcome Channel",   value=ch("cfg_welcome_channel"), inline=True)
         embed.add_field(name="🏪 Seller Role",       value=ro("cfg_seller_role"),     inline=True)
         embed.add_field(name="🔨 Builder Role",      value=ro("cfg_builder_role"),    inline=True)
         embed.add_field(name="🎖️ Done Role",         value=ro("cfg_done_role"),       inline=True)
@@ -123,6 +124,8 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🤖 AI Channel",        value=ch("cfg_ai_channel"),      inline=True)
         embed.add_field(name="📦 Stock Category",    value=ch("cfg_stock_category"),  inline=True)
         embed.add_field(name="✅ Sold Category",     value=ch("cfg_sold_category"),   inline=True)
+        extra_roles = data.get("cfg_verify_extra_roles", [])
+        embed.add_field(name="🎁 Verify Extra Roles", value=(" ".join(f"<@&{r}>" for r in extra_roles) if extra_roles else "Chưa cài"), inline=True)
         embed.add_field(name="🔤 Font server",       value=FONT_LABELS.get(data.get("cfg_font","normal"),"normal"), inline=True)
         shop_status = "🟢 Bật" if get_cfg_shop_orders_enabled() else "🔴 Tắt"
         embed.add_field(name="🧪 Shop Orders (thử nghiệm)", value=shop_status, inline=True)

@@ -1,5 +1,39 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.32.0] — 2026-08-10
+
+### 🔍 Rà soát toàn bộ codebase — Phần 6/~10: `cogs/invite.py`
+Tiếp tục dọn nốt các chỗ hardcode ID còn sót (đúng chủ đề đợt sửa v4.31.0), lần này ở
+file quản lý invite/verify.
+
+### 🐛 Sửa lỗi
+- `cogs/invite.py` — **`MEMBER_ROLE_IDS`** (list 4 role tự động gán kèm khi verify: ping
+  Stock/Notification/Member/ping media) hardcode dùng chung cho MỌI guild — cùng lớp bug
+  với `DONE_ROLE_ID`/`TRANSCRIPT_CHANNEL_ID` đã sửa ở Phần 3/5. Đã chuyển thành
+  `cfg_verify_extra_roles` (list, per-guild) — migrate giữ nguyên cho TuyTam Community
+  (không đổi hành vi hiện tại), cấu hình qua `.st` → nút mới "🎁 Verify Extra Roles"
+  (chọn được nhiều role cùng lúc trong 1 dropdown — thêm `MultiRoleConfigSelect` dùng
+  chung cho các cấu hình dạng danh sách sau này nếu cần).
+- `cogs/invite.py` — **`WELCOME_GUILDS`** (dict hardcode 1 guild_id → 1 channel_id, ping
+  chào mừng member mới join). Rà kỹ phát hiện guild_id trong dict này (`950363132679831642`)
+  **không khớp** `LEGACY_MAIN_GUILD_ID` (ID thật của TuyTam Community,
+  `1464407860640219189`) — tính năng này thực ra đã âm thầm KHÔNG chạy ở TuyTam từ
+  trước giờ, không phải bị đợt sửa này làm hỏng thứ đang hoạt động. Đã chuyển thành
+  `cfg_welcome_channel` (per-guild) — KHÔNG migrate giá trị cũ cho TuyTam (vì nó chưa
+  từng đúng với server này), cấu hình qua `.st` → nút mới "👋 Welcome Channel".
+
+### ✅ Đã rà soát kỹ, xác nhận KHÔNG có bug
+- `_get_shared_ip()`/`_check_ip_collision()` (hệ thống chống đa tài khoản qua IP, quyết
+  định ai được ưu tiên tham gia giveaway) CỐ Ý dùng chung toàn bộ bot, không tách theo
+  guild — đã có sẵn comment giải thích đây là thiết kế có chủ đích (IP không thuộc về
+  guild cụ thể nào), không phải sai sót cần sửa.
+- `_get_invite_counts()`/`_save_invite_counts()`/`_get_alltime_counts()` — số liệu mời
+  đã đúng per-guild từ trước (qua `load_data()`/`save_data()` theo contextvar).
+- `ACC1_ID`/`ACC2_ID` trong lệnh `.testip` chỉ là dữ liệu giả để test UI thống kê IP,
+  không phải cấu hình thật — không cần sửa.
+
+---
+
 ## [v4.31.0] — 2026-08-10
 
 ### 🏗️ Thay đổi kiến trúc — KHÔNG còn ID nào hardcode trong code, tất cả qua `.st`

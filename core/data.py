@@ -143,7 +143,15 @@ _TUYTAM_LEGACY_CFG_MIGRATION = {
     "cfg_done_role":          1515393691206811901,
     "cfg_transcript_channel": 1464430574524436679,
     "cfg_builder_role":       1484158340849205308,
+    # Role phụ gán kèm khi verify (ping Stock/Notification/Member/ping media) — trước
+    # đây là list MEMBER_ROLE_IDS hardcode ở cogs/invite.py, dùng chung cho mọi guild.
+    "cfg_verify_extra_roles": [1500512964065755288, 1500513085096726528, 1464411190808805540, 1500512893139943455],
 }
+# LƯU Ý: "cfg_welcome_channel" (kênh ping chào mừng khi member mới join) KHÔNG có trong
+# migration này — hằng số cũ WELCOME_GUILDS ở cogs/invite.py map guild_id 950363132679831642,
+# KHÔNG PHẢI LEGACY_MAIN_GUILD_ID (1464407860640219189, TuyTam Community thật) — nghĩa là
+# tính năng này ĐÃ im lặng không chạy ở TuyTam từ trước (guild_id không khớp), không phải
+# đang hoạt động rồi bị tắt bởi đợt sửa này. Admin TuyTam muốn bật thì tự cấu hình qua `.st`.
 # ADMIN_IDS — đọc từ 2 biến riêng biệt:
 #   ADMIN_RUBY_ID   — Ruby (phát triển, quản lý bot & server)
 #   ADMIN_TUYTAM_ID — TuyTam (giao dịch, buôn bán)
@@ -223,6 +231,8 @@ def _default_data(guild_id: int) -> dict:
         "cfg_done_role":       0,
         "cfg_transcript_channel": 0,
         "cfg_builder_role":    0,
+        "cfg_welcome_channel": 0,     # Kênh ping chào mừng member mới join — 0 = tắt
+        "cfg_verify_extra_roles": [], # Role phụ gán kèm khi verify (ngoài role Verify chính)
         "cfg_font":            "normal",
         "dangerous_cmd_overrides": {},
         "sellers":          [],
@@ -576,6 +586,8 @@ def get_cfg_sold_category()   -> int: return load_data().get("cfg_sold_category"
 def get_cfg_done_role()       -> int: return load_data().get("cfg_done_role",       0)
 def get_cfg_transcript_channel() -> int: return load_data().get("cfg_transcript_channel", 0)
 def get_cfg_builder_role()    -> int: return load_data().get("cfg_builder_role",    0)
+def get_cfg_welcome_channel() -> int: return load_data().get("cfg_welcome_channel", 0)
+def get_cfg_verify_extra_roles() -> list: return list(load_data().get("cfg_verify_extra_roles", []))
 
 def get_guild_prefix(guild_id: int) -> str:
     """FIX: SetPrefixModal (cogs/admin_views.py) lưu "cfg_prefix" và báo THÀNH CÔNG cho
@@ -627,6 +639,12 @@ def set_cfg_transcript_channel(channel_id: int):
 
 def set_cfg_builder_role(role_id: int):
     save_cfg("cfg_builder_role", int(role_id))
+
+def set_cfg_welcome_channel(channel_id: int):
+    save_cfg("cfg_welcome_channel", int(channel_id))
+
+def set_cfg_verify_extra_roles(role_ids: list):
+    save_cfg("cfg_verify_extra_roles", [int(r) for r in role_ids])
 
 def save_cfg(key: str, value):
     data = load_data(); data[key] = value; save_data(data)
