@@ -21,6 +21,8 @@ from core.data import (
     save_panel_channel_id,
     get_user_total_spent,
     add_user_spent, add_user_spent_server,
+    subtract_user_spent, subtract_user_spent_server,
+    get_buy_roles,
     save_ticket_record, get_user_ticket_history, get_monthly_stats,
     load_data, save_data, parse_amount, fmt_amount, is_staff_member,
     _uname_plain,
@@ -1718,6 +1720,132 @@ class TicketCog(commands.Cog):
         ]
         await send_log(
             ctx.bot, "TICKET_DONE", f"Hoàn Thành Đơn — {ctx.channel.name}",
+            fields=log_fields,
+            user=ctx.author,
+            guild_id=ctx.guild.id,
+        )
+
+    # ── .undone — trừ tiền đã tiêu khi lỡ .done nhầm (nhầm người / nhầm số tiền) ──
+    @commands.command(name="undone", aliases=["donesub", "trutien"])
+    async def undone_cmd(self, ctx, *, args: str = None):
+        """Trừ tiền đã tiêu của user — dùng khi lỡ `.done` nhầm (nhầm người, nhầm số tiền).
+        Trong ticket: `.undone 50k` (đọc buyer từ topic, tự mở lại được `.done` trong kênh này).
+        Ngoài ticket: `.undone @user 50k`"""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin mới có quyền chỉnh sửa đơn.")
+        if not args:
+            return await ctx.reply(
+                "❌ Thiếu thông tin!\n"
+                "Trong ticket: `.undone 50k`\n"
+                "Ngoài ticket: `.undone @user 50k`"
+            )
+
+        # Parse buyer + amount — logic giống hệt .done, để hành vi nhất quán/dễ nhớ
+        buyer = None
+        amount_str = args.strip()
+        if ctx.message.mentions:
+            buyer = ctx.message.mentions[0]
+            amount_str = amount_str.replace(buyer.mention, "").replace(f"<@!{buyer.id}>", "").replace(f"<@{buyer.id}>", "").strip()
+
+        is_ticket = bool(ctx.channel.topic and "|" in ctx.channel.topic)
+
+        if not buyer:
+            if not is_ticket:
+                return await ctx.reply("❌ Ngoài kênh ticket, cần mention user: `.undone @user 50k`")
+            parts = ctx.channel.topic.split("|")
+            try:
+                user_id = int(parts[0]) if parts[0].isdigit() else None
+            except Exception:
+                user_id = None
+            if not user_id:
+                return await ctx.reply("❌ Không đọc được thông tin buyer từ ticket.")
+            buyer = ctx.guild.get_member(user_id)
+            if not buyer:
+                return await ctx.reply(f"❌ Không tìm thấy buyer (ID: `{user_id}`).")
+
+        if not amount_str:
+            return await ctx.reply("❌ Thiếu số tiền! Ví dụ: `.undone 50k`, `.undone @user 1tr5`")
+
+        amount = parse_amount(amount_str)
+        if amount is None or amount <= 0:
+            return await ctx.reply(f"❌ Số tiền `{amount_str}` không hợp lệ!")
+
+        # server_key — chỉ xác định khi trong ticket và không mention, giống .done
+        server_key = None
+        if is_ticket and not ctx.message.mentions:
+            parts = ctx.channel.topic.split("|")
+            trade_type = parts[2] if len(parts) > 2 else None
+            server_key = parts[5] if len(parts) > 5 else None
+            if trade_type not in ("sell", "buy"):
+                return await ctx.reply("ℹ️ Ticket dịch vụ / hỗ trợ không tính vào đơn mua hàng — không có gì để trừ.")
+
+        old_total = get_user_total_spent(buyer.id)
+
+        if server_key:
+            totals    = subtract_user_spent_server(buyer.id, amount, server_key)
+            new_total = totals["total"]
+            srv_total = totals["server_total"]
+        else:
+            new_total = subtract_user_spent(buyer.id, amount)
+            srv_total = None
+
+        # Số thực trừ được có thể < amount yêu cầu nếu tổng hiện tại không đủ (floor ở 0)
+        actual_subtracted = old_total - new_total
+
+        # Nếu đang ở ĐÚNG kênh ticket của buyer này (không mention) → mở lại được .done,
+        # để admin sửa số tiền đúng mà không cần tạo ticket mới.
+        reopened = False
+        if is_ticket and not ctx.message.mentions:
+            completed_key = f"completed_{ctx.channel.id}"
+            data = load_data()
+            if data.get(completed_key):
+                data[completed_key] = False
+                save_data(data)
+                reopened = True
+
+        # Đồng bộ lại buy-role theo tổng MỚI — auto_give_buy_roles() đã tự add ĐÚNG tier
+        # và remove tier không còn đạt, không cần logic riêng ở đây.
+        from cogs.admin_views import auto_give_buy_roles
+        role_cfg = await auto_give_buy_roles(ctx.guild, buyer, new_total)
+
+        SERVER_LABELS = {
+            "donut":  "🍩 DonutSMP", "kingmc": "👑 KingMC", "onemc": "🎮 One MC",
+            "ff":     "🔥 Free Fire", "accpre": "🎭 Acc Pre", "listing": "🛒 Sản phẩm",
+        }
+        server_label = SERVER_LABELS.get(server_key, None)
+
+        embed = discord.Embed(title="↩️ Đã Trừ Tiền (Sửa Đơn Nhầm)", color=0xED4245, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="👤 Buyer", value=buyer.mention, inline=True)
+        subtract_note = f"**{fmt_amount(actual_subtracted)}**"
+        if actual_subtracted < amount:
+            subtract_note += f" *(yêu cầu {fmt_amount(amount)}, đã chặn ở 0 — tổng không đủ để trừ hết)*"
+        embed.add_field(name="➖ Đã trừ", value=subtract_note, inline=True)
+        embed.add_field(name="💰 Tổng chung", value=f"{fmt_amount(old_total)} → **{fmt_amount(new_total)}**", inline=True)
+        if server_label and srv_total is not None:
+            embed.add_field(name=f"📊 Tổng {server_label}", value=f"**{fmt_amount(srv_total)}**", inline=True)
+        if role_cfg:
+            role_obj = ctx.guild.get_role(role_cfg.get("role_id", 0))
+            embed.add_field(name="🏆 Role hiện tại", value=role_obj.mention if role_obj else f"**{role_cfg.get('label','?')}**", inline=False)
+        elif get_buy_roles():
+            embed.add_field(name="🏆 Role hiện tại", value="*(dưới mức tier thấp nhất — đã gỡ hết role mua hàng nếu có)*", inline=False)
+        if reopened:
+            embed.add_field(name="🔓 Ticket", value="Đã mở lại — có thể `.done` lại đúng số tiền trong kênh này.", inline=False)
+        embed.set_footer(text=f"Sửa bởi {_uname_plain(ctx.author)}")
+        await ctx.reply(embed=embed)
+
+        log_fields = [
+            ("👤 Buyer",      _uname_plain(buyer), True),
+            ("➖ Đã trừ",      fmt_amount(actual_subtracted), True),
+            ("💰 Tổng chung", f"{fmt_amount(old_total)} → {fmt_amount(new_total)}", True),
+        ]
+        if server_label and srv_total is not None:
+            log_fields.append((f"📊 {server_label}", fmt_amount(srv_total), True))
+        log_fields += [
+            ("🎫 Kênh",    ctx.channel.mention, True),
+            ("✍️ Sửa bởi", _uname_plain(ctx.author), True),
+        ]
+        await send_log(
+            ctx.bot, "TICKET_UNDONE", f"Trừ Tiền (Sửa Đơn Nhầm) — {ctx.channel.name}",
             fields=log_fields,
             user=ctx.author,
             guild_id=ctx.guild.id,

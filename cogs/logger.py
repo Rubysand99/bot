@@ -4,7 +4,7 @@ Mọi cog gọi: await send_log(bot, "TICKET_CREATE", "Tạo ticket", ...)
 Mỗi nhóm event được route vào kênh riêng, cài qua .setlog <nhóm> #kênh
 
 Nhóm kênh:
-  ticket   → TICKET_CREATE, TICKET_CLOSE, TICKET_DONE, TICKET_CLAIM
+  ticket   → TICKET_CREATE, TICKET_CLOSE, TICKET_DONE, TICKET_UNDONE, TICKET_CLAIM
   mod      → MOD_BAN, MOD_KICK, MOD_MUTE, MOD_WARN
   giveaway → GIVEAWAY_START, GIVEAWAY_END, GIVEAWAY_REROLL
   member   → MEMBER_JOIN, MEMBER_LEAVE
@@ -31,6 +31,7 @@ LOG_ICONS = {
     "TICKET_CREATE":   ("🎫", 0x57F287),
     "TICKET_CLOSE":    ("🔒", 0xED4245),
     "TICKET_DONE":     ("✅", 0x57F287),
+    "TICKET_UNDONE":   ("↩️", 0xED4245),
     "TICKET_CLAIM":    ("🙋", 0x5865F2),
     "MOD_BAN":         ("🔨", 0xED4245),
     "MOD_KICK":        ("👢", 0xE67E22),
@@ -66,6 +67,7 @@ LOG_ROUTES: dict[str, str] = {
     "TICKET_CREATE":   "ticket",
     "TICKET_CLOSE":    "ticket",
     "TICKET_DONE":     "ticket",
+    "TICKET_UNDONE":   "ticket",
     "TICKET_CLAIM":    "ticket",
     "MOD_BAN":         "mod",
     "MOD_KICK":        "mod",

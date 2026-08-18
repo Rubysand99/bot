@@ -1065,6 +1065,39 @@ def add_user_spent_server(user_id: int, amount: int, server_key: str) -> dict:
         "server_total": data["user_spent_by_server"][uid][server_key],
     }
 
+def subtract_user_spent(user_id: int, amount: int) -> int:
+    """Trừ tiền khỏi tổng chi tiêu chung — dùng khi `.done` bị dùng nhầm. Không cho âm
+    (floor 0), vì "đã tiêu -X" không có nghĩa. Trả về tổng MỚI sau khi trừ."""
+    data = load_data()
+    data.setdefault("user_total_spent", {})
+    key = str(user_id)
+    current = data["user_total_spent"].get(key, 0)
+    data["user_total_spent"][key] = max(0, current - amount)
+    save_data(data)
+    return data["user_total_spent"][key]
+
+def subtract_user_spent_server(user_id: int, amount: int, server_key: str) -> dict:
+    """Trừ tiền khỏi CẢ tổng chung VÀ tổng theo server — bản đối xứng của
+    add_user_spent_server(), dùng khi `.done` bị dùng nhầm. Floor 0 cho cả 2 (không âm).
+    Trả về dict {"total": int, "server_total": int}."""
+    data = load_data()
+    uid  = str(user_id)
+
+    data.setdefault("user_total_spent", {})
+    cur_total = data["user_total_spent"].get(uid, 0)
+    data["user_total_spent"][uid] = max(0, cur_total - amount)
+
+    data.setdefault("user_spent_by_server", {})
+    data["user_spent_by_server"].setdefault(uid, {})
+    cur_srv = data["user_spent_by_server"][uid].get(server_key, 0)
+    data["user_spent_by_server"][uid][server_key] = max(0, cur_srv - amount)
+
+    save_data(data)
+    return {
+        "total":        data["user_total_spent"][uid],
+        "server_total": data["user_spent_by_server"][uid][server_key],
+    }
+
 # ══════════════════════════════════════════
 # RATINGS & NOTES
 # ══════════════════════════════════════════

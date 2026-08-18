@@ -1,5 +1,68 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.34.0] — 2026-08-10
+
+### ✨ Tính năng mới
+- Lệnh `.undone <tiền>` (alias `.donesub`/`.trutien`, admin only) — trừ tiền đã tiêu của
+  user cho các trường hợp lỡ `.done` nhầm (nhầm người, nhầm số tiền). Cùng cú pháp linh
+  hoạt như `.done`: dùng `.undone 50k` trong kênh ticket (tự đọc buyer từ topic) hoặc
+  `.undone @user 50k` ở bất kỳ đâu.
+  - Trừ đúng cả 2 nơi `.done` đã cộng: tổng chung (`user_total_spent`) VÀ tổng theo
+    server nếu ticket có server_key (`user_spent_by_server`) — thêm
+    `subtract_user_spent()`/`subtract_user_spent_server()` ở `core/data.py`, đối xứng
+    với `add_user_spent()`/`add_user_spent_server()` đã có. Không cho âm (floor ở 0),
+    báo rõ nếu số tiền yêu cầu trừ nhiều hơn tổng hiện có.
+  - **Tự đồng bộ lại buy-role**: gọi lại `auto_give_buy_roles()` với tổng MỚI sau khi
+    trừ — hàm này vốn đã tự add đúng tier VÀ remove tier không còn đạt, nên role mua
+    hàng luôn khớp đúng tổng thực tế, không cần thao tác tay.
+  - **Tự mở lại ticket**: nếu chạy trong đúng kênh ticket của buyer đó (không mention),
+    tự xoá cờ `completed_{channel_id}` để `.done` chạy lại được với số tiền đúng, không
+    cần tạo ticket mới.
+  - Log đầy đủ qua `send_log()` với event type mới `TICKET_UNDONE` (thêm vào
+    `cogs/logger.py`, cùng nhóm kênh "ticket" như `TICKET_DONE`) — có audit trail rõ
+    ràng ai sửa, sửa bao nhiêu, sửa cho ai.
+  - Cập nhật `.help` để lệnh hiện ra khi tra cứu.
+
+---
+
+## [v4.33.0] — 2026-08-10
+
+### 🔍 Rà soát toàn bộ codebase — Phần 7/~10: `cogs/mod.py`
+
+### 🐛 Sửa lỗi
+- `cogs/mod.py` — **`_spam_cache`/`_image_cache`/`_warn_cooldown` không phân biệt theo
+  guild**, chỉ key theo `user_id` (hoặc `(mod_id, target_id)`). Cùng lớp bug với
+  `_open_tickets` đã sửa ở Phần 5: 1 user hoạt động cùng lúc ở 2 guild bot đang phục vụ
+  (đúng mục đích multi-guild) có thể bị **tính gộp tin nhắn/ảnh từ CẢ HAI guild vào
+  chung 1 bộ đếm** → bị auto-mod xoá tin/mute NHẦM vì "spam" dù mỗi guild riêng lẻ đều
+  dưới ngưỡng. Tương tự, `_warn_cooldown` khiến 2 mod ở 2 guild khác nhau (hoặc 1 mod
+  cảnh cáo cùng 1 user ở 2 guild vì 2 lỗi riêng biệt) bị chặn nhầm bởi cooldown của
+  guild kia. Đã đổi toàn bộ key cache sang có `guild_id` — mỗi guild theo dõi độc lập,
+  cập nhật cả 4 hàm + 10 chỗ gọi liên quan (`.warn`, `/warn`, automod text/ảnh).
+- `cogs/mod.py` — Auto-mod embed cảnh báo hardcode footer "TuyTam Store • Auto-Mod" —
+  hiện sai tên cho mọi guild khác. Đổi sang hiện đúng tên server đang chạy.
+
+### 📌 Phát hiện thêm (chưa sửa — cần bạn quyết định phạm vi)
+- Tìm thấy **44 chỗ** hardcode chuỗi "TuyTam Store" (chủ yếu ở footer embed) rải khắp
+  TOÀN BỘ codebase, không riêng `mod.py`. Đây là vấn đề **thẩm mỹ** (branding hiện sai
+  tên cho guild khác), không phải bug chức năng — không xử lý gộp vào phần này vì phạm
+  vi quá rộng so với 1 file. Nếu muốn dọn toàn bộ, đây nên là 1 phần audit riêng (hoặc
+  cân nhắc thêm "Tên Store" làm 1 mục cấu hình qua `.st`, tương tự prefix).
+
+### ✅ Đã rà soát kỹ, xác nhận KHÔNG có bug
+- `cog_load()` (resume tempban sau restart) dùng đúng lifecycle hook của discord.py —
+  chạy 1 LẦN DUY NHẤT khi cog được load, KHÔNG refire mỗi lần reconnect như `on_ready()`
+  (khác bug đã sửa ở Phần 2) — an toàn.
+- `_get_mod_data()`/`_save_mod_data()` dùng pattern đọc-sửa-ghi không khoá, nhưng đã xác
+  nhận an toàn: không có `await` nào xen giữa lúc đọc và lúc ghi trong bất kỳ luồng gọi
+  nào (asyncio single-thread, không có điểm yield thì không thể bị chèn ngang) — khác
+  với bug đã sửa ở `get_ticket_number()` (Phần 1), nơi có 1 `await` Mongo thật sự nằm
+  giữa.
+- `add_tempban()` đã đúng — nhận `guild_id` tường minh dù bảng tempban intentionally
+  dùng chung toàn bộ bot (chống multi-acc/VPN xuyên guild — xem Phần 1).
+
+---
+
 ## [v4.32.0] — 2026-08-10
 
 ### 🔍 Rà soát toàn bộ codebase — Phần 6/~10: `cogs/invite.py`

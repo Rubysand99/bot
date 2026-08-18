@@ -363,6 +363,7 @@ class AdminCog(commands.Cog):
                      "`.setpanel #kênh` — Cài kênh đăng panel tự động\n"
                      "`.close` — Đóng ticket hiện tại\n"
                      "`.done <tiền>` — Hoàn thành đơn (chỉ admin)\n"
+                     "`.undone <tiền>` (alias `.donesub`/`.trutien`) — Trừ tiền đã tiêu khi lỡ `.done` nhầm, tự mở lại ticket để `.done` lại đúng\n"
                      "`.addnote <ghi chú>` — Thêm ghi chú vào ticket\n"
                      "`.orderbase` — Tạo ticket Order Base (admin)", False),
                     ("🏷️ Loại ticket → Role",
@@ -655,7 +656,7 @@ class AdminCog(commands.Cog):
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="🎫 Ticket",    value="`.panel` `.mmpanel` `.panelbuttons` `.close` `.done` `.addnote`\n`.ticketinfo` `.thongke` `.setsl` `.setrole`", inline=True)
+        embed.add_field(name="🎫 Ticket",    value="`.panel` `.mmpanel` `.panelbuttons` `.close` `.done` `.undone` `.addnote`\n`.ticketinfo` `.thongke` `.setsl` `.setrole`", inline=True)
         embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite` `.verify`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick` `.gwreset` `.gwverify`", inline=True)
