@@ -1,5 +1,42 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.35.0] — 2026-08-10
+
+### 🔍 Rà soát toàn bộ codebase — Phần 8/~10: AI (`cogs/ai_chat.py`, `core/ai_*.py`, `core/rag.py`) + rà lại `cogs/giveaway.py`
+
+### 🐛 Sửa lỗi
+- `core/ai_tools.py: _invoke_cmd()` — **lỗi hồi quy do chính đợt sửa prefix trước đây
+  (v4.29.0) gây ra.** Hàm này (dùng bởi HẦU HẾT tool admin của `.ai` — tạo/xoá/đổi tên
+  kênh, tạo/xoá role, ban/kick/mute/warn, purge, đóng ticket, reset giveaway...) hardcode
+  prefix `.` khi dựng message giả lập để gọi lại lệnh gốc. Từ khi prefix trở thành cấu
+  hình riêng theo từng guild (`.st` → "Đặt Prefix Bot"), guild nào đổi sang prefix khác
+  "." sẽ khiến `get_context()` KHÔNG nhận ra nội dung hardcode "." là lệnh hợp lệ nữa
+  (prefix không khớp) → mọi tool admin qua `.ai` cho guild đó im lặng hỏng (chạy với
+  argument rỗng/sai thay vì báo lỗi rõ ràng). Đã sửa dùng đúng `get_guild_prefix()` của
+  guild hiện tại thay vì hardcode.
+
+### ✅ Đã rà soát kỹ, xác nhận KHÔNG có bug
+- `cogs/ai_chat.py: AIConfirmView` dùng `discord.ui.View` thường (không phải
+  `GuildContextView`) — nhưng xác nhận AN TOÀN: chỉ tạo ra SAU khi `.ai` đã tự check
+  `ADMIN_IDS`, và nút Xác nhận/Huỷ tự kiểm tra đúng người đã gõ lệnh
+  (`interaction.user.id != ctx.author.id`) — 2 lớp bảo vệ độc lập, không phải kiểu hổng
+  như `admin_views.py` ở Phần 4 (nơi CẢ VIEW LẪN LỆNH GỐC đều thiếu check).
+- `handle_ai_message()` (auto-trả lời trong kênh AI, mọi user dùng được) CHỈ dùng agent
+  "support" với `QUERY_TOOL_SCHEMAS` (tool chỉ đọc) — tool nguy hiểm
+  (`ADMIN_TOOL_SCHEMAS`, agent "ops") chỉ reachable qua lệnh `.ai` đã check admin ngay
+  từ đầu, không có đường nào để user thường chạm được tool nguy hiểm.
+- `core/ai_tools.py` — mọi query-tool handler (check ticket/seller/invite/lịch sử mua)
+  đều dùng đúng `ctx.guild`/`ctx.author`, không có ID hardcode nào.
+- `core/rag.py` — `search_rag()`/`_keyword_fallback_search()`/vector search pipeline đều
+  lọc đúng theo `guild_id` (cả nhánh Mongo `$vectorSearch` filter lẫn fallback từ khoá
+  thô) — thiết kế multi-guild đúng ngay từ đầu, không có gì cần sửa.
+- Rà lại `cogs/giveaway.py` (đã sửa nhiều ở Phần 1/2 + hotfix riêng) — `_h_giveaway_reset`
+  ở `core/ai_tools.py` gọi qua `_invoke_cmd(ctx, "gwreset", ...)` nên tự động thừa hưởng
+  toàn bộ fix trước đó của `.gwreset` (v4.28.1) lẫn fix prefix vừa sửa ở trên, không cần
+  sửa thêm gì riêng.
+
+---
+
 ## [v4.34.0] — 2026-08-10
 
 ### ✨ Tính năng mới

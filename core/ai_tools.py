@@ -22,6 +22,7 @@ import discord
 
 from core.data import (
     ADMIN_IDS, get_user_total_spent, get_user_ticket_history,
+    get_guild_prefix,
 )
 from cogs.seller import is_active_seller, _get_one as _seller_get_one
 from cogs.ticket import has_ticket
@@ -224,7 +225,15 @@ async def _invoke_cmd(ctx, name: str, *args) -> tuple[bool, str | None]:
     if not cmd:
         return False, f"❌ Không tìm thấy lệnh `.{name}` trong bot."
     try:
-        ctx.message.content = f".{name} " + " ".join(str(a) for a in args)
+        # FIX: TRƯỚC ĐÂY hardcode prefix "." khi dựng message giả lập — nhưng prefix
+        # giờ cấu hình được riêng theo từng guild qua `.st` (xem get_guild_prefix() +
+        # bot.py: _get_prefix). Nếu guild đó đổi sang prefix khác ".", get_context() bên
+        # dưới sẽ KHÔNG nhận ra nội dung hardcode "." là lệnh hợp lệ nữa (prefix không
+        # khớp) → new_ctx.command rỗng → cmd.invoke() chạy với arguments trống/sai, mọi
+        # tool admin qua AI (channel_delete, mod_ban, purge...) im lặng hỏng cho guild
+        # đó. Dùng đúng prefix hiện tại của guild thay vì hardcode.
+        prefix = get_guild_prefix(ctx.guild.id) if ctx.guild else "."
+        ctx.message.content = f"{prefix}{name} " + " ".join(str(a) for a in args)
         new_ctx = await ctx.bot.get_context(ctx.message)
         await cmd.invoke(new_ctx)
         return True, None
