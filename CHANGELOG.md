@@ -1,5 +1,31 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.36.0] — 2026-08-21
+
+### 🐛 Sửa lỗi
+- `cogs/admin.py: .addrole` / `.removerole` — **ping nhầm cả role khi gõ lệnh.** Cú
+  pháp cũ `.addrole @user @role` bắt buộc gõ role dạng `@mention` để `discord.Role`
+  converter parse được (converter có hỗ trợ gõ ID hoặc tên chính xác thay vì mention,
+  nhưng thực tế hầu như ai cũng gõ `@` rồi bấm chọn gợi ý của Discord) → Discord tự
+  phát thông báo ping cho **TẤT CẢ member đang có role đó** ngay khi tin nhắn được gửi
+  đi. Việc này xảy ra ở phía Discord, TRƯỚC khi bot kịp xử lý bất kỳ điều gì, nên
+  không có cách nào "gỡ" ping sau khi tin nhắn đã gửi.
+  - Sửa bằng cách bỏ hẳn tham số role khỏi lệnh gõ tay — giờ chỉ `.addrole @user` /
+    `.removerole @user`, bot trả lời kèm dropdown chọn role
+    (`RoleAssignSelectView`, `cogs/admin_views.py`, dùng `discord.ui.RoleSelect` —
+    component chọn role NATIVE của Discord). Chọn qua dropdown không gõ chữ nên
+    không thể tạo ra mention thật, cũng không bị giới hạn 25 role như Select thường.
+  - Nhân tiện đồng bộ 1 điểm lệch nhỏ giữa 2 lệnh: `.addrole` vốn có check "role cao
+    hơn role bot" nhưng `.removerole` thì KHÔNG (dựa hẳn vào `discord.Forbidden`
+    không bắt được) — giờ cả 2 dùng chung `RoleAssignSelectView` nên được check như
+    nhau, báo lỗi rõ ràng thay vì để exception rơi tự do.
+  - **Chưa đụng tới:** `.automod addrole/delrole @role` (`cogs/mod.py`) có cùng dạng
+    bug (role cũng là tham số `discord.Role` gõ tay) nhưng là lệnh cấu hình whitelist
+    automod, tần suất dùng thấp hơn hẳn `.addrole` hàng ngày — để nguyên, báo lại để
+    quyết định có cần sửa tương tự không.
+
+---
+
 ## [v4.35.0] — 2026-08-10
 
 ### 🔍 Rà soát toàn bộ codebase — Phần 8/~10: AI (`cogs/ai_chat.py`, `core/ai_*.py`, `core/rag.py`) + rà lại `cogs/giveaway.py`

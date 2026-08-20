@@ -1528,6 +1528,61 @@ class AssignRoleModal(Modal):
 
 
 # ══════════════════════════════════════════
+# .addrole / .removerole (cogs/admin.py) — CHỌN ROLE QUA DROPDOWN
+# ══════════════════════════════════════════
+# FIX: trước đây `.addrole @user @role` bắt buộc gõ role dạng @mention để
+# discord.Role converter parse được (converter có hỗ trợ gõ ID/tên chính xác
+# thay vì mention, nhưng thực tế hầu như ai cũng gõ @ rồi bấm chọn gợi ý) →
+# Discord tự phát thông báo ping cho TẤT CẢ member đang có role đó ngay khi
+# tin nhắn được gửi đi — xảy ra ở phía Discord, TRƯỚC khi bot kịp xử lý gì,
+# nên không thể "gỡ" ping sau khi đã gửi. Sửa bằng cách bỏ hẳn việc gõ role
+# trong lệnh gõ tay, luôn chọn qua RoleSelect — component chọn role NATIVE
+# của Discord, không gõ chữ nên không thể tạo ra mention thật, cũng không bị
+# giới hạn 25 lựa chọn như Select thường (loại phải tự build list SelectOption).
+class RoleAssignSelectView(View):
+    def __init__(self, member: discord.Member, invoker_id: int, action: str):
+        super().__init__(timeout=60)
+        self.member     = member
+        self.invoker_id = invoker_id
+        self.action     = action  # "add" hoặc "remove"
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not await super().interaction_check(interaction):
+            return False
+        if interaction.user.id not in ADMIN_IDS or interaction.user.id != self.invoker_id:
+            await interaction.response.send_message("❌ Chỉ người dùng lệnh mới thao tác được.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.select(cls=discord.ui.RoleSelect, placeholder="Chọn role...", min_values=1, max_values=1)
+    async def role_select(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+        role = select.values[0]
+        if role >= interaction.guild.me.top_role:
+            return await interaction.response.send_message("❌ Role này cao hơn hoặc bằng role của bot.", ephemeral=True)
+        try:
+            if self.action == "add":
+                await self.member.add_roles(role, reason=f"Bởi {interaction.user}")
+                title, color = "✅ Đã Thêm Role", 0x57F287
+            else:
+                await self.member.remove_roles(role, reason=f"Bởi {interaction.user}")
+                title, color = "✅ Đã Xoá Role", 0xFEE75C
+        except discord.Forbidden:
+            return await interaction.response.send_message("❌ Bot thiếu quyền với role này.", ephemeral=True)
+        except Exception as e:
+            return await interaction.response.send_message(f"❌ Lỗi: {e}", ephemeral=True)
+        embed = discord.Embed(title=title, color=color)
+        embed.add_field(name="👤 Thành viên", value=self.member.mention, inline=True)
+        embed.add_field(name="🏷️ Role",       value=role.mention,       inline=True)
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content=None, embed=embed, view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
+# ══════════════════════════════════════════
 # ══════════════════════════
 # SETUP — BUY ROLES
 # ══════════════════════════

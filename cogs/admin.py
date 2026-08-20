@@ -45,6 +45,7 @@ from cogs.admin_views import (
     _DEFAULT_PRICE_SECTIONS,
     MkChannelView,
     EmbedAnnounceView, EmbedAnnounceModal, EmbedPreviewView, EmbedUsePreviewButtonView, build_embed_from_payload,
+    RoleAssignSelectView,
 )
 
 BOT_VERSION = "4.13.1"
@@ -155,26 +156,27 @@ class AdminCog(commands.Cog):
         await ctx.reply(embed=embed, view=PriceManagerView())
 
     # ── .addrole / .removerole ──
+    # FIX: trước đây `.addrole @user @role` bắt buộc gõ role dạng @mention để
+    # discord.Role converter parse được → Discord tự ping TOÀN BỘ member đang có
+    # role đó ngay khi tin nhắn được gửi đi (không phải do bot, không thể chặn
+    # sau khi đã gửi). Giờ chỉ gõ `.addrole @user`, chọn role qua dropdown
+    # (RoleAssignSelectView ở admin_views.py — dùng discord.ui.RoleSelect, không
+    # gõ chữ nên không tạo ra mention thật). Nhân tiện: `.removerole` trước đây
+    # THIẾU check "role cao hơn role bot" (chỉ `.addrole` có) — giờ dùng chung 1
+    # đường xử lý nên cả 2 đều được check như nhau.
     @commands.command(name="addrole", aliases=["giverole"])
-    async def addrole_cmd(self, ctx, member: discord.Member = None, role: discord.Role = None):
+    async def addrole_cmd(self, ctx, member: discord.Member = None):
         if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền.")
-        if not member or not role: return await ctx.reply("❌ Dùng: `.addrole @user @role`")
-        if role >= ctx.guild.me.top_role: return await ctx.reply("❌ Role này cao hơn role của bot.")
-        await member.add_roles(role, reason=f"Bởi {ctx.author}")
-        embed = discord.Embed(title="✅ Đã Thêm Role", color=0x57F287)
-        embed.add_field(name="👤 Thành viên", value=member.mention, inline=True)
-        embed.add_field(name="🏷️ Role",       value=role.mention,   inline=True)
-        await ctx.reply(embed=embed)
+        if not member: return await ctx.reply("❌ Dùng: `.addrole @user`, sau đó chọn role trong danh sách hiện ra.")
+        view = RoleAssignSelectView(member=member, invoker_id=ctx.author.id, action="add")
+        await ctx.reply(f"Chọn role muốn **thêm cho** {member.mention}:", view=view)
 
     @commands.command(name="removerole", aliases=["takerole"])
-    async def removerole_cmd(self, ctx, member: discord.Member = None, role: discord.Role = None):
+    async def removerole_cmd(self, ctx, member: discord.Member = None):
         if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền.")
-        if not member or not role: return await ctx.reply("❌ Dùng: `.removerole @user @role`")
-        await member.remove_roles(role, reason=f"Bởi {ctx.author}")
-        embed = discord.Embed(title="✅ Đã Xoá Role", color=0xFEE75C)
-        embed.add_field(name="👤 Thành viên", value=member.mention, inline=True)
-        embed.add_field(name="🏷️ Role",       value=role.mention,   inline=True)
-        await ctx.reply(embed=embed)
+        if not member: return await ctx.reply("❌ Dùng: `.removerole @user`, sau đó chọn role trong danh sách hiện ra.")
+        view = RoleAssignSelectView(member=member, invoker_id=ctx.author.id, action="remove")
+        await ctx.reply(f"Chọn role muốn **xoá khỏi** {member.mention}:", view=view)
 
     # (Lệnh `.donerole` đã gộp vào `.st` — nút "🎖️ Done Role", xem cogs/admin_views.py: SettingsView)
 
@@ -567,8 +569,8 @@ class AdminCog(commands.Cog):
                      "`.botinfo` — Thông tin bot\n"
                      "`.ping` — Kiểm tra độ trễ\n"
                      "`.clear <n>` — Xóa n tin nhắn\n"
-                     "`.addrole @user @role` — Thêm role\n"
-                     "`.removerole @user @role` — Xóa role\n"
+                     "`.addrole @user` — Thêm role (chọn qua danh sách)\n"
+                     "`.removerole @user` — Xóa role (chọn qua danh sách)\n"
                      "`.userinfo [@user]` — Thông tin thành viên\n"
                      "`.serverinfo` — Thông tin server\n"
                      "`.backfill [số]` — Quét lại kênh legit, thả ✅ cho tin bị bỏ sót (mặc định 25)", False),
