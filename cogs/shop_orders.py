@@ -43,7 +43,7 @@ from core.data import (
     ADMIN_IDS, fmt_amount, is_staff_member, get_or_fetch_channel, _uname_plain,
     set_current_guild,
     get_cfg_shop_orders_enabled,
-    get_shop_orders_bank, save_shop_orders_bank, get_all_shop_orders_banks,
+    get_shop_orders_bank, save_shop_orders_bank, get_all_shop_orders_banks, delete_shop_orders_bank,
     has_ticket_access,
     save_pending_shop_order, get_pending_shop_order, find_pending_shop_order_by_content, pop_pending_shop_order,
     is_webhook_id_processed, mark_webhook_id_processed,
@@ -201,6 +201,24 @@ def build_queue_embed(seller: discord.abc.User, buyer: discord.abc.User,
     e.add_field(name="💰 Số tiền", value=fmt_vnd(amount), inline=True)
     e.add_field(name="📝 Mã CK", value=f"`{ref_code}`" if ref_code else "*(không có)*", inline=True)
     e.add_field(name="📌 Trạng thái", value="🟡 Đang xử lý", inline=False)
+    return e
+
+
+def build_payment_confirmed_embed(seller: discord.abc.User, buyer: discord.abc.User,
+                                   amount: int, ref_code: str) -> discord.Embed:
+    """Embed báo trong ticket ngay khi webhook SePay xác nhận tiền đã vào TK — gửi SAU
+    khi tiền đã thực sự chuyển vào tài khoản ngân hàng qua QR (không phải lúc .done)."""
+    e = discord.Embed(
+        title="✅ Đã nhận thanh toán",
+        description="SePay đã xác nhận tự động — tiền đã vào tài khoản ngân hàng qua QR.",
+        color=COLOR_QUEUE_DONE,
+        timestamp=datetime.now(timezone.utc),
+    )
+    e.add_field(name="👤 Khách", value=buyer.mention, inline=True)
+    e.add_field(name="🧑 Seller", value=seller.mention, inline=True)
+    e.add_field(name="💰 Số tiền", value=fmt_vnd(amount), inline=True)
+    e.add_field(name="📝 Mã CK", value=f"`{ref_code}`", inline=True)
+    e.set_footer(text="🧪 Shop Orders — xác nhận tự động qua webhook SePay")
     return e
 
 
@@ -401,10 +419,7 @@ class ShopOrdersCog(commands.Cog):
             return
 
         try:
-            await channel.send(
-                f"✅ **Đã nhận thanh toán** — {fmt_vnd(order['amount'])} từ {buyer.mention}, "
-                f"mã CK `{ref_code}`. {seller.mention} xử lý đơn nhé!"
-            )
+            await channel.send(embed=build_payment_confirmed_embed(seller, buyer, order["amount"], ref_code))
         except Exception as e:
             log.warning(f"[SEPAY] ⚠️ Không gửi được thông báo vào ticket {order['channel_id']}: {e}")
 
@@ -554,6 +569,29 @@ class ShopOrdersCog(commands.Cog):
                 timestamp=datetime.now(timezone.utc),
             )
             await ctx.reply(embed=embed)
+
+    @commands.command(name="delbank", aliases=["removebank"])
+    async def delbank_cmd(self, ctx: commands.Context, member: discord.Member = None):
+        """Dùng: .delbank [@seller] — xoá bank đã đăng ký (thêm nhầm/sai thông tin).
+        Không truyền @seller = tự xoá bank CỦA BẠN. Truyền @seller = chỉ admin xoá được
+        bank của NGƯỜI KHÁC (seller thường không được xoá bank của seller khác)."""
+        if not (ctx.author.id in ADMIN_IDS or has_ticket_access(ctx.author)):
+            return await ctx.reply("❌ Chỉ admin hoặc seller mới dùng được lệnh này.")
+
+        target = member or ctx.author
+        if target.id != ctx.author.id and ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Bạn chỉ xoá được bank CỦA CHÍNH BẠN — cần admin để xoá bank người khác.")
+
+        bank = get_shop_orders_bank(target.id)
+        if not bank:
+            return await ctx.reply(f"📭 {target.mention} chưa đăng ký bank nào — không có gì để xoá.")
+
+        delete_shop_orders_bank(target.id)
+        await ctx.reply(
+            f"✅ Đã xoá bank của {target.mention}: {bank.get('bank_name', '?')} "
+            f"(`{bank.get('account_number', '?')}`).\n"
+            f"› `.done` do {target.mention} gõ từ giờ sẽ báo chưa đăng ký bank cho tới khi `.shopbank` lại."
+        )
 
 
 async def setup(bot: commands.Bot):
