@@ -1512,6 +1512,18 @@ def get_all_shop_orders_banks() -> dict:
     """Toàn bộ bank đã đăng ký trong guild — dùng cho `.listbank`."""
     return load_data().get("shop_orders_banks", {})
 
+def delete_shop_orders_bank(user_id: int) -> bool:
+    """Xoá bank đã đăng ký của 1 seller (thêm nhầm/sai thông tin). Trả về True nếu có
+    xoá thật (đã tồn tại trước đó), False nếu seller đó vốn chưa đăng ký gì."""
+    data = load_data()
+    banks = data.get("shop_orders_banks", {})
+    if str(user_id) not in banks:
+        return False
+    del banks[str(user_id)]
+    data["shop_orders_banks"] = banks
+    save_data(data)
+    return True
+
 def has_ticket_access(member: discord.Member) -> bool:
     """"seller" theo yêu cầu gốc: có role nằm trong danh sách role của BẤT KỲ loại
     ticket nào (ticket_multi_roles) → coi là seller. CHỈ dùng để mở khoá
