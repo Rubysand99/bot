@@ -45,7 +45,7 @@ from core.data import (
     get_cfg_shop_orders_enabled,
     get_shop_orders_bank, save_shop_orders_bank, get_all_shop_orders_banks,
     has_ticket_access,
-    save_pending_shop_order, find_pending_shop_order_by_content, pop_pending_shop_order,
+    save_pending_shop_order, get_pending_shop_order, find_pending_shop_order_by_content, pop_pending_shop_order,
     is_webhook_id_processed, mark_webhook_id_processed,
     get_cfg_queue_channel, save_cfg_queue_channel,
     get_cfg_proof_channel,
@@ -81,14 +81,23 @@ def fmt_vnd(amount: int) -> str:
     return f"{amount:,} VNĐ"
 
 
-def gen_transfer_code(name: str) -> str:
-    """Sinh nội dung CK kiểu <tên>-<mã random 6 ký tự>. Giờ dùng làm addInfo THẬT của QR
-    (không chỉ để trang trí hóa đơn như trước) nên phải: chỉ chữ/số (bank không làm hỏng
-    dấu/khoảng trắng lạ), đủ ngắn (đa số app ngân hàng giới hạn nội dung CK), đủ random để
-    không trùng 2 đơn cùng lúc (36^6 ≈ 2.1 tỷ tổ hợp)."""
-    safe_name = re.sub(r"[^A-Za-z0-9_]", "", name or "")[:20] or "KHACH"
-    rand = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    return f"{safe_name}-{rand}"
+PAYMENT_CODE_PREFIX = "DH"  # 2-5 ký tự CHỮ, khớp "Tiền tố" cấu hình trong SePay ›
+                             # Cấu hình Công ty › Cấu hình chung › Cấu trúc mã thanh toán.
+                             # "DH" (Đơn Hàng) trung lập, không gắn tên riêng TuyTam — bot
+                             # multi-guild, guild khác dùng chung 1 SePay account (nếu có)
+                             # vẫn ra mã hợp lệ. Đổi ở đây thì phải đổi Y HỆT bên SePay.
+PAYMENT_CODE_SUFFIX_LEN = 6  # khớp "Hậu tố" = 6 ký tự, loại Số nguyên, cấu hình bên SePay.
+
+
+def gen_transfer_code() -> str:
+    """Sinh mã CK dạng <PREFIX><6 chữ số ngẫu nhiên>, vd DH482917 — khớp ĐÚNG cấu trúc
+    <tiền tố><hậu tố Số nguyên, không dấu ngăn cách> mà SePay dùng để tự bóc tách trường
+    `code` từ nội dung chuyển khoản (xem Cấu hình mã thanh toán trên SePay dashboard).
+    KHÔNG còn nhúng tên khách như bản trước (tên khách đã hiện riêng ở field "👤 Khách"
+    của mọi embed liên quan rồi, không cần nhúng lại vào mã) — đổi vì cấu trúc SePay
+    yêu cầu tiền tố CỐ ĐỊNH 2-5 ký tự chữ, không hợp với tên khách dài/thay đổi được."""
+    digits = "".join(random.choices(string.digits, k=PAYMENT_CODE_SUFFIX_LEN))
+    return f"{PAYMENT_CODE_PREFIX}{digits}"
 
 
 def build_receipt_embed(order_number: str, buyer_mention: str, product: str, amount: int,
@@ -146,7 +155,12 @@ def build_payment_qr_embed(seller: discord.abc.User, buyer: discord.abc.User, am
     template       = bank.get("template") or "compact2"
     account_holder = bank.get("account_holder", "")
 
-    ref_code = gen_transfer_code(getattr(buyer, "display_name", None) or str(buyer))
+    ref_code = gen_transfer_code()
+    for _ in range(5):  # không gian mã nhỏ hơn bản cũ (10^6 thay vì 36^6) — kiểm tra
+                         # trùng với đơn ĐANG chờ trước khi lưu, phòng hờ dù xác suất thấp.
+        if not get_pending_shop_order(ref_code):
+            break
+        ref_code = gen_transfer_code()
     save_pending_shop_order(
         ref_code,
         guild_id=guild_id, channel_id=channel_id,
@@ -244,9 +258,7 @@ class ReceiptProductModal(GuildContextModal, title="🧾 Hoàn thành đơn hàn
         # (field "📝 Mã CK" của embed hàng đợi) — hóa đơn phản ánh đúng giao dịch bank thật.
         # Fallback sinh mã mới CHỈ áp dụng cho đơn hàng đợi gửi TRƯỚC bản cập nhật này
         # (chưa có field "📝 Mã CK"), tránh lỗi khi bấm Hoàn thành trên đơn cũ còn tồn đọng.
-        buyer_member  = interaction.guild.get_member(buyer_id) if buyer_id else None
-        name_for_code = buyer_member.name if buyer_member else "KHACH"
-        transfer_code = code_field.strip("`") if code_field else gen_transfer_code(name_for_code)
+        transfer_code = code_field.strip("`") if code_field else gen_transfer_code()
 
         product        = self.product_input.value.strip()
         order_number   = get_next_shop_order_number()
@@ -349,9 +361,16 @@ class ShopOrdersCog(commands.Cog):
             mark_webhook_id_processed(webhook_id)
 
         content = payload.get("content") or payload.get("description") or ""
-        order = find_pending_shop_order_by_content(content)
+        # Ưu tiên field `code` SePay TỰ bóc tách sẵn (giờ đã cấu hình Cấu trúc mã thanh
+        # toán bên SePay khớp đúng format DH+6 số của gen_transfer_code() nên field này
+        # đáng tin cậy, tra thẳng bằng ref_code — nhanh + chính xác hơn dò chuỗi con).
+        # Fallback dò trong `content` thô cho các webhook cũ/trường hợp `code` rỗng.
+        code = (payload.get("code") or "").strip().upper()
+        order = get_pending_shop_order(code) if code else None
         if not order:
-            log.info(f"[SEPAY] ℹ️ Không khớp đơn đang chờ nào — content: {content!r}")
+            order = find_pending_shop_order_by_content(content)
+        if not order:
+            log.info(f"[SEPAY] ℹ️ Không khớp đơn đang chờ nào — code: {code!r}, content: {content!r}")
             return
 
         account_number = str(payload.get("accountNumber") or "")

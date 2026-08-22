@@ -1,5 +1,31 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.37.1] — 2026-08-22
+
+### 🐛 Sửa lỗi — mã CK không khớp Cấu trúc mã thanh toán của SePay
+`gen_transfer_code()` (v4.37.0) sinh mã dạng `<tên khách>-<6 ký tự chữ+số>` — không khớp
+kiểu **<tiền tố CỐ ĐỊNH 2-5 ký tự chữ><hậu tố cùng loại ký tự, không dấu ngăn cách>** mà
+SePay dùng để tự bóc tách trường `code` từ nội dung CK (Cấu hình Công ty › Cấu hình chung
+› Cấu trúc mã thanh toán). Tên khách dài/đổi được không thể là "tiền tố cố định", nên
+trường `code` phía SePay sẽ luôn rỗng với mã kiểu cũ — nếu bật thêm "Bỏ qua nếu không có
+mã thanh toán" bên SePay thì webhook sẽ ÂM THẦM không bắn cho các đơn này.
+
+- Đổi format: `DH` + 6 chữ số ngẫu nhiên, KHÔNG dấu ngăn cách (vd `DH482917`) — khớp
+  đúng ví dụ mẫu trong docs SePay (`DH111111`). `DH` (Đơn Hàng) chọn trung lập, không
+  gắn tên riêng TuyTam — đổi ở đây thì phải đổi Y HỆT bên cấu hình SePay.
+- Bỏ luôn việc nhúng tên khách vào mã (không cần thiết — tên khách đã hiện riêng ở
+  field "👤 Khách" của mọi embed liên quan rồi).
+- Không gian mã nhỏ hơn bản trước (10^6 thay vì 36^6) nên thêm vòng kiểm tra trùng với
+  đơn đang chờ trước khi lưu (`get_pending_shop_order`), tối đa 5 lần thử lại.
+- `_handle_sepay_webhook`: ưu tiên tra thẳng theo field `code` SePay tự bóc tách (giờ
+  đáng tin cậy vì khớp cấu trúc) trước khi fallback dò substring trong `content` thô —
+  nhanh và chính xác hơn cho các webhook mới, vẫn tương thích ngược cho trường hợp cũ.
+
+**Việc cần làm bên SePay dashboard:** vào Cấu hình Công ty › Cấu hình chung › Cấu trúc
+mã thanh toán, đặt Tiền tố = `DH`, Hậu tố = 6 ký tự, loại **Số nguyên**.
+
+---
+
 ## [v4.37.0] — 2026-08-22
 
 ### ✨ Tính năng mới — Shop Orders: multi-seller bank + tự nhận thanh toán qua SePay
