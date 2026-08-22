@@ -1,5 +1,43 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.39.0] — 2026-08-22
+
+### 🐛 Sửa lỗi — `.done`/`/done` (cogs/ticket.py, cả bản gõ tay lẫn slash)
+
+1. **`.done @buyer 50k` bỏ qua được check "ticket bán hàng"**. Check `trade_type not in
+   ("sell","buy")` trước đây chỉ chạy khi KHÔNG có mention (`is_ticket and not
+   ctx.message.mentions` / `is_ticket and not user`) — nghĩa là chỉ cần @mention buyer
+   tường minh thay vì để bot tự đọc từ topic, `.done` chạy được trong BẤT KỲ loại ticket
+   nào (hỗ trợ, dịch vụ...), không riêng ticket bán hàng. Giờ hễ đang ở TRONG 1 ticket là
+   áp dụng check này, không quan tâm có mention hay không. `.done @user 50k` dùng NGOÀI
+   ticket hoàn toàn (kênh thường) không đổi — vẫn hoạt động như tài liệu lệnh mô tả.
+2. **2 embed liên tiếp khi có QR — thừa.** Trước đây LUÔN gửi embed "✅ Hoàn Thành Đơn"
+   (buyer/tổng chi tiêu/role) rồi mới gửi thêm embed QR ngay bên dưới nếu người gõ đã
+   `.shopbank`. Giờ nếu tạo được QR (đã `.shopbank` + tính năng đang bật) thì gửi THẲNG
+   QR, KHÔNG gửi embed Hoàn Thành Đơn nữa — QR mới là thứ khách cần thấy để trả tiền.
+   Tổng chi tiêu/role tặng vẫn được lưu/gắn bình thường phía sau, chỉ không hiện lại
+   trong tin nhắn này — xem qua `.bxh` hoặc `.st` nếu cần. Chưa `.shopbank` (hoặc tính
+   năng đang tắt) thì giữ nguyên hành vi cũ (vẫn hiện embed Hoàn Thành Đơn).
+
+---
+
+## [v4.38.0] — 2026-08-22
+
+### ✨ Tính năng mới
+- **`.delbank [@seller]`** — xoá bank đã đăng ký (thêm nhầm/sai thông tin). Không truyền
+  `@seller` = tự xoá bank CỦA BẠN; truyền `@seller` thì CHỈ ADMIN xoá được (seller
+  thường không xoá được bank của seller khác — tránh 1 seller phá bank người khác).
+  Sau khi xoá, `.done` của người đó báo "chưa đăng ký bank" cho tới khi `.shopbank` lại.
+
+### 🔧 Cải thiện
+- **Thông báo "Đã nhận thanh toán" giờ là embed**, không còn text thường — đồng bộ style
+  với mọi thông báo khác trong tính năng này (field 👤 Khách / 🧑 Seller / 💰 Số tiền /
+  📝 Mã CK, cùng màu với embed hàng đợi/hóa đơn). Thời điểm gửi KHÔNG đổi — vẫn đúng như
+  từ v4.37.0: chỉ gửi SAU KHI SePay xác nhận tiền đã vào tài khoản ngân hàng qua QR,
+  không phải ngay lúc `.done`.
+
+---
+
 ## [v4.37.1] — 2026-08-22
 
 ### 🐛 Sửa lỗi — mã CK không khớp Cấu trúc mã thanh toán của SePay

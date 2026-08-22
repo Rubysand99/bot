@@ -1588,10 +1588,16 @@ class TicketCog(commands.Cog):
         if amount is None or amount <= 0:
             return await ctx.reply(f"❌ Số tiền `{amount_str}` không hợp lệ!")
 
-        # Xác định server_key / trade_type (chỉ khi trong ticket và không có mention)
+        # Xác định server_key / trade_type — ÁP DỤNG CHO MỌI TRƯỜNG HỢP trong ticket
+        # (kể cả khi có @mention buyer tường minh). FIX: trước đây chỉ check khi KHÔNG
+        # có mention (`is_ticket and not ctx.message.mentions`) — nghĩa là gõ
+        # `.done @buyer 50k` NGAY TRONG 1 ticket hỗ trợ/dịch vụ vẫn lọt qua được, bỏ qua
+        # hẳn việc kiểm tra "có phải ticket bán hàng không". Giờ chỉ cần đang ở TRONG
+        # ticket là bị chặn nếu không phải loại sell/buy, không quan tâm có mention hay
+        # không. Dùng `.done @user 50k` NGOÀI ticket (is_ticket=False) vẫn không đổi.
         server_key = None
         trade_type = None
-        if is_ticket and not ctx.message.mentions:
+        if is_ticket:
             parts = ctx.channel.topic.split("|")
             trade_type = parts[2] if len(parts) > 2 else None
             server_key = parts[5] if len(parts) > 5 else None
@@ -1699,23 +1705,28 @@ class TicketCog(commands.Cog):
             embed.add_field(name="🎖️ Role tặng", value=f"⚠️ Chưa cài / role `{get_cfg_done_role()}` không tồn tại — dùng `.st` → nút \"🎖️ Done Role\" để cấu hình", inline=False)
 
         embed.set_footer(text=f"Xác nhận bởi {_uname_plain(ctx.author)}")
-        await ctx.reply(embed=embed)
 
         from cogs.shop_orders import build_payment_qr_embed, send_to_queue
         qr_embed, qr_ref_code, qr_note = build_payment_qr_embed(
             ctx.author, buyer, amount, ctx.guild.id, ctx.channel.id
         )
+        # FIX: trước đây LUÔN gửi embed "Hoàn Thành Đơn" rồi mới gửi thêm QR bên dưới —
+        # 2 embed liên tiếp, thừa. Giờ nếu ctx.author (người gõ .done) đã `.shopbank` —
+        # tức tạo được QR — gửi THẲNG QR thay cho embed Hoàn Thành Đơn, vì QR mới là thứ
+        # khách cần thấy để trả tiền. Tổng chi tiêu/role tặng ở trên vẫn được LƯU/GẮN
+        # bình thường, chỉ không hiện lại trong tin nhắn này — xem qua `.bxh`/`.st` nếu
+        # cần lại. Chưa `.shopbank` (hoặc tính năng đang tắt) thì giữ hành vi CŨ nguyên vẹn.
         if qr_embed:
-            await ctx.send(embed=qr_embed)
-            # FIX: KHÔNG gửi "Đơn hàng đang xử lý" vào hàng đợi NGAY ở đây nữa — giờ
-            # chỉ gửi SAU KHI webhook SePay xác nhận đã thanh toán thật (xem
-            # cogs/shop_orders.py: ShopOrdersCog._handle_sepay_webhook → send_to_queue).
-        elif qr_note:
-            # Seller chưa `.shopbank` → không có QR nên không có webhook nào tự xác
-            # nhận được cho đơn này — giữ hành vi CŨ (gửi hàng đợi ngay), staff tự bấm
-            # "Hoàn thành" tay như trước khi có QR, tránh đơn "biến mất" khỏi hàng đợi.
-            await ctx.send(qr_note)
-            await send_to_queue(self.bot, ctx.author, buyer, ctx.channel, amount, "")
+            await ctx.reply(embed=qr_embed)
+        else:
+            await ctx.reply(embed=embed)
+            if qr_note:
+                # Seller chưa `.shopbank` → không có QR nên không có webhook nào tự xác
+                # nhận được cho đơn này — giữ hành vi CŨ (gửi hàng đợi ngay), staff tự
+                # bấm "Hoàn thành" tay như trước khi có QR, tránh đơn "biến mất" khỏi
+                # hàng đợi.
+                await ctx.send(qr_note)
+                await send_to_queue(self.bot, ctx.author, buyer, ctx.channel, amount, "")
 
         log_fields = [
             ("👤 Buyer",        _uname_plain(buyer),  True),
@@ -1903,10 +1914,11 @@ class TicketCog(commands.Cog):
             if not buyer:
                 return await interaction.response.send_message(f"❌ Không tìm thấy buyer (ID: `{user_id}`).", ephemeral=True)
 
-        # Xác định server_key / trade_type (chỉ khi trong ticket và không có user param)
+        # Xác định server_key / trade_type — ÁP DỤNG CHO MỌI TRƯỜNG HỢP trong ticket, kể
+        # cả khi chọn sẵn user param (cùng lý do/fix với .done gõ tay — xem comment ở đó).
         server_key = None
         trade_type = None
-        if is_ticket and not user:
+        if is_ticket:
             parts = interaction.channel.topic.split("|")
             trade_type = parts[2] if len(parts) > 2 else None
             server_key = parts[5] if len(parts) > 5 else None
@@ -1971,17 +1983,21 @@ class TicketCog(commands.Cog):
             role_obj = interaction.guild.get_role(role_cfg.get("role_id", 0))
             embed.add_field(name="🏆 Role", value=role_obj.mention if role_obj else role_cfg.get("label","?"), inline=False)
         embed.set_footer(text=f"Xác nhận bởi {_uname_plain(interaction.user)}")
-        await interaction.response.send_message(embed=embed)
 
         from cogs.shop_orders import build_payment_qr_embed, send_to_queue
         qr_embed, qr_ref_code, qr_note = build_payment_qr_embed(
             interaction.user, buyer, parsed, interaction.guild.id, interaction.channel.id
         )
+        # FIX: cùng logic với .done gõ tay — interaction.user đã `.shopbank` (tạo được
+        # QR) thì gửi THẲNG QR làm phản hồi chính, thay vì embed "Hoàn Thành Đơn" trước
+        # rồi mới followup QR như cũ (2 tin nhắn liên tiếp, thừa).
         if qr_embed:
-            await interaction.followup.send(embed=qr_embed)
-        elif qr_note:
-            await interaction.followup.send(qr_note)
-            await send_to_queue(self.bot, interaction.user, buyer, interaction.channel, parsed, "")
+            await interaction.response.send_message(embed=qr_embed)
+        else:
+            await interaction.response.send_message(embed=embed)
+            if qr_note:
+                await interaction.followup.send(qr_note)
+                await send_to_queue(self.bot, interaction.user, buyer, interaction.channel, parsed, "")
         await send_log(
             self.bot, "TICKET_DONE", f"Hoàn Thành Đơn — {interaction.channel.name}",
             fields=[
