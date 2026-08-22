@@ -1,5 +1,60 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.37.0] — 2026-08-22
+
+### ✨ Tính năng mới — Shop Orders: multi-seller bank + tự nhận thanh toán qua SePay
+Đại tu hẳn tính năng Shop Orders (thử nghiệm), theo yêu cầu riêng:
+
+- **`.shopbank`/`.listbank` — mỗi seller 1 bank riêng.** Trước đây 1 bank DUY NHẤT dùng
+  chung cho cả guild, chỉ admin cài được. Giờ admin HOẶC seller (`has_ticket_access` —
+  có role xem được ít nhất 1 loại ticket, KHÔNG có nghĩa xem được TẤT CẢ loại ticket)
+  tự `.shopbank` đăng ký bank CỦA RIÊNG mình (upsert theo `ctx.author.id`, gõ lại là
+  cập nhật đúng bank của chính họ). `.listbank` xem toàn bộ bank đã đăng ký.
+- **`.done` dùng ĐÚNG bank của người gõ lệnh.** QR giờ luôn theo `ctx.author`/
+  `interaction.user` — tiền vào thẳng TK người xử lý đơn, không qua 1 TK chung. Seller
+  chưa `.shopbank` thì báo rõ ngay (không im lặng bỏ qua như trường hợp tính năng tắt
+  hẳn), phần còn lại của `.done` (spent/role) vẫn chạy bình thường.
+- **Nội dung CK tự sinh riêng theo từng đơn** (`gen_transfer_code`, vd `TENKHACH-A1B2C3`)
+  thay vì 1 chuỗi cố định dùng chung cho mọi đơn như trước — phục vụ đối soát, không
+  phải để che giấu giao dịch. Mã này lưu vào pending order (GLOBAL, không tách theo
+  guild — webhook thanh toán gọi vào không có guild context sẵn, giống lý do
+  `_pending_sold_price` cũng phải để global) để webhook tự đối chiếu.
+- **`verify_server.py`: route `/webhook/sepay` mới** — nhận báo có tiền vào từ SePay
+  (auth bằng API Key, env var `SEPAY_WEBHOOK_API_KEY` mới), luôn trả `{"success": true}`
+  theo đúng contract bắt buộc của SePay (chậm/sai format là bị tính lỗi và retry
+  Fibonacci tối đa 7 lần/5 tiếng). File này CỐ TÌNH vẫn không import core.data/discord
+  như trước giờ — auth + đọc payload xong giao hết cho `PAYMENT_CALLBACK` (đăng ký từ
+  `cogs/shop_orders.py`), xử lý Mongo/Discord nằm hết bên đó.
+- **`cogs/shop_orders.py`: `_handle_sepay_webhook()`** — dedup theo `id` webhook (SePay
+  hay bắn trùng lúc retry), khớp `content` trả về với ref_code đang chờ (so khớp dạng
+  substring, không đòi khớp tuyệt đối vì ngân hàng có thể thêm/bớt khoảng trắng quanh
+  nội dung), đối chiếu thêm số TK nhận cho chắc, rồi tự thông báo **trong đúng ticket**
+  + gửi embed hàng đợi.
+- **Hàng đợi ("Đơn hàng đang xử lý") giờ CHỈ gửi SAU KHI webhook xác nhận đã thanh
+  toán thật** — trước đây gửi NGAY lúc `.done` (trước khi biết khách đã trả tiền hay
+  chưa). Đổi tên field/tiêu đề từ "chờ xử lý" → "đang xử lý" cho khớp đúng trạng thái.
+  **Ngoại lệ:** nếu seller chưa `.shopbank` (không có QR nên không có webhook nào tự
+  xác nhận được) thì GIỮ hành vi cũ — gửi hàng đợi ngay, staff tự bấm "Hoàn thành" tay,
+  tránh đơn "biến mất" khỏi hàng đợi.
+- **Hóa đơn công khai (kênh proof) hiện ĐÚNG mã CK thật đã in trên QR** — đọc lại từ
+  field "📝 Mã CK" của embed hàng đợi, không tự sinh mã mới không liên quan gì tới giao
+  dịch bank thật như trước. Có fallback sinh mã mới cho đơn hàng đợi gửi TRƯỚC bản cập
+  nhật này (chưa có field đó), tránh lỗi khi bấm Hoàn thành trên đơn cũ còn tồn đọng.
+
+**Việc CẦN làm bên phía Railway/SePay (không code được):** thêm env var
+`SEPAY_WEBHOOK_API_KEY` (tự đặt), tạo Webhook trên dashboard SePay trỏ về
+`{VERIFY_BASE_URL}/webhook/sepay` với đúng API Key đó.
+
+**Chưa đụng tới / để dành quyết định sau:**
+- Đối chiếu số TK (`accountNumber` từ SePay) hiện so sánh string trực tiếp với số đã
+  lưu qua `.shopbank` — CHƯA test thực tế SePay có normalize khác đi không (bớt số 0
+  đầu, thêm khoảng trắng...). Nếu về sau thấy log cảnh báo "LỆCH số TK" dù đúng TK thật,
+  cần nới lỏng cách so khớp ở đây.
+- `.automod addrole/delrole` (mod.py) vẫn còn bug ping-nhầm-role y hệt `.addrole` cũ
+  (đã nêu ở v4.36.0) — chưa sửa.
+
+---
+
 ## [v4.36.0] — 2026-08-21
 
 ### 🐛 Sửa lỗi

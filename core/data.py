@@ -268,6 +268,10 @@ def _default_data_global() -> dict:
         "_pending_sold_price":  {},  # {channel_id: {seller_id, channel_name, old_name, guild_id, time, tuytam_message_id, ruby_message_id, escalated}}
         "_resolved_sold_price": {},  # {channel_id: {amount, resolved_by, old_name, time}} — đơn đã được admin xử lý
         "_pending_sold_buyer":  {},  # {channel_id: {seller_id, amount, channel_name, old_name, guild_id, time, tuytam_message_id, resolved}}
+        # ── Shop Orders — webhook thanh toán (SePay...) không có guild context sẵn khi gọi
+        # vào, giống lý do _pending_sold_price ở trên phải để global. entry tự chứa guild_id.
+        "_shop_pending_orders":        {},  # {ref_code: {guild_id, channel_id, seller_id, buyer_id, amount, account_number, created_at}}
+        "_shop_processed_webhook_ids": {},  # {webhook_id (str): xử lý lúc nào} — chống xử lý trùng khi SePay retry
     }
 
 # ══════════════════════════════════════════
@@ -1479,7 +1483,10 @@ async def atomic_register_ip(ip: str, user_id: int) -> list[int]:
 
 # ══════════════════════════════════════════
 # SHOP QR (tính năng thử nghiệm — bật/tắt qua .st)
-# Chỉ lưu cấu hình ngân hàng để tạo QR VietQR động kèm .done <số tiền>.
+# ĐỔI KIẾN TRÚC: trước đây 1 bank DUY NHẤT dùng chung cho cả guild (shop_orders_cfg).
+# Giờ MỖI SELLER tự `.shopbank` đăng ký bank CỦA RIÊNG họ (shop_orders_banks, key =
+# user_id) — `.done` do seller nào gõ thì QR dùng đúng bank seller đó, tiền vào thẳng
+# tài khoản người xử lý đơn, không qua 1 TK chung nữa.
 # ══════════════════════════════════════════
 def get_cfg_shop_orders_enabled() -> bool:
     return load_data().get("cfg_shop_orders_enabled", False)
@@ -1487,16 +1494,97 @@ def get_cfg_shop_orders_enabled() -> bool:
 def set_cfg_shop_orders_enabled(enabled: bool) -> None:
     save_cfg("cfg_shop_orders_enabled", enabled)
 
-def get_shop_orders_config() -> dict:
-    """Trả về {bank_name, bank_code, account_number, account_holder, template, default_content}."""
-    return load_data().get("shop_orders_cfg", {})
+def get_shop_orders_bank(user_id: int) -> dict | None:
+    """Bank riêng của 1 seller. None nếu seller đó chưa từng `.shopbank`."""
+    return load_data().get("shop_orders_banks", {}).get(str(user_id))
 
-def save_shop_orders_config(**fields) -> None:
+def save_shop_orders_bank(user_id: int, **fields) -> None:
+    """Upsert — gõ lại `.shopbank` là cập nhật đúng bank của CHÍNH seller đó, không tạo trùng."""
     data = load_data()
-    cfg = data.setdefault("shop_orders_cfg", {})
-    cfg.update(fields)
-    data["shop_orders_cfg"] = cfg
+    banks = data.setdefault("shop_orders_banks", {})
+    doc = dict(banks.get(str(user_id), {}))
+    doc.update(fields)
+    banks[str(user_id)] = doc
+    data["shop_orders_banks"] = banks
     save_data(data)
+
+def get_all_shop_orders_banks() -> dict:
+    """Toàn bộ bank đã đăng ký trong guild — dùng cho `.listbank`."""
+    return load_data().get("shop_orders_banks", {})
+
+def has_ticket_access(member: discord.Member) -> bool:
+    """"seller" theo yêu cầu gốc: có role nằm trong danh sách role của BẤT KỲ loại
+    ticket nào (ticket_multi_roles) → coi là seller. CHỈ dùng để mở khoá
+    `.shopbank`/`.listbank` — KHÔNG cấp thêm quyền xem ticket loại nào cả, quyền xem
+    ticket vẫn do đúng cấu hình role riêng từng loại (get_ticket_role_ids) quyết định,
+    không đổi gì ở đó."""
+    if member.id in ADMIN_IDS:
+        return True
+    member_role_ids = {r.id for r in member.roles}
+    for role_ids in get_all_ticket_multi_roles().values():
+        if member_role_ids.intersection(role_ids):
+            return True
+    return False
+
+
+# ══════════════════════════════════════════
+# SHOP PENDING ORDERS — GLOBAL, không tách theo guild (xem _default_data_global()).
+# Webhook thanh toán (SePay...) gọi vào KHÔNG có guild context sẵn — phải tra global
+# theo ref_code trước, lấy guild_id trong record rồi mới set_current_guild() đúng
+# guild của đơn đó để làm tiếp (đọc cfg, gửi tin...) — cùng lý do/pattern với
+# _pending_sold_price phía trên.
+# ══════════════════════════════════════════
+def save_pending_shop_order(ref_code: str, **fields) -> None:
+    data = load_global_data()
+    orders = data.setdefault("_shop_pending_orders", {})
+    orders[ref_code] = {**fields, "ref_code": ref_code}
+    data["_shop_pending_orders"] = orders
+    save_global_data(data)
+
+def get_pending_shop_order(ref_code: str) -> dict | None:
+    return load_global_data().get("_shop_pending_orders", {}).get(ref_code)
+
+def pop_pending_shop_order(ref_code: str) -> dict | None:
+    """Lấy ra + xoá luôn — gọi khi đã khớp thanh toán xong, tránh khớp lại lần 2."""
+    data = load_global_data()
+    orders = data.get("_shop_pending_orders", {})
+    doc = orders.pop(ref_code, None)
+    if doc is not None:
+        data["_shop_pending_orders"] = orders
+        save_global_data(data)
+    return doc
+
+def find_pending_shop_order_by_content(content: str) -> dict | None:
+    """SePay trả `content` thô — có thể kèm text khác quanh mã (ngân hàng tự thêm/bớt
+    khoảng trắng, có khi in hoa hết). Tìm ref_code nào xuất hiện dạng substring trong
+    content, không phân biệt hoa/thường, thay vì đòi khớp tuyệt đối."""
+    content_upper = (content or "").upper()
+    if not content_upper:
+        return None
+    for ref_code, doc in load_global_data().get("_shop_pending_orders", {}).items():
+        if ref_code.upper() in content_upper:
+            return doc
+    return None
+
+def is_webhook_id_processed(webhook_id) -> bool:
+    """SePay có thể bắn trùng 1 giao dịch nhiều lần (retry) — chống xử lý 2 lần."""
+    return str(webhook_id) in load_global_data().get("_shop_processed_webhook_ids", {})
+
+def mark_webhook_id_processed(webhook_id) -> None:
+    data = load_global_data()
+    ids = data.setdefault("_shop_processed_webhook_ids", {})
+    ids[str(webhook_id)] = datetime.now(timezone.utc).isoformat()
+    # Dọn bớt id cũ hơn 7 ngày — SePay chỉ retry tối đa 5 tiếng (xem docs), giữ 7 ngày
+    # là dư an toàn mà không để dict phình vô hạn theo thời gian.
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    for wid, ts in list(ids.items()):
+        try:
+            if datetime.fromisoformat(ts) < cutoff:
+                ids.pop(wid, None)
+        except Exception:
+            pass
+    data["_shop_processed_webhook_ids"] = ids
+    save_global_data(data)
 
 def get_cfg_queue_channel() -> int:
     return load_data().get("cfg_queue_channel", 0)

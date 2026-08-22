@@ -1702,10 +1702,20 @@ class TicketCog(commands.Cog):
         await ctx.reply(embed=embed)
 
         from cogs.shop_orders import build_payment_qr_embed, send_to_queue
-        qr_embed = build_payment_qr_embed(amount)
+        qr_embed, qr_ref_code, qr_note = build_payment_qr_embed(
+            ctx.author, buyer, amount, ctx.guild.id, ctx.channel.id
+        )
         if qr_embed:
             await ctx.send(embed=qr_embed)
-        await send_to_queue(self.bot, buyer, ctx.channel, amount)
+            # FIX: KHÔNG gửi "Đơn hàng đang xử lý" vào hàng đợi NGAY ở đây nữa — giờ
+            # chỉ gửi SAU KHI webhook SePay xác nhận đã thanh toán thật (xem
+            # cogs/shop_orders.py: ShopOrdersCog._handle_sepay_webhook → send_to_queue).
+        elif qr_note:
+            # Seller chưa `.shopbank` → không có QR nên không có webhook nào tự xác
+            # nhận được cho đơn này — giữ hành vi CŨ (gửi hàng đợi ngay), staff tự bấm
+            # "Hoàn thành" tay như trước khi có QR, tránh đơn "biến mất" khỏi hàng đợi.
+            await ctx.send(qr_note)
+            await send_to_queue(self.bot, ctx.author, buyer, ctx.channel, amount, "")
 
         log_fields = [
             ("👤 Buyer",        _uname_plain(buyer),  True),
@@ -1964,10 +1974,14 @@ class TicketCog(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
         from cogs.shop_orders import build_payment_qr_embed, send_to_queue
-        qr_embed = build_payment_qr_embed(parsed)
+        qr_embed, qr_ref_code, qr_note = build_payment_qr_embed(
+            interaction.user, buyer, parsed, interaction.guild.id, interaction.channel.id
+        )
         if qr_embed:
             await interaction.followup.send(embed=qr_embed)
-        await send_to_queue(self.bot, buyer, interaction.channel, parsed)
+        elif qr_note:
+            await interaction.followup.send(qr_note)
+            await send_to_queue(self.bot, interaction.user, buyer, interaction.channel, parsed, "")
         await send_log(
             self.bot, "TICKET_DONE", f"Hoàn Thành Đơn — {interaction.channel.name}",
             fields=[
