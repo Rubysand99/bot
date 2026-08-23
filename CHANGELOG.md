@@ -1,5 +1,16 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.40.0] — 2026-08-23
+
+### ✨ Tính năng mới
+- `cogs/admin.py` — Lệnh `.ad <id>` (alias `.addadmin`/`.themadmin`): thêm 1 admin bot
+  mới, toàn quyền ở mọi server, có hiệu lực ngay không cần restart. Chỉ Ruby dùng được.
+- `core/data.py` — Lưu admin thêm qua `.ad` vào Mongo global (`_id: "main"`, field
+  `_extra_admins`), mutate trực tiếp vào `ADMIN_IDS` (in-place) để mọi cog nhận quyền
+  ngay lập tức; nạp lại từ Mongo lúc khởi động (`init_data_cache`).
+
+---
+
 ## [v4.39.0] — 2026-08-22
 
 ### 🐛 Sửa lỗi — `.done`/`/done` (cogs/ticket.py, cả bản gõ tay lẫn slash)

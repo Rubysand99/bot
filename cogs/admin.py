@@ -21,6 +21,7 @@ from core.data import (
     get_cfg_font, _uname_plain, is_staff_member,
     load_data, get_price_sections,
     is_guild_authorized, set_guild_authorized,
+    add_extra_admin,
     ensure_guild_loaded,
     get_cfg_done_role,
     can_use_dangerous_cmd, parse_amount, fmt_amount,
@@ -101,6 +102,39 @@ class AdminCog(commands.Cog):
                 ),
                 color=0x57F287,
             )
+        await ctx.reply(embed=embed, mention_author=False)
+
+    # ── .ad — Thêm admin bot mới (toàn quyền, mọi server). CHỈ Ruby được dùng ──
+    @commands.command(name="ad", aliases=["addadmin", "themadmin"])
+    async def add_admin_cmd(self, ctx, user_id: str = None):
+        if ctx.author.id != ADMIN_RUBY_ID:
+            return await ctx.reply("❌ Chỉ Ruby được dùng lệnh này.", mention_author=False)
+
+        if not user_id or not user_id.strip("<@!>").isdigit():
+            return await ctx.reply("❌ Dùng: `.ad <id>`", mention_author=False)
+        uid = int(user_id.strip("<@!>"))
+
+        try:
+            user = await self.bot.fetch_user(uid)
+        except discord.NotFound:
+            return await ctx.reply(f"❌ Không tìm thấy user Discord với ID `{uid}`.", mention_author=False)
+        except discord.HTTPException as e:
+            return await ctx.reply(f"❌ Lỗi khi tra ID `{uid}`: {e}", mention_author=False)
+
+        added = await add_extra_admin(uid)
+        if not added:
+            return await ctx.reply(f"ℹ️ {user.mention} (`{uid}`) đã là admin từ trước rồi.", mention_author=False)
+
+        embed = discord.Embed(
+            title="✅ Đã thêm Admin mới",
+            description=(
+                f"**User:** {user.mention} ({user})\n**ID:** `{uid}`\n\n"
+                f"Có toàn quyền admin ở **mọi** server bot đang hoạt động, có hiệu lực "
+                f"ngay lập tức — không cần restart bot."
+            ),
+            color=0x57F287,
+        )
+        embed.set_footer(text=f"Thêm bởi {ctx.author}")
         await ctx.reply(embed=embed, mention_author=False)
 
     # ── .settings ──
@@ -423,6 +457,10 @@ class AdminCog(commands.Cog):
                      "Server CHƯA ủy quyền → bot không chạy bất kỳ lệnh/tính năng nào ở đó. "
                      "Không truyền `guild_id` → áp dụng cho server đang gõ lệnh. Dùng được cả qua DM bot.\n"
                      "`.leaveguild <guild_id>` — Cho bot rời khỏi 1 server cụ thể", False),
+                    ("👑 Quản lý Admin bot (chỉ Ruby)",
+                     "`.ad <id>` (alias `.addadmin`/`.themadmin`) — Thêm 1 user làm admin bot, "
+                     "toàn quyền như Ruby/TuyTam ở **mọi** server. Có hiệu lực ngay, không cần "
+                     "restart bot. Chỉ Ruby dùng được lệnh này.", False),
                     ("🔷 Slash commands",
                      "`/invite` `/invitetop` `/resetinvite`", False),
                 ]

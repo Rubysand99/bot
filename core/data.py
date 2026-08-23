@@ -518,6 +518,44 @@ async def set_guild_authorized(guild_id: int, authorized: bool) -> bool:
     return changed
 
 
+# ══════════════════════════════════════════
+# BOT ADMIN — thêm qua lệnh .ad (cogs/admin.py), CHỈ Ruby dùng được
+# ══════════════════════════════════════════
+# Lưu ở global data ("_id": "main") — admin là khái niệm CHUNG cho cả bot, không thuộc
+# riêng guild nào, giống hệt lý do _authorized_guilds ở trên nằm ở đây.
+def get_extra_admins() -> list[int]:
+    """Admin được thêm qua `.ad` (KHÔNG tính ADMIN_RUBY_ID/ADMIN_TUYTAM_ID cố định từ env)."""
+    g = load_global_data()
+    return list(g.get("_extra_admins", []))
+
+async def add_extra_admin(user_id: int) -> bool:
+    """Thêm 1 admin mới. Trả về True nếu MỚI thêm — False nếu user_id đã là admin từ
+    trước (kể cả 2 admin cố định ADMIN_RUBY_ID/ADMIN_TUYTAM_ID, không riêng admin thêm
+    qua `.ad`).
+    - Admin là thao tác hiếm/nhạy cảm (cấp toàn quyền bot) — cùng lý do với
+      set_guild_authorized() ở trên: ghi Mongo NGAY (await trực tiếp, KHÔNG qua
+      loop.create_task() nền) trước khi lệnh `.ad` báo thành công, tránh mất dữ liệu nếu
+      bot reconnect ngay sau đó.
+    - ADMIN_IDS (định nghĩa đầu file) là 1 LIST OBJECT — mọi cog khác đều
+      `from core.data import ADMIN_IDS` (giữ tham chiếu tới ĐÚNG list này, không phải
+      bản copy). Ở đây CỐ Ý mutate in-place bằng `.append()`, KHÔNG gán lại
+      `ADMIN_IDS = [...]`, để admin mới có toàn quyền NGAY LẬP TỨC ở mọi cog đã import —
+      không cần restart bot. Lúc bot khởi động lại, init_data_cache() nạp lại danh sách
+      này từ Mongo (_extra_admins) vào ADMIN_IDS (xem bên dưới)."""
+    global _global_cache
+    if user_id in ADMIN_IDS:
+        return False
+    g = load_global_data()
+    lst = g.setdefault("_extra_admins", [])
+    if user_id in lst:
+        return False
+    lst.append(user_id)
+    _global_cache = g
+    await _mongo_save_global(_global_cache)
+    ADMIN_IDS.append(user_id)
+    return True
+
+
 async def ensure_guild_loaded(guild_id: int) -> None:
     """Gọi khi bot join guild mới giữa chừng (on_guild_join) để guild đó có cache ngay,
     không phải đợi restart bot."""
@@ -560,6 +598,13 @@ async def init_data_cache(bot) -> None:
         _data_cache[guild.id] = await _mongo_load(guild.id)
 
     _global_cache = await _mongo_load_global()
+    # Nạp admin đã thêm qua `.ad` ở phiên trước vào ADMIN_IDS (mutate in-place — xem
+    # add_extra_admin() ở trên). Chỉ chạy ở first_boot vì nhánh refire phía trên đã
+    # return sớm, không tới được dòng này — admin thêm lúc runtime không bị mất khi
+    # reconnect vì không đụng lại ADMIN_IDS ở nhánh đó.
+    for _aid in _global_cache.get("_extra_admins", []):
+        if _aid not in ADMIN_IDS:
+            ADMIN_IDS.append(_aid)
 
     _, col_gw = _get_mongo()
     try:
