@@ -1,5 +1,24 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.41.0] — 2026-08-23
+
+### 🐛 Sửa lỗi — `.done`/`/done`/`.undone` (cogs/ticket.py)
+- **`.done`/`/done`:** Bỏ chặn `if trade_type not in ("sell","buy"): return` (thêm ở
+  v4.39.0) — chặn này khiến `.done` báo "Ticket dịch vụ / hỗ trợ không tính vào đơn mua
+  hàng" ở TẤT CẢ ticket không phải sell/buy, kể cả các loại vốn PHẢI tính tiền: dịch vụ
+  chung (`service`), RubyShop (`service`/`rubyshop`), middleman (`service`/`middleman`),
+  và ticket "order khác" (`order`/`other` — đây thực chất vẫn là đơn mua, không phải dịch
+  vụ). Giờ `.done` hoàn thành đơn + cộng tổng chi tiêu + tặng role được ở **mọi loại
+  ticket**, không riêng sell/buy. Ngoài ticket (`.done @user 50k` ở kênh thường) không
+  đổi — vẫn hoạt động ở bất kỳ kênh nào trong quyền hạn của bot như trước.
+- **`.undone`:** Đồng bộ theo fix trên — bỏ chặn `trade_type` y hệt, và bỏ luôn điều kiện
+  `and not ctx.message.mentions` khi xác định `server_key` (bản cũ chỉ đọc server_key khi
+  KHÔNG mention, giống lỗi `.done` bị vá ở v4.39.0 nhưng chưa từng áp dụng cho `.undone`).
+  Giờ `.undone` populate server_key nhất quán với `.done`, tránh lệch tổng theo server khi
+  dùng `.undone @user 50k` có mention ngay trong ticket để sửa đơn nhầm.
+
+---
+
 ## [v4.40.0] — 2026-08-23
 
 ### ✨ Tính năng mới

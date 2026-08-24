@@ -1588,21 +1588,19 @@ class TicketCog(commands.Cog):
         if amount is None or amount <= 0:
             return await ctx.reply(f"❌ Số tiền `{amount_str}` không hợp lệ!")
 
-        # Xác định server_key / trade_type — ÁP DỤNG CHO MỌI TRƯỜNG HỢP trong ticket
-        # (kể cả khi có @mention buyer tường minh). FIX: trước đây chỉ check khi KHÔNG
-        # có mention (`is_ticket and not ctx.message.mentions`) — nghĩa là gõ
-        # `.done @buyer 50k` NGAY TRONG 1 ticket hỗ trợ/dịch vụ vẫn lọt qua được, bỏ qua
-        # hẳn việc kiểm tra "có phải ticket bán hàng không". Giờ chỉ cần đang ở TRONG
-        # ticket là bị chặn nếu không phải loại sell/buy, không quan tâm có mention hay
-        # không. Dùng `.done @user 50k` NGOÀI ticket (is_ticket=False) vẫn không đổi.
+        # Xác định server_key / trade_type để gắn nhãn + cộng dồn theo server (nếu có).
+        # FIX (theo yêu cầu): .done giờ dùng được ở TẤT CẢ loại ticket — dịch vụ, hỗ trợ,
+        # middleman, rubyshop, acc_pre, build, order khác... không riêng ticket sell/buy
+        # như trước (bản cũ chặn ở đây bằng `if trade_type not in ("sell","buy"): return`
+        # — xem CHANGELOG bản trước). Ngoài ticket (kênh thường, is_ticket=False) vẫn
+        # không đổi — chỉ cần mention buyer tường minh: `.done @user 50k`, hoạt động ở
+        # bất kỳ kênh nào bot có quyền gửi tin/đọc lịch sử.
         server_key = None
         trade_type = None
         if is_ticket:
             parts = ctx.channel.topic.split("|")
             trade_type = parts[2] if len(parts) > 2 else None
             server_key = parts[5] if len(parts) > 5 else None
-            if trade_type not in ("sell", "buy"):
-                return await ctx.reply("ℹ️ Ticket dịch vụ / hỗ trợ không tính vào đơn mua hàng.")
 
         data = load_data()
         if is_ticket and not ctx.message.mentions:
@@ -1791,14 +1789,16 @@ class TicketCog(commands.Cog):
         if amount is None or amount <= 0:
             return await ctx.reply(f"❌ Số tiền `{amount_str}` không hợp lệ!")
 
-        # server_key — chỉ xác định khi trong ticket và không mention, giống .done
+        # server_key — xác định khi đang trong ticket, không quan tâm có mention hay
+        # không, và không còn chặn theo trade_type — khớp với .done sau fix ở trên (xem
+        # CHANGELOG). .done giờ cộng tiền + gắn server_key được ở MỌI loại ticket dù có
+        # mention hay không, nên .undone cũng phải làm y hệt để trừ lại ĐÚNG server_key
+        # đó, tránh lệch tổng theo server khi sửa đơn nhầm.
         server_key = None
-        if is_ticket and not ctx.message.mentions:
+        if is_ticket:
             parts = ctx.channel.topic.split("|")
             trade_type = parts[2] if len(parts) > 2 else None
             server_key = parts[5] if len(parts) > 5 else None
-            if trade_type not in ("sell", "buy"):
-                return await ctx.reply("ℹ️ Ticket dịch vụ / hỗ trợ không tính vào đơn mua hàng — không có gì để trừ.")
 
         old_total = get_user_total_spent(buyer.id)
 
@@ -1914,16 +1914,15 @@ class TicketCog(commands.Cog):
             if not buyer:
                 return await interaction.response.send_message(f"❌ Không tìm thấy buyer (ID: `{user_id}`).", ephemeral=True)
 
-        # Xác định server_key / trade_type — ÁP DỤNG CHO MỌI TRƯỜNG HỢP trong ticket, kể
-        # cả khi chọn sẵn user param (cùng lý do/fix với .done gõ tay — xem comment ở đó).
+        # Xác định server_key / trade_type để gắn nhãn + cộng dồn theo server (nếu có).
+        # Không còn chặn theo trade_type — .done dùng được ở mọi loại ticket, cùng fix
+        # với .done gõ tay (xem comment chi tiết ở đó).
         server_key = None
         trade_type = None
         if is_ticket:
             parts = interaction.channel.topic.split("|")
             trade_type = parts[2] if len(parts) > 2 else None
             server_key = parts[5] if len(parts) > 5 else None
-            if trade_type not in ("sell", "buy"):
-                return await interaction.response.send_message("ℹ️ Ticket dịch vụ không tính đơn hàng.", ephemeral=True)
 
         data = load_data()
         if is_ticket and not user:
