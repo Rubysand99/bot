@@ -1,5 +1,13 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.42.0] — 2026-08-25
+
+### ✨ Tính năng mới
+- `core/site_feed.py` — Module mới: lắng nghe kênh thông báo + legit, đẩy tin nhắn mới vào MongoDB (collection `site_feed`) để website đọc real-time. Bỏ qua tin bot/system message/tin trống, tự dọn giữ tối đa 30 tin/kênh.
+- `bot.py` — Gọi `handle_site_feed()` trong `on_message`, ngay sau `_handle_legit`/`_handle_vouch`.
+
+---
+
 ## [v4.41.0] — 2026-08-23
 
 ### 🐛 Sửa lỗi — `.done`/`/done`/`.undone` (cogs/ticket.py)

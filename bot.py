@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.41.0"
-BOT_UPDATED = "2026-08-23"
+BOT_VERSION = "4.42.0"
+BOT_UPDATED = "2026-08-25"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
 TOKEN = os.getenv("TOKEN")
@@ -345,6 +345,10 @@ async def on_message(message: discord.Message):
     # Legit & Vouch
     await _handle_legit(message)
     await _handle_vouch(message)
+
+    # Site feed — đẩy tin nhắn kênh thông báo/legit lên website real-time (core/site_feed.py)
+    from core.site_feed import handle_site_feed
+    await handle_site_feed(message)
 
 
 # ══════════════════════════════════════════
