@@ -1,5 +1,63 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.46.0] — 2026-08-26
+
+### ✨ Tính năng mới
+- **`cogs/ai_chat.py` — Routing theo độ phức tạp (tin xã giao đi model rẻ, tin cần
+  tra cứu/suy luận đi model mạnh):** trước đó MỌI tin nhắn ở kênh AI public — kể cả
+  "hi" — đều thử `groq/compound` (model mạnh/đắt/chậm nhất) trước, gây phí tài
+  nguyên thật. Tách `AI_MODELS` (v4.45.0) thành `AI_MODELS_STRONG` (mạnh trước, y
+  hệt thứ tự cũ) và `AI_MODELS_FAST` (rẻ/nhanh trước — cùng 6 model, chỉ đảo ưu
+  tiên). Thêm `_looks_simple(text)` — heuristic THUẦN dựa trên độ dài + danh sách
+  từ chào hỏi + phát hiện code block/từ khoá cần tra cứu (ticket, đơn, tiền...),
+  **không gọi thêm AI nào để phân loại** nên không tốn thêm chi phí/độ trễ cho bất
+  kỳ tin nào. Cố tình thận trọng: chỉ xếp "đơn giản" khi khá chắc, mọi trường hợp
+  nghi ngờ vẫn mặc định `AI_MODELS_STRONG` như cũ. Chỉ áp dụng ở `handle_ai_message`
+  (kênh public — nơi có khối lượng tin nhiều nhất); lệnh `.ai` (admin) giữ nguyên
+  luôn dùng `AI_MODELS_STRONG` vì đã có `route_agent()` phân loại riêng và admin
+  hiếm khi chỉ chào hỏi suông.
+
+---
+
+## [v4.45.0] — 2026-08-26
+
+### ✨ Tính năng mới
+- **`cogs/ai_chat.py` — Đa provider: `GROQ_MODELS` → `AI_MODELS`, thêm Gemini:**
+  Groq tự nó hết model "mạnh" để thêm nữa (đã liệt kê hết ở v4.43.0/v4.44.0), nên
+  ra ngoài Groq mới có thêm lựa chọn thật theo yêu cầu Ruby ("muốn nhiều model AI").
+  Đổi `GROQ_MODELS` (list string, ngầm định gọi Groq) thành `AI_MODELS` (list dict,
+  mỗi entry tự mang `base_url` + `api_key` riêng) để hỗ trợ nhiều hãng cùng lúc.
+  Thêm `gemini-3.7-flash` (Google, qua endpoint OpenAI-compat chính thức —
+  ai.google.dev/gemini-api/docs/openai) ở vị trí #2. FREE, không suy đoán số
+  RPM/RPD cụ thể vì Google không công bố cố định 1 chỗ. Không dùng bản Pro (mạnh
+  hơn Flash) vì Pro hiện thu phí ngay từ token đầu, không có free tier.
+  **`GEMINI_API_KEY` hiện CHƯA được set trên Railway** (Ruby xác nhận chưa có key,
+  sẽ lấy nếu cần) — entry Gemini tự bị bỏ qua êm trong `_call_ai_tools()` cho tới
+  khi biến này có giá trị, không lỗi, không cần sửa code thêm — set biến trên
+  Railway là kích hoạt ngay. Đổi tên `_call_groq_tools()` → `_call_ai_tools()` +
+  cập nhật cả 3 chỗ gọi (`run_ai_tools_agent`, `_call_groq` legacy, `route_agent()`
+  trong `handle_ai_message`) và comment liên quan ở `core/ai_agents.py`.
+
+---
+
+## [v4.44.0] — 2026-08-26
+
+### ✨ Tính năng mới
+- **`cogs/ai_chat.py` — Đảo `GROQ_MODELS` sang thứ tự mạnh trước + thêm `groq/compound`:**
+  theo yêu cầu Ruby ("ưu tiên model mạnh mẽ ở trước"), đảo thứ tự từ rẻ/nhanh-trước
+  sang mạnh/đắt-trước: `groq/compound` (mới, bản đầy đủ không phải -mini) →
+  `qwen/qwen3.6-27b` → `openai/gpt-oss-120b` → `groq/compound-mini` →
+  `openai/gpt-oss-20b`. Thứ tự suy từ hạng mục Groq tự xếp (production/preview/
+  system) + giá $/token niêm yết — Groq không công bố bảng xếp hạng năng lực thống
+  nhất giữa các model này nên đây là suy luận có căn cứ (giá, hạng mục), không phải
+  benchmark độc lập đã kiểm chứng; xem comment đầy đủ ngay tại `GROQ_MODELS`.
+  **Đánh đổi cần lưu ý:** vì `_call_groq_tools()` luôn thử `GROQ_MODELS[0]` trước
+  cho MỌI tin nhắn (không riêng lúc lỗi), để compound lên đầu nghĩa là mọi tin AI
+  chat — kể cả câu chào đơn giản — đều tốn chi phí + độ trễ của model mạnh/đắt nhất
+  trước; `gpt-oss-20b` gần như không còn được gọi tới nữa.
+
+---
+
 ## [v4.43.0] — 2026-08-26
 
 ### ✨ Tính năng mới

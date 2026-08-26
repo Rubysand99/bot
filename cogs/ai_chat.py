@@ -37,6 +37,51 @@ v4.43.0 — Mở rộng GROQ_MODELS (thêm fallback, xem console.groq.com/docs/m
   ở run_ai_tools_agent() tự coi như "trả lời xong" (an toàn, không crash), chỉ là
   fallback cuối này có thể không gọi được tool tra cứu ticket/seller như 3 model
   trước. Theo dõi log [AI] nếu nghi ngờ model này trả lời sai lệch.
+
+v4.44.0 — Đảo thứ tự GROQ_MODELS mạnh trước (yêu cầu Ruby) + thêm groq/compound:
+- Đảo hẳn thứ tự: compound → qwen3.6-27b → gpt-oss-120b → compound-mini →
+  gpt-oss-20b (mạnh/đắt trước, thay vì rẻ/nhanh trước như bản gốc). Suy ra từ hạng
+  mục Groq tự xếp (production/preview/system) + giá $/token niêm yết — Groq KHÔNG
+  công bố bảng xếp hạng năng lực thống nhất giữa các model này nên đây là suy luận
+  từ 2 tín hiệu có thật, không phải benchmark độc lập đã kiểm chứng.
+- Thêm groq/compound (bản đầy đủ, không phải -mini) lên đầu danh sách.
+- ĐÁNH ĐỔI: _call_groq_tools() thử GROQ_MODELS[0] cho MỌI tin nhắn, không riêng lúc
+  lỗi — để compound lên đầu nghĩa là mọi tin AI chat đều tốn chi phí/độ trễ của
+  model mạnh nhất trước, gpt-oss-20b gần như không còn được gọi tới. Xem comment
+  ngay tại GROQ_MODELS để đổi lại nếu muốn tối ưu chi phí/tốc độ cho tin thường.
+
+v4.45.0 — Đa provider: GROQ_MODELS → AI_MODELS, thêm Gemini (yêu cầu Ruby "muốn
+nhiều model AI", xác nhận CHƯA có GEMINI_API_KEY, sẽ lấy nếu cần):
+- Groq tự nó không còn model "mạnh" nào để thêm nữa (đã liệt kê hết trong comment
+  v4.43.0/44.0) nên phải ra ngoài Groq mới có thêm lựa chọn thật. Đổi GROQ_MODELS
+  (list string, ngầm định luôn gọi Groq) thành AI_MODELS (list dict, mỗi entry tự
+  mang base_url + api_key riêng) để hỗ trợ nhiều hãng cùng lúc.
+- Thêm gemini-3.7-flash (Google, qua endpoint OpenAI-compat chính thức của Gemini —
+  xem ai.google.dev/gemini-api/docs/openai) ở vị trí #2. FREE, nhưng KHÔNG suy đoán
+  số RPM/RPD cụ thể vì Google không công bố cố định 1 chỗ — xem AI Studio dashboard
+  để biết số thật. KHÔNG dùng bản Pro (mạnh hơn Flash) vì Pro hiện thu phí ngay từ
+  token đầu, không có free tier — ưu tiên giữ free.
+- GEMINI_API_KEY hiện CHƯA được set trên Railway (Ruby xác nhận) — entry Gemini tự
+  bị bỏ qua êm trong _call_ai_tools() cho tới khi biến này có giá trị, KHÔNG lỗi,
+  KHÔNG cần sửa code thêm gì. Set biến trên Railway là kích hoạt ngay.
+- Đổi tên _call_groq_tools() → _call_ai_tools() (đúng bản chất đa provider hơn) —
+  cập nhật cả 3 chỗ gọi (run_ai_tools_agent, _call_groq legacy, route_agent() ở
+  handle_ai_message) + comment liên quan ở core/ai_agents.py.
+
+v4.46.0 — Routing theo độ phức tạp (Ruby: "hi" mà dùng model #1 thì phí thật):
+- AI_MODELS (v4.45.0) tách thành AI_MODELS_STRONG (mạnh trước, y hệt thứ tự cũ) +
+  AI_MODELS_FAST (rẻ/nhanh trước — cùng 6 model, đảo ngược ưu tiên).
+- Thêm _looks_simple(text) — heuristic THUẦN (độ dài, danh sách từ chào hỏi, có
+  code block/từ khoá cần tra cứu không) để quyết định dùng tier nào, KHÔNG gọi
+  thêm AI nào để phân loại nên không tốn thêm chi phí/độ trễ. Cố tình THẬN TRỌNG:
+  chỉ xếp "đơn giản" khi khá chắc — mọi trường hợp nghi ngờ mặc định vẫn STRONG.
+- Chỉ áp dụng ở handle_ai_message() (kênh public, khối lượng tin nhắn lớn nhất).
+  KHÔNG áp dụng cho lệnh `.ai` (admin) — đã có route_agent() phân loại agent
+  riêng, và admin hiếm khi chỉ chào hỏi suông nên giữ nguyên STRONG luôn.
+- Cân nhắc sau này (chưa làm — heuristic hiện đủ giải quyết ca "hi" cụ thể): nếu
+  heuristic phân loại sai nhiều trong thực tế, có thể thêm 1 bước AI nhẹ phân loại
+  cho ca lấp lửng (message không quá ngắn cũng không quá dài) giống route_agent(),
+  đánh đổi lấy thêm 1 lần gọi model rẻ trước khi vào vòng lặp thật.
 """
 
 import os
@@ -59,7 +104,15 @@ from core.ai_tools import (
 from core.ai_agents import AGENTS, route_agent
 from cogs.logger import send_log
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY   = os.getenv("GROQ_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # optional — chưa cấu hình thì entry
+                                                # Gemini bên dưới tự bị bỏ qua êm,
+                                                # không lỗi gì, code vẫn chạy y như
+                                                # trước khi thêm. Điền vào Railway env
+                                                # là kích hoạt ngay, khỏi sửa code.
+
+GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
 # ─────────────────────────────────────────────
 # FORUM HỎI-ĐÁP ADMIN — kích hoạt khi RAG KHÔNG tìm được câu trả lời liên quan
@@ -78,20 +131,103 @@ DEFAULT_NO_ANSWER_REPLY = (
     "được admin hỗ trợ trực tiếp nhé!"
 )
 
-# Model chính = gpt-oss-20b (nhanh, rẻ, đủ tốt cho tool calling + chat thường).
-# Fallback #2 = gpt-oss-120b (mạnh hơn khi model chính hết quota/lỗi).
-# Fallback #3 = qwen3.6-27b — model PREVIEW bên Groq (có thể bị gỡ bất kỳ lúc nào),
-# giá cao hơn hẳn 2 model trên, chỉ nên bị đụng khi cả 2 gpt-oss cùng lỗi.
-# Fallback #4 (cuối) = groq/compound-mini — "system" tự có web search/code execution
-# riêng, không phải model thuần — xem docstring đầu file để biết rủi ro với tools=.
-# Cả 4 đều gọi qua CHUNG 1 endpoint /chat/completions nên đi thẳng vào vòng lặp
-# _call_groq_tools() không cần sửa gì thêm — xem https://console.groq.com/docs/models
-GROQ_MODELS = [
-    "openai/gpt-oss-20b",
-    "openai/gpt-oss-120b",
-    "qwen/qwen3.6-27b",
-    "groq/compound-mini",
+# Thứ tự ưu tiên MẠNH TRƯỚC (yêu cầu của Ruby) — KHÔNG có bảng xếp hạng "mạnh yếu"
+# thống nhất giữa các model từ NHIỀU HÃNG khác nhau (Groq host sẵn / Google), nên thứ
+# tự dưới đây là suy luận có căn cứ thật (giá $/token, hạng production/preview/system
+# của Groq, và việc Google xếp bản Pro thành trả phí-only còn Flash mới free) — không
+# phải benchmark độc lập đã kiểm chứng giữa các hãng. Đổi thứ tự dễ dàng nếu không
+# đồng ý, chỉ cần sắp lại list.
+#
+# 1. groq/compound       — "system" có web search + code execution riêng, năng lực
+#                           thực tế cao nhất nhưng cũng chậm/đắt nhất (có thể tốn
+#                           thêm vòng gọi tool ẩn trước khi trả lời).
+# 2. gemini-3.7-flash     — model MỚI của Google (xem console.groq.com không có, đây
+#                           là hãng khác — Gemini). FREE (Google trợ giá tier Flash),
+#                           tool-calling chuẩn OpenAI-compat. Rate limit free tier
+#                           CHÍNH XÁC bao nhiêu RPM/RPD thì Google không công bố cố
+#                           định 1 chỗ (đổi theo thời điểm) — coi số liệu trong
+#                           AI Studio dashboard của Ruby là chuẩn, không suy đoán ở
+#                           đây. Lưu ý: bản Pro (mạnh hơn Flash) hiện KHÔNG free —
+#                           gemini-3.1-pro-preview thu phí ngay từ token đầu, nên
+#                           không đưa vào đây dù "mạnh hơn" — vẫn ưu tiên option free.
+# 3. qwen/qwen3.6-27b     — giá $0.60/$3.00 mỗi 1M token, CAO NHẤT trong các model
+#                           thuần bên Groq (kể cả hơn gpt-oss-120b dù ít tham số hơn).
+#                           PREVIEW, Groq có thể gỡ bất kỳ lúc nào.
+# 4. openai/gpt-oss-120b  — 120B tham số, production, $0.15/$0.60.
+# 5. groq/compound-mini   — bản "system" nhỏ/nhanh hơn compound, vẫn có tool riêng.
+# 6. openai/gpt-oss-20b   — 20B tham số, production, $0.075/$0.30 — nhanh/rẻ nhất,
+#                           gần như KHÔNG bao giờ được gọi tới nữa với thứ tự này.
+#
+# ⚠️ ĐÁNH ĐỔI cũ (đã xử lý bằng AI_MODELS_FAST bên dưới, v4.46.0): vòng lặp
+# _call_ai_tools() luôn thử models[0] TRƯỚC cho MỌI tin nhắn (không phải chỉ khi
+# lỗi mới rớt xuống model sau) — nghĩa là nếu dùng list này (STRONG) cho MỌI tin,
+# kể cả câu chào đơn giản cũng tốn chi phí + độ trễ của model mạnh/đắt nhất trước.
+# handle_ai_message() giờ tự chọn AI_MODELS_FAST cho tin bị _looks_simple() nhận
+# diện là xã giao, chỉ dùng AI_MODELS_STRONG (list này) cho tin có khả năng cần
+# suy luận/tra cứu thật. Lệnh `.ai` (admin) vẫn LUÔN dùng STRONG — admin hiếm khi
+# chỉ chào hỏi suông.
+#
+# Mỗi entry tự mang theo base_url + api_key riêng — entry nào api_key rỗng (chưa
+# set biến môi trường tương ứng) sẽ tự bị BỎ QUA ÊM trong _call_ai_tools(), không
+# lỗi, không cần xoá dòng khỏi list. GEMINI_API_KEY hiện CHƯA có trên Railway của
+# Ruby (lúc thêm dòng này) — set biến đó vào là entry Gemini kích hoạt ngay.
+#
+# 2 TIER (v4.46.0 — routing theo độ phức tạp, xem _looks_simple() + comment tại
+# handle_ai_message): AI_MODELS_STRONG dùng cho tin cần suy luận/tra cứu thật,
+# AI_MODELS_FAST dùng cho tin xã giao ngắn (chào hỏi, cảm ơn...) để đỡ tốn model
+# đắt/chậm nhất cho câu "hi" — cùng 6 model, chỉ đảo thứ tự ưu tiên khác nhau.
+AI_MODELS_STRONG = [
+    {"model": "groq/compound",       "base_url": GROQ_URL,   "api_key": GROQ_API_KEY},
+    {"model": "gemini-3.7-flash",    "base_url": GEMINI_URL, "api_key": GEMINI_API_KEY},
+    {"model": "qwen/qwen3.6-27b",    "base_url": GROQ_URL,   "api_key": GROQ_API_KEY},
+    {"model": "openai/gpt-oss-120b", "base_url": GROQ_URL,   "api_key": GROQ_API_KEY},
+    {"model": "groq/compound-mini",  "base_url": GROQ_URL,   "api_key": GROQ_API_KEY},
+    {"model": "openai/gpt-oss-20b",  "base_url": GROQ_URL,   "api_key": GROQ_API_KEY},
 ]
+
+AI_MODELS_FAST = [
+    {"model": "openai/gpt-oss-20b",  "base_url": GROQ_URL,   "api_key": GROQ_API_KEY},
+    {"model": "gemini-3.7-flash",    "base_url": GEMINI_URL, "api_key": GEMINI_API_KEY},
+    {"model": "openai/gpt-oss-120b", "base_url": GROQ_URL,   "api_key": GROQ_API_KEY},
+    {"model": "groq/compound-mini",  "base_url": GROQ_URL,   "api_key": GROQ_API_KEY},
+    {"model": "qwen/qwen3.6-27b",    "base_url": GROQ_URL,   "api_key": GROQ_API_KEY},
+    {"model": "groq/compound",       "base_url": GROQ_URL,   "api_key": GROQ_API_KEY},
+]
+
+# Ngưỡng phân loại "tin đơn giản" — càng THẬN TRỌNG càng tốt: chỉ xếp "đơn giản"
+# khi khá chắc chắn, mọi trường hợp còn nghi ngờ mặc định vẫn đi AI_MODELS_STRONG
+# như cũ (thà tốn thêm chút cho 1 tin lỡ đơn giản mà bị coi là phức tạp, còn hơn
+# trả lời hời hợt 1 câu THẬT SỰ cần tra cứu/suy luận bằng model yếu). Đây là
+# heuristic THUẦN — không gọi thêm AI nào để phân loại, nên KHÔNG tốn thêm chi
+# phí/độ trễ cho bất kỳ tin nhắn nào (kể cả tin bị heuristic phân loại sai).
+SIMPLE_MAX_CHARS = 25
+SIMPLE_GREETING_WORDS = {
+    "hi", "hello", "hey", "chào", "chao", "alo", "ê", "e oi", "êoi", "test",
+    "oke", "ok", "oki", "cảm ơn", "cam on", "thanks", "thank you", "tks",
+    "vâng", "vang", "được", "duoc", "ừ", "u", "ừm", "um", "haha", "hihi", "hmm",
+}
+# Có mấy từ này trong tin thì KHÔNG được coi là "đơn giản" dù ngắn — nhiều khả
+# năng cần tool tra cứu thật (đơn hàng/tiền bạc), trả lời hời hợt ảnh hưởng khách.
+LOOKUP_KEYWORDS = {
+    "ticket", "đơn", "don ", "seller", "gói", "goi ", "invite", "lịch sử", "lich su",
+    "mua", "hoàn tiền", "hoan tien", "sao rồi", "sao roi", "tiền", "tien",
+    "thanh toán", "thanh toan", "lỗi", "loi ", "báo lỗi", "bao loi", "?",
+}
+
+def _looks_simple(text: str) -> bool:
+    """True nếu tin nhắn nhiều khả năng CHỈ là xã giao/không cần tra cứu — dùng để
+    chọn AI_MODELS_FAST thay AI_MODELS_STRONG ở handle_ai_message (kênh public).
+    KHÔNG áp dụng cho `.ai` admin — lệnh admin hiếm khi là chào hỏi, cứ giữ mạnh."""
+    cleaned = text.strip().lower()
+    if not cleaned:
+        return True
+    if "```" in text:
+        return False  # có code block — chắc chắn không đơn giản
+    if any(kw in cleaned for kw in LOOKUP_KEYWORDS):
+        return False  # có thể cần tra cứu thật — ưu tiên model mạnh
+    if cleaned in SIMPLE_GREETING_WORDS:
+        return True
+    return len(cleaned) <= SIMPLE_MAX_CHARS
 
 # System prompt của từng agent giờ nằm trong core/ai_agents.py (AGENTS registry) —
 # xem ý #8 Multi-agent. GROQ_SYSTEM ở đây chỉ còn dùng cho hàm _call_groq() legacy.
@@ -153,27 +289,33 @@ class AIConfirmView(discord.ui.View):
 
 
 # ─────────────────────────────────────────────
-# GROQ TOOL CALLING — low-level API call + agent loop
+# AI TOOL CALLING — low-level API call (đa provider) + agent loop
 # ─────────────────────────────────────────────
-async def _call_groq_tools(messages: list, tools: list | None = None) -> dict:
-    """Gọi Groq chat completions, trả về message dict của assistant
-    (có thể chứa "tool_calls" nếu model quyết định gọi tool)."""
-    if not GROQ_API_KEY:
-        return {"role": "assistant", "content": "❌ Chưa cài `GROQ_API_KEY` trong biến môi trường."}
-
+async def _call_ai_tools(messages: list, tools: list | None = None, models: list | None = None) -> dict:
+    """Gọi lần lượt các entry trong `models` (mặc định AI_MODELS_STRONG nếu không
+    truyền — mỗi entry tự mang base_url + api_key riêng, xem comment tại
+    AI_MODELS_STRONG/AI_MODELS_FAST), trả về message dict của assistant (có thể
+    chứa "tool_calls" nếu model quyết định gọi tool). Entry nào chưa cấu hình
+    api_key thì tự bỏ qua êm, không tính là lỗi."""
+    models = models if models is not None else AI_MODELS_STRONG
     import aiohttp
     body_base = {"messages": messages, "max_tokens": 1024, "temperature": 0.4}
     if tools:
         body_base["tools"] = tools
         body_base["tool_choice"] = "auto"
 
+    tried_any = False
     last_err = "Unknown error"
-    for model in GROQ_MODELS:
+    for entry in models:
+        model, base_url, api_key = entry["model"], entry["base_url"], entry["api_key"]
+        if not api_key:
+            continue  # provider chưa có key trong env — bỏ qua êm, thử entry kế
+        tried_any = True
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                    base_url,
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                     json={"model": model, **body_base},
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
@@ -191,24 +333,32 @@ async def _call_groq_tools(messages: list, tools: list | None = None) -> dict:
             last_err = str(e)
             continue
 
+    if not tried_any:
+        return {
+            "role": "assistant",
+            "content": "❌ Chưa cấu hình API key cho bất kỳ AI provider nào "
+                       "(GROQ_API_KEY / GEMINI_API_KEY) trong biến môi trường.",
+        }
     return {"role": "assistant", "content": f"⚠️ AI tạm thời không khả dụng ({last_err}). Vui lòng thử lại sau ít phút."}
 
 
 async def run_ai_tools_agent(ctx, system_prompt: str, tools: list, user_content: str,
-                               history: list | None = None):
+                               history: list | None = None, models: list | None = None):
     """Vòng lặp tool-calling chính, dùng chung cho MỌI agent (v4.15.0, ý #8
     Multi-agent — xem core/ai_agents.py). Trả về tuple (final_text, pending_confirm):
     - pending_confirm là None nếu AI đã trả lời xong (final_text = câu trả lời).
     - pending_confirm là {"name": tool_name, "params": {...}} nếu gặp tool nguy hiểm
       cần admin xác nhận trước — final_text khi đó là None.
     `ctx` cần có .guild/.author/.channel/.message (dùng message thật hoặc commands.Context).
+    `models` (v4.46.0) — truyền AI_MODELS_FAST/AI_MODELS_STRONG để chọn tier; không
+    truyền thì _call_ai_tools() tự dùng AI_MODELS_STRONG mặc định.
     """
     messages = [{"role": "system", "content": system_prompt}]
     messages += (history or [])
     messages.append({"role": "user", "content": user_content})
 
     for _ in range(MAX_TOOL_ROUNDS):
-        msg = await _call_groq_tools(messages, tools)
+        msg = await _call_ai_tools(messages, tools, models)
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
             return (msg.get("content") or "").strip(), None
@@ -246,15 +396,14 @@ async def run_ai_tools_agent(ctx, system_prompt: str, tools: list, user_content:
 async def _call_groq(user_id: int, user_message: str, extra_context: str | None = None) -> str:
     """Chat thường (không tool) — giữ lại cho tương thích, hiện KHÔNG còn dùng trực
     tiếp trong handle_ai_message (đã chuyển sang run_ai_tools_agent), nhưng vẫn hữu
-    ích nếu cần gọi Groq thuần text ở nơi khác."""
-    if not GROQ_API_KEY:
-        return "❌ Chưa cài `GROQ_API_KEY` trong biến môi trường."
-
+    ích nếu cần gọi AI thuần text ở nơi khác. Tên hàm giữ "groq" vì lý do lịch sử —
+    thật ra giờ đi qua _call_ai_tools() nên chạy được cả các provider khác trong
+    AI_MODELS_STRONG (mặc định khi không truyền models), không riêng Groq."""
     system_content = GROQ_SYSTEM
     if extra_context:
         system_content += "\n\nThông tin đã xác nhận trước đó (ưu tiên dùng):\n" + extra_context
     messages = [{"role": "system", "content": system_content}, {"role": "user", "content": user_message}]
-    msg = await _call_groq_tools(messages, tools=None)
+    msg = await _call_ai_tools(messages, tools=None)
     return (msg.get("content") or "").strip()
 
 
@@ -285,8 +434,14 @@ async def handle_ai_message(message: discord.Message):
 
     async with message.channel.typing():
         support = AGENTS["support"]
+        # v4.46.0 — tin xã giao ngắn (chào hỏi, "ok", "cảm ơn"...) đi AI_MODELS_FAST
+        # thay vì để mọi tin nhắn (kể cả "hi") tốn model mạnh/đắt nhất (compound)
+        # đầu tiên. Phân loại bằng message.content GỐC (chưa gắn rag_context) để
+        # không bị lệch bởi đoạn context tự thêm vào.
+        models = AI_MODELS_FAST if _looks_simple(message.content) else AI_MODELS_STRONG
         reply, pending = await run_ai_tools_agent(
-            message, support["system"], support["tools"], user_content, history=history
+            message, support["system"], support["tools"], user_content,
+            history=history, models=models,
         )
 
     # Query tools không nằm trong DANGEROUS_TOOLS nên pending sẽ luôn None ở nhánh
@@ -535,7 +690,7 @@ class AICog(commands.Cog):
         async with ctx.typing():
             # Router (#8 Multi-agent) — phân loại yêu cầu vào đúng agent trước khi
             # chạy tool-calling, tránh nhồi hết 15+ admin tool vào 1 lần gọi.
-            agent_name = await route_agent(_call_groq_tools, prompt)
+            agent_name = await route_agent(_call_ai_tools, prompt)
             agent = AGENTS.get(agent_name, AGENTS["ops"])
             if not agent["tools"]:
                 return await ctx.reply(
