@@ -1,5 +1,17 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.42.1] — 2026-08-26
+
+### 🐛 Sửa lỗi (audit toàn bộ codebase)
+- **`cogs/shop_orders.py` — SePay webhook không so `transferAmount`:** `_handle_sepay_webhook()` trước đây khớp `code`/`content` + `accountNumber` xong là auto-confirm thẳng `order["amount"]` GỐC, không hề đối chiếu số tiền THẬT SePay báo đã nhận (`transferAmount`). Chuyển đúng mã nhưng thiếu/sai số tiền vẫn được đánh dấu "đã thanh toán đủ". Giờ bắt buộc `transferAmount >= order["amount"]` mới auto-confirm; thiếu thì KHÔNG pop đơn, giữ trong hàng đợi cho admin xử lý tay. Thừa tiền vẫn confirm bình thường + log lại để admin đối chiếu.
+- **`core/data.py` — `subtract_user_spent_server()` làm lệch tổng chung/tổng theo server:** Bản cũ floor-0 riêng từng field bằng cùng `amount` gốc — khi `amount` vượt quá tổng theo server (bình thường, vì đó là tập con của tổng chung) thì 2 field mất số khác nhau, lệch nhau vĩnh viễn không tự khớp lại. Giờ tính `actual = min(amount, cur_srv)` 1 lần, áp dùng chung cho cả 2 field. **Lưu ý:** data cũ trước bản vá có thể đã lệch sẵn, không tự sửa ngược.
+- **`cogs/ticket.py` — `.done`/`.undone` dạng có mention không chống trùng lặp:** Dạng gõ trong ticket không mention chặn trùng theo `channel_id` từ trước, nhưng dạng có mention (`.done @user 50k`) chặn theo `message.id` — mỗi lần gõ là message mới nên không bao giờ bị coi là trùng. Thêm guard (channel, buyer, amount) trong 15s cho cả `.done`/`.undone` (2 dict riêng, không share state để tránh chặn oan chuỗi done→undone sửa nhầm).
+- **`cogs/ticket.py` — `is_ticket` nhận diện qua `"|" in topic` quá mong manh:** Admin đổi topic kênh thường dính dấu `|` cũng bị nhận nhầm là ticket. Thêm `_is_bot_ticket_topic()` — check `parts[0]` phải là số (đúng định dạng bot tự gắn) thay vì chỉ dò dấu `|`.
+- **`core/site_feed.py` + `bot.py` — tin xoá/sửa không đồng bộ lên web:** Chưa có `on_message_edit`/`on_raw_message_delete` nào đụng tới collection `site_feed` — admin xoá tin ở kênh thông báo/legit vẫn hiện nguyên trên web tới khi tự rớt khỏi giới hạn 30 tin/kênh. Thêm `handle_site_feed_delete()`/`handle_site_feed_edit()` + 2 listener mới ở `bot.py` (dùng RAW delete event để bắt cả tin ngoài cache).
+- **`bot.py` — task nền không giữ reference:** `asyncio.create_task(_run_verify())`/`_backfill_legit()` không lưu biến nào — asyncio chỉ giữ weak ref, task có thể bị GC giữa chừng không log gì. Thêm `spawn_background()` giữ reference tới khi task xong, thay `create_task()` trực tiếp ở cả 2 chỗ.
+
+---
+
 ## [v4.42.0] — 2026-08-25
 
 ### ✨ Tính năng mới

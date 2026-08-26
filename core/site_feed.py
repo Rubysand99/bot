@@ -68,3 +68,38 @@ async def handle_site_feed(message: discord.Message):
             await col.delete_many({"_id": {"$in": old_ids}})
     except Exception as e:
         log.error(f"[SITE_FEED] ❌ Lỗi khi lưu tin nhắn {message.id} (kênh {label}): {e}")
+
+
+async def handle_site_feed_delete(payload: "discord.RawMessageDeleteEvent"):
+    """Gọi từ on_raw_message_delete (bot.py). Dùng RAW event (không phải
+    on_message_delete thường) vì raw event bắt được CẢ tin nhắn không còn trong cache
+    nội bộ của discord.py (tin cũ, bot restart...) — on_message_delete thường chỉ bắn
+    khi tin còn trong cache. Không có bước này thì tin bị xoá trên Discord (nhầm, vi
+    phạm, nội dung nhạy cảm...) vẫn hiện nguyên trên web công khai tới khi tự rớt khỏi
+    giới hạn MAX_PER_CHANNEL."""
+    if payload.channel_id not in WATCHED_CHANNELS:
+        return
+    try:
+        col = get_db()["site_feed"]
+        await col.delete_one({"_id": payload.message_id})
+    except Exception as e:
+        log.error(f"[SITE_FEED] ❌ Lỗi xoá tin {payload.message_id}: {e}")
+
+
+async def handle_site_feed_edit(message: discord.Message):
+    """Gọi từ on_message_edit (bot.py). Cập nhật lại content/attachment nếu tin đã
+    sửa từng được lưu vào site_feed — update_one trên _id không tồn tại là no-op an
+    toàn (tin gốc chưa từng được lưu, ví dụ sửa embed link không đổi content)."""
+    if message.channel.id not in WATCHED_CHANNELS:
+        return
+    try:
+        col = get_db()["site_feed"]
+        await col.update_one(
+            {"_id": message.id},
+            {"$set": {
+                "content":        message.content[:500],
+                "attachment_url": message.attachments[0].url if message.attachments else None,
+            }},
+        )
+    except Exception as e:
+        log.error(f"[SITE_FEED] ❌ Lỗi cập nhật tin {message.id}: {e}")

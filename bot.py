@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.42.0"
-BOT_UPDATED = "2026-08-25"
+BOT_VERSION = "4.42.1"
+BOT_UPDATED = "2026-08-26"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
 TOKEN = os.getenv("TOKEN")
@@ -26,6 +26,19 @@ if not TOKEN:
     raise RuntimeError("❌ Thiếu biến môi trường TOKEN!")
 
 intents = discord.Intents.all()
+
+# asyncio chỉ giữ WEAK reference tới Task — task nền tạo bằng create_task() mà không
+# ai giữ reference nào khác có thể bị GC giữa chừng, im lặng không log gì (hiếm nhưng
+# có thật, xem docs asyncio.create_task). Dùng spawn_background() thay create_task()
+# trực tiếp cho MỌI task nền sống lâu (verify server, backfill...) — set module-level
+# này giữ reference tới khi task xong rồi tự bỏ qua done_callback.
+_background_tasks: set = set()
+
+def spawn_background(coro) -> asyncio.Task:
+    t = asyncio.create_task(coro)
+    _background_tasks.add(t)
+    t.add_done_callback(_background_tasks.discard)
+    return t
 
 
 # Lệnh dùng để ủy quyền server — LUÔN được phép chạy dù server chưa ủy quyền, để admin
@@ -240,7 +253,7 @@ async def on_ready():
         return  # Phần dưới (backfill legit + embed changelog) CHỈ chạy lúc khởi động thật
 
     # Quét lại legit channel — thả ✅ cho tin nhắn bị bỏ sót lúc bot offline
-    asyncio.create_task(_backfill_legit())
+    spawn_background(_backfill_legit())
 
     # Gửi changelog — đọc từ CHANGELOG.md
     from core.data import get_or_fetch_channel
@@ -349,6 +362,25 @@ async def on_message(message: discord.Message):
     # Site feed — đẩy tin nhắn kênh thông báo/legit lên website real-time (core/site_feed.py)
     from core.site_feed import handle_site_feed
     await handle_site_feed(message)
+
+
+@bot.event
+async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
+    """Đồng bộ xoá vào site_feed (core/site_feed.py) — dùng RAW event để bắt được cả
+    tin nhắn không còn trong cache của discord.py. Không liên quan AUTH_GATE/guild
+    context vì handle_site_feed_delete() tự lọc theo WATCHED_CHANNELS (2 kênh cố định
+    của TuyTam, không theo guild) — không đụng tới is_guild_authorized()."""
+    from core.site_feed import handle_site_feed_delete
+    await handle_site_feed_delete(payload)
+
+
+@bot.event
+async def on_message_edit(before: discord.Message, after: discord.Message):
+    """Đồng bộ sửa vào site_feed — cùng lý do trên."""
+    if after.author.bot:
+        return
+    from core.site_feed import handle_site_feed_edit
+    await handle_site_feed_edit(after)
 
 
 # ══════════════════════════════════════════
@@ -596,7 +628,7 @@ async def main():
 
     async with bot:
         await load_cogs()
-        asyncio.create_task(_run_verify())
+        spawn_background(_run_verify())
         await bot.start(TOKEN)
 
 if __name__ == "__main__":

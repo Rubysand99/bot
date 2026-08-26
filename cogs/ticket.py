@@ -38,8 +38,44 @@ from core.data import (
     set_current_guild,
 )
 from cogs.logger import send_log
+import time
 
 # BOT_VERSION được import từ bot.py khi cần — không hardcode lại ở đây
+
+# ── Chống trùng .done/.undone dạng có mention (v4.42.1) ──
+# Dạng gõ bên trong ticket không mention (".done 50k") đã chặn trùng theo channel_id
+# từ trước. Nhưng dạng có mention (".done @user 50k") chặn theo message.id — mỗi lần
+# gõ là 1 message mới nên KHÔNG BAO GIỜ bị coi là trùng, kể cả gõ y hệt 2 lần liên
+# tiếp do lỡ tay. Guard này chặn thêm: cùng (channel, buyer, amount) lặp lại trong
+# khoảng ngắn thì cảnh báo thay vì xử lý luôn.
+_recent_done_guard: dict[tuple, float] = {}
+_DONE_DUPLICATE_WINDOW = 15  # giây
+
+def _is_duplicate_done(channel_id: int, buyer_id: int, amount: int) -> bool:
+    key = (channel_id, buyer_id, amount)
+    now = time.monotonic()
+    last = _recent_done_guard.get(key)
+    _recent_done_guard[key] = now
+    return last is not None and (now - last) < _DONE_DUPLICATE_WINDOW
+
+# Guard RIÊNG cho .undone — không dùng chung dict với .done, nếu không 1 chuỗi
+# ".done @user 50k" rồi sửa nhầm bằng ".undone @user 50k" ngay sau sẽ bị chặn oan.
+_recent_undone_guard: dict[tuple, float] = {}
+
+def _is_duplicate_undone(channel_id: int, buyer_id: int, amount: int) -> bool:
+    key = (channel_id, buyer_id, amount)
+    now = time.monotonic()
+    last = _recent_undone_guard.get(key)
+    _recent_undone_guard[key] = now
+    return last is not None and (now - last) < _DONE_DUPLICATE_WINDOW
+
+def _is_bot_ticket_topic(topic: str | None) -> bool:
+    """Nhận diện topic ticket THẬT do bot tự gắn (định dạng '{user_id}||...'), thay vì
+    chỉ dò có dấu '|' trong topic — admin đổi topic kênh thường dính dấu '|' cũng sẽ bị
+    nhận nhầm là ticket nếu chỉ check '|' in topic."""
+    if not topic or "|" not in topic:
+        return False
+    return topic.split("|", 1)[0].strip().isdigit()
 
 # ── Server keys cho mua/bán ──
 SERVER_DONUT  = "donut"
@@ -1564,7 +1600,7 @@ class TicketCog(commands.Cog):
             # Bỏ mọi dạng mention khỏi chuỗi để lấy amount
             amount_str = amount_str.replace(buyer.mention, "").replace(f"<@!{buyer.id}>", "").replace(f"<@{buyer.id}>", "").strip()
 
-        is_ticket = bool(ctx.channel.topic and "|" in ctx.channel.topic)
+        is_ticket = _is_bot_ticket_topic(ctx.channel.topic)
 
         if not buyer:
             if not is_ticket:
@@ -1587,6 +1623,13 @@ class TicketCog(commands.Cog):
         amount = parse_amount(amount_str)
         if amount is None or amount <= 0:
             return await ctx.reply(f"❌ Số tiền `{amount_str}` không hợp lệ!")
+
+        if _is_duplicate_done(ctx.channel.id, buyer.id, amount):
+            return await ctx.reply(
+                f"⚠️ Vừa `.done` cho {buyer.mention} — {fmt_amount(amount)} cách đây "
+                f"chưa tới {_DONE_DUPLICATE_WINDOW}s. Nếu chắc chắn muốn tính thêm 1 đơn "
+                f"riêng (không phải gõ nhầm) thì gõ lại lệnh 1 lần nữa."
+            )
 
         # Xác định server_key / trade_type để gắn nhãn + cộng dồn theo server (nếu có).
         # FIX (theo yêu cầu): .done giờ dùng được ở TẤT CẢ loại ticket — dịch vụ, hỗ trợ,
@@ -1766,7 +1809,7 @@ class TicketCog(commands.Cog):
             buyer = ctx.message.mentions[0]
             amount_str = amount_str.replace(buyer.mention, "").replace(f"<@!{buyer.id}>", "").replace(f"<@{buyer.id}>", "").strip()
 
-        is_ticket = bool(ctx.channel.topic and "|" in ctx.channel.topic)
+        is_ticket = _is_bot_ticket_topic(ctx.channel.topic)
 
         if not buyer:
             if not is_ticket:
@@ -1788,6 +1831,13 @@ class TicketCog(commands.Cog):
         amount = parse_amount(amount_str)
         if amount is None or amount <= 0:
             return await ctx.reply(f"❌ Số tiền `{amount_str}` không hợp lệ!")
+
+        if _is_duplicate_undone(ctx.channel.id, buyer.id, amount):
+            return await ctx.reply(
+                f"⚠️ Vừa `.undone` cho {buyer.mention} — {fmt_amount(amount)} cách đây "
+                f"chưa tới {_DONE_DUPLICATE_WINDOW}s. Chắc chắn muốn trừ thêm lần nữa thì "
+                f"gõ lại lệnh 1 lần nữa."
+            )
 
         # server_key — xác định khi đang trong ticket, không quan tâm có mention hay
         # không, và không còn chặn theo trade_type — khớp với .done sau fix ở trên (xem

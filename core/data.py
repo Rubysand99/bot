@@ -1127,19 +1127,29 @@ def subtract_user_spent(user_id: int, amount: int) -> int:
 
 def subtract_user_spent_server(user_id: int, amount: int, server_key: str) -> dict:
     """Trừ tiền khỏi CẢ tổng chung VÀ tổng theo server — bản đối xứng của
-    add_user_spent_server(), dùng khi `.done` bị dùng nhầm. Floor 0 cho cả 2 (không âm).
-    Trả về dict {"total": int, "server_total": int}."""
+    add_user_spent_server(), dùng khi `.done` bị dùng nhầm. Trả về dict
+    {"total": int, "server_total": int}.
+
+    FIX (v4.42.1): bản cũ floor-0 RIÊNG cho từng field bằng cùng `amount` gốc — nếu
+    tổng theo server (cur_srv) đang THẤP hơn tổng chung (cur_total, chuyện bình
+    thường vì server_total là 1 tập con của total) và amount > cur_srv, tổng chung bị
+    trừ đủ `amount` còn tổng server chỉ trừ được phần nó có rồi floor ở 0 — 2 số lệch
+    nhau và KHÔNG BAO GIỜ tự khớp lại. Giờ tính `actual = min(amount, cur_srv)` một
+    lần rồi áp DÙNG CHUNG cho cả 2 field, đảm bảo tổng theo server luôn khớp tổng
+    chung (server_total mãi mãi <= total)."""
     data = load_data()
     uid  = str(user_id)
 
     data.setdefault("user_total_spent", {})
     cur_total = data["user_total_spent"].get(uid, 0)
-    data["user_total_spent"][uid] = max(0, cur_total - amount)
 
     data.setdefault("user_spent_by_server", {})
     data["user_spent_by_server"].setdefault(uid, {})
     cur_srv = data["user_spent_by_server"][uid].get(server_key, 0)
-    data["user_spent_by_server"][uid][server_key] = max(0, cur_srv - amount)
+
+    actual = min(amount, cur_srv)
+    data["user_total_spent"][uid] = max(0, cur_total - actual)
+    data["user_spent_by_server"][uid][server_key] = cur_srv - actual
 
     save_data(data)
     return {

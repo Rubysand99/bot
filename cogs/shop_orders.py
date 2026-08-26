@@ -399,6 +399,25 @@ class ShopOrdersCog(commands.Cog):
             )
             return
 
+        # FIX (v4.42.1): BẮT BUỘC so `transferAmount` (số tiền THẬT SePay báo đã nhận)
+        # với order["amount"] TRƯỚC khi confirm — bản cũ khớp code/content +
+        # accountNumber xong là tin thẳng order["amount"] gốc, nghĩa là chuyển ĐÚNG mã
+        # nhưng THIẾU/SAI số tiền (kể cả 1k) vẫn được đánh dấu "đã thanh toán đủ".
+        # SePay cũng khuyến nghị check transferAmount trước khi xử lý webhook.
+        transfer_amount = payload.get("transferAmount")
+        try:
+            transfer_amount = int(transfer_amount)
+        except (TypeError, ValueError):
+            transfer_amount = None
+        expected_amount = int(order.get("amount", 0))
+        if transfer_amount is None or transfer_amount < expected_amount:
+            log.warning(
+                f"[SEPAY] ⚠️ Số tiền LỆCH — order {order['ref_code']} cần "
+                f"{expected_amount}, webhook báo {transfer_amount} — KHÔNG auto-confirm, "
+                f"giữ đơn trong hàng đợi để admin đối chiếu/xử lý tay."
+            )
+            return  # KHÔNG pop — đơn vẫn nằm trong _shop_pending_orders
+
         ref_code = order["ref_code"]
         # Claim ngay bằng pop — trả None nghĩa là đã có 1 lần gọi khác xử lý mất rồi
         # (trùng lặp/race hiếm gặp), tránh gửi thông báo/hàng đợi 2 lần cho cùng 1 đơn.
@@ -417,6 +436,12 @@ class ShopOrdersCog(commands.Cog):
         if not (channel and seller and buyer):
             log.warning(f"[SEPAY] ⚠️ Thiếu channel/seller/buyer để thông báo order {ref_code}.")
             return
+
+        if transfer_amount > expected_amount:
+            log.info(
+                f"[SEPAY] ℹ️ Order {ref_code} nhận THỪA ({transfer_amount} > "
+                f"{expected_amount}) — vẫn confirm bình thường, admin tự đối chiếu chênh lệch."
+            )
 
         try:
             await channel.send(embed=build_payment_confirmed_embed(seller, buyer, order["amount"], ref_code))
