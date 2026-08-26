@@ -18,6 +18,8 @@ from cogs.logger import send_log
 from core.data import (
     ADMIN_IDS, ADMIN_TUYTAM_ID, ADMIN_RUBY_ID,
     get_cfg_stock_category, get_cfg_sold_category,
+    get_cfg_sold_detection_enabled, set_cfg_sold_detection_enabled,
+    get_guild_prefix,
     get_cfg_font, _uname_plain, is_staff_member,
     load_data, get_price_sections,
     is_guild_authorized, set_guild_authorized,
@@ -1024,6 +1026,41 @@ class AdminCog(commands.Cog):
         """Alias prefix cho /giaset — giống .giaset"""
         await self.giaset_cmd(ctx)
 
+    @commands.command(name="sold")
+    async def sold_toggle_cmd(self, ctx, mode: str = None):
+        """`.sold on` / `.sold off` — bật/tắt auto nhận diện "sold" trong kênh
+        stock (xem handle_sold() cuối file). Gõ trơ trọi `.sold` (không kèm
+        on/off) để xem trạng thái hiện tại, không đổi gì cả."""
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+
+        mode = (mode or "").strip().lower()
+        if mode not in ("on", "off"):
+            cur = get_cfg_sold_detection_enabled()
+            return await ctx.reply(
+                f"ℹ️ Auto-sold hiện đang **{'BẬT 🟢' if cur else 'TẮT 🔴'}**. "
+                f"Dùng `.sold on` hoặc `.sold off` để đổi."
+            )
+
+        new_state = (mode == "on")
+        set_cfg_sold_detection_enabled(new_state)
+        status_text = "🟢 BẬT" if new_state else "🔴 TẮT"
+
+        await ctx.send(f"✅ Auto-sold (kênh stock) đã chuyển sang **{status_text}**.")
+
+        # Dọn dòng lệnh cho gọn kênh (yêu cầu Ruby) — không chặn gì nếu bot thiếu
+        # quyền Manage Messages ở kênh đó, chỉ là không dọn được thôi.
+        try:
+            await ctx.message.delete()
+        except (discord.Forbidden, discord.NotFound):
+            pass
+
+        await send_log(
+            ctx.bot, "SETTINGS", f"Auto-sold (kênh stock) → {status_text}",
+            fields=[("👤 Admin", f"{ctx.author}", True)],
+            user=ctx.author, guild_id=ctx.guild.id if ctx.guild else None,
+        )
+
     # ── Slash mod commands ──
     @app_commands.command(name="clear", description="Xoá tin nhắn trong kênh")
     @app_commands.describe(amount="Số tin nhắn cần xoá (1-500)")
@@ -1645,6 +1682,13 @@ async def _escalate_pending_sold_after(bot, channel_id: int, delay_seconds: floa
     await _escalate_pending_sold_now(bot, channel_id)
 
 
+# "sold" nhận diện Ở BẤT KỲ ĐÂU trong tin nhắn (yêu cầu Ruby, trước đây chỉ nhận
+# nếu tin BẮT ĐẦU bằng "sold"/"## sold"). Dùng \b (word boundary) chứ KHÔNG phải
+# substring trần — "sold" phải đứng riêng thành 1 từ, để "unsold"/"consolidate"/
+# tên kênh dạng "...-solder..." không bị tính nhầm. Không phân biệt hoa thường.
+_SOLD_PATTERN = _re.compile(r"\bsold\b", _re.IGNORECASE)
+
+
 async def handle_sold(bot, message: discord.Message):
     """Gọi từ bot.py on_message để xử lý auto-sold."""
     if message.author.bot or not message.guild:
@@ -1660,8 +1704,19 @@ async def handle_sold(bot, message: discord.Message):
     if not channel.category_id or channel.category_id != stock_cat_id:
         return
 
-    content = message.content.strip().lower()
-    if not (content.startswith("sold") or content.startswith("## sold")):
+    if not get_cfg_sold_detection_enabled():
+        return  # admin đã `.sold off` — bỏ qua hoàn toàn, không nhận diện gì cả
+
+    # Bỏ qua MỌI tin nhắn dạng lệnh bot (bắt đầu bằng prefix của guild, mặc định
+    # ".") TRƯỚC khi soi nội dung — BẮT BUỘC có bước này: giờ "sold" khớp ở bất kỳ
+    # đâu trong câu, nên nếu thiếu guard này thì chính lệnh ".sold on"/".sold off"
+    # cũng tự khớp luôn (nó CÓ chữ "sold"), gây chuyển nhầm kênh admin đang gõ lệnh
+    # sang category sold ngay khi họ tắt/bật tính năng.
+    prefix = get_guild_prefix(message.guild.id)
+    if message.content.startswith(prefix):
+        return
+
+    if not _SOLD_PATTERN.search(message.content):
         return
 
     sold_category = message.guild.get_channel(sold_cat_id)

@@ -632,6 +632,15 @@ def get_cfg_font()            -> str: return load_data().get("cfg_font", "normal
 def get_cfg_category()        -> int: return load_data().get("cfg_ticket_category", 0)
 def get_cfg_stock_category()  -> int: return load_data().get("cfg_stock_category",  0)
 def get_cfg_sold_category()   -> int: return load_data().get("cfg_sold_category",   0)
+
+def get_cfg_sold_detection_enabled() -> bool:
+    """Bật/tắt qua `.sold on`/`.sold off` (cogs/admin.py). Mặc định TRUE — tính
+    năng auto-sold đã chạy sẵn từ trước, default phải giữ y bật để KHÔNG âm thầm
+    tắt mất đối với guild nào chưa từng gọi `.sold off`/`.sold on` lần nào."""
+    return load_data().get("cfg_sold_detection_enabled", True)
+
+def set_cfg_sold_detection_enabled(enabled: bool) -> None:
+    save_cfg("cfg_sold_detection_enabled", enabled)
 def get_cfg_done_role()       -> int: return load_data().get("cfg_done_role",       0)
 def get_cfg_transcript_channel() -> int: return load_data().get("cfg_transcript_channel", 0)
 def get_cfg_builder_role()    -> int: return load_data().get("cfg_builder_role",    0)

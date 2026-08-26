@@ -1,5 +1,29 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.47.0] — 2026-08-26
+
+### ✨ Tính năng mới
+- **`cogs/admin.py` — Auto-sold nhận diện "sold" ở BẤT KỲ ĐÂU trong tin nhắn +
+  thêm `.sold on`/`.sold off`:** trước đây `handle_sold()` chỉ trigger nếu tin
+  nhắn BẮT ĐẦU bằng "sold"/"## sold" (`content.startswith(...)`) — theo yêu cầu
+  Ruby, giờ nhận diện "sold" xuất hiện ở bất kỳ vị trí nào trong tin. Dùng regex
+  word-boundary `\bsold\b` (không phải substring trần) để "unsold"/"consolidate"/
+  "solder" không bị tính nhầm — vẫn thoả đúng yêu cầu (không cần biết đầu/cuối tin
+  là gì) mà tránh khớp nhầm những từ khác chỉ tình cờ chứa "sold".
+  Thêm lệnh `.sold on` / `.sold off` (admin only) để tắt/bật hẳn tính năng theo
+  từng guild (`cfg_sold_detection_enabled`, **mặc định TRUE** để không âm thầm
+  tắt mất tính năng đang chạy sẵn ở guild nào chưa từng gọi lệnh này). Gõ `.sold`
+  trơ trọi để xem trạng thái hiện tại. Sau khi chạy `.sold on`/`.sold off` bot tự
+  xoá dòng lệnh vừa gõ cho gọn kênh (yêu cầu Ruby), không chặn gì nếu bot thiếu
+  quyền Manage Messages ở kênh đó.
+  **Guard bắt buộc:** vì "sold" giờ khớp ở bất kỳ đâu, tự bản thân lệnh
+  `.sold on`/`.sold off` cũng sẽ chứa chữ "sold" — thêm bước bỏ qua MỌI tin nhắn
+  bắt đầu bằng prefix của guild (`get_guild_prefix()`, không hardcode ".") TRƯỚC
+  khi soi nội dung, để tránh admin gõ lệnh tắt/bật mà kênh họ đang đứng lại tự bị
+  chuyển sang category sold. Đã test cô lập cả regex lẫn cơ chế loại trừ này.
+
+---
+
 ## [v4.46.0] — 2026-08-26
 
 ### ✨ Tính năng mới
