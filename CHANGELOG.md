@@ -1,5 +1,25 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.43.0] — 2026-08-26
+
+### ✨ Tính năng mới
+- **`cogs/ai_chat.py` — Mở rộng `GROQ_MODELS` từ 2 lên 4 model:** trước chỉ có
+  `openai/gpt-oss-20b` (chính) + `openai/gpt-oss-120b` (fallback), giờ thêm
+  `qwen/qwen3.6-27b` (fallback #3) và `groq/compound-mini` (fallback #4). Đã kiểm
+  tra catalog hiện tại của Groq (console.groq.com/docs/models) trước khi thêm —
+  `qwen3.6-27b` là model **Preview** (Groq có thể gỡ bất kỳ lúc nào, không như
+  production models, giá cũng cao hơn ~4-5x so với gpt-oss-120b) nên đặt sau cùng
+  2 model chính. `groq/compound-mini` là 1 "system" tự có web search/code execution
+  riêng chứ không phải model thuần — dùng chung endpoint nên gắn thẳng vào
+  `GROQ_MODELS` được, nhưng chưa rõ nó có tôn trọng đúng `tools=` truyền vào hay chỉ
+  dùng tool nội bộ; nếu không trả `tool_calls` đúng định dạng thì vòng lặp tool-
+  calling tự coi là "trả lời xong" (an toàn, không crash) — chỉ là fallback cuối
+  này có thể không gọi được tool tra cứu ticket/seller/lịch sử mua hàng như 3 model
+  trước. Cân nhắc theo dõi log `[AI]` một thời gian xem model này có thật sự cần
+  dùng tới không trước khi tin tưởng hoàn toàn.
+
+---
+
 ## [v4.42.1] — 2026-08-26
 
 ### 🐛 Sửa lỗi (audit toàn bộ codebase)

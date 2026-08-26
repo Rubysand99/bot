@@ -23,6 +23,20 @@ v4.15.0 — Multi-agent (ý #8, xem core/ai_agents.py):
   Báo cáo, hiện để stub tools=[] chờ triển khai) mà không phải sửa ai_chat.py.
 - `run_ai_tools_agent()` đổi signature: nhận thẳng `system_prompt` + `tools` thay
   vì cờ `is_admin` — mọi agent dùng chung 1 vòng lặp tool-calling.
+
+v4.43.0 — Mở rộng GROQ_MODELS (thêm fallback, xem console.groq.com/docs/models):
+- Thêm qwen/qwen3.6-27b làm fallback #3 — model Preview bên Groq (có thể bị gỡ bất
+  kỳ lúc nào, KHÔNG như production models), nhưng vẫn hơn là fail hẳn khi cả 2
+  gpt-oss đều hết quota cùng lúc. Giá cao hơn gpt-oss-120b (~4-5x) nên chỉ nên bị
+  đụng tới khi 2 model đầu đều lỗi, không phải model chính.
+- Thêm groq/compound-mini làm fallback #4 (cuối) — "system" của Groq, tự có sẵn
+  web search + code execution riêng, không phải model thuần. Cùng đi qua endpoint
+  /chat/completions như các model khác nên gắn thẳng vào GROQ_MODELS được, nhưng
+  CHƯA rõ nó có tôn trọng đúng `tools=` (QUERY_TOOL_SCHEMAS/ADMIN_TOOL_SCHEMAS) hay
+  chỉ dùng tool nội bộ của nó — nếu không trả `tool_calls` đúng định dạng, vòng lặp
+  ở run_ai_tools_agent() tự coi như "trả lời xong" (an toàn, không crash), chỉ là
+  fallback cuối này có thể không gọi được tool tra cứu ticket/seller như 3 model
+  trước. Theo dõi log [AI] nếu nghi ngờ model này trả lời sai lệch.
 """
 
 import os
@@ -65,11 +79,18 @@ DEFAULT_NO_ANSWER_REPLY = (
 )
 
 # Model chính = gpt-oss-20b (nhanh, rẻ, đủ tốt cho tool calling + chat thường).
-# Fallback = gpt-oss-120b (mạnh hơn khi model chính hết quota/lỗi).
-# Cả 2 đều hỗ trợ native tool calling — xem https://console.groq.com/docs/tool-use/overview
+# Fallback #2 = gpt-oss-120b (mạnh hơn khi model chính hết quota/lỗi).
+# Fallback #3 = qwen3.6-27b — model PREVIEW bên Groq (có thể bị gỡ bất kỳ lúc nào),
+# giá cao hơn hẳn 2 model trên, chỉ nên bị đụng khi cả 2 gpt-oss cùng lỗi.
+# Fallback #4 (cuối) = groq/compound-mini — "system" tự có web search/code execution
+# riêng, không phải model thuần — xem docstring đầu file để biết rủi ro với tools=.
+# Cả 4 đều gọi qua CHUNG 1 endpoint /chat/completions nên đi thẳng vào vòng lặp
+# _call_groq_tools() không cần sửa gì thêm — xem https://console.groq.com/docs/models
 GROQ_MODELS = [
     "openai/gpt-oss-20b",
     "openai/gpt-oss-120b",
+    "qwen/qwen3.6-27b",
+    "groq/compound-mini",
 ]
 
 # System prompt của từng agent giờ nằm trong core/ai_agents.py (AGENTS registry) —
