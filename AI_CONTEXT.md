@@ -31,11 +31,17 @@
 ├── AI_CONTEXT.md        # File này — upload đầu mỗi chat, LUÔN đọc trước khi sửa bất kỳ file tính năng nào
 ├── cogs/
 │   ├── admin.py         # .st (settings UI — DUY NHẤT nơi cấu hình role/kênh/category, xem mục
-│   │                     # "KHÔNG hardcode ID" bên dưới), .as (ủy quyền server), .help, .mkchannel
+│   │                     # "KHÔNG hardcode ID" bên dưới), .as (ủy quyền server), .help, .mkchannel,
+│   │                     # .sold on/off (bật/tắt auto-sold theo guild, admin-only, tự xoá dòng lệnh
+│   │                     # sau khi chạy). handle_sold() dò "sold" (\bword\b, khớp bất kỳ đâu trong
+│   │                     # tin) trong kênh stock — PHẢI loại trừ tin bắt đầu bằng prefix guild trước
+│   │                     # khi so khớp (xem mục riêng bên dưới, thêm từ v4.47.0)
 │   ├── admin_views.py   # Tất cả Views/Modals cho admin (2500+ dòng) — KHÔNG phải Cog, không có
 │   │                     # on_ready/cog_load. MỌI View/Modal admin-only PHẢI tự check ADMIN_IDS
 │   │                     # (xem mục "interaction_check phải gọi super()" — lỗ hổng bảo mật đã gặp)
-│   ├── ai_chat.py        # Groq AI chat — kênh public chỉ được agent "support" (tool đọc), agent
+│   ├── ai_chat.py        # AI chat đa provider (Groq + Gemini) — AI_MODELS_STRONG/AI_MODELS_FAST +
+│   │                     # _looks_simple() routing theo độ phức tạp (chỉ áp dụng kênh public, xem
+│   │                     # mục Conventions bên dưới). Agent "support" (tool đọc, kênh public), agent
 │   │                     # "ops" (tool nguy hiểm: ban/kick/xoá kênh...) CHỈ qua lệnh `.ai` (admin only)
 │   ├── giveaway.py       # /giveaway, .gwstatus, .gwpick, .gwreset, .gwverify (bật/tắt yêu cầu verify)
 │   ├── invite.py         # Invite tracking 5 trạng thái + IP fake detection (CỐ Ý dùng chung mọi
@@ -198,6 +204,32 @@ Nếu gặp lỗi này ở vị trí MỚI (không nằm trong danh sách trên)
 
 ---
 
+## ⚠️ Handler `on_message` dò "từ khoá ở bất kỳ đâu trong tin" PHẢI loại trừ tin nhắn lệnh (thêm từ v4.47.0)
+
+Dò kiểu `content.startswith("sold")` tự động loại trừ tin nhắn lệnh bot (`.sold`,
+`.done`...) vì tin lệnh bắt đầu bằng prefix (`.`), không phải bằng từ khoá đang dò. Đổi
+sang dò **"từ khoá xuất hiện ở bất kỳ đâu"** (regex `\bkeyword\b`, hay bất kỳ kiểu
+"contains" nào) làm MẤT LUÔN cái loại trừ tự nhiên đó — nếu tên 1 lệnh bot trùng/chứa
+đúng từ khoá đang dò, tin nhắn gõ LỆNH đó cũng tự "khớp" theo nghĩa dò nội dung.
+
+Bug thật đã gặp: `handle_sold()` (`cogs/admin.py`) đổi từ `startswith("sold")` sang
+`\bsold\b` (khớp bất kỳ đâu, hỗ trợ yêu cầu Ruby) đồng thời thêm lệnh `.sold on`/
+`.sold off` — nếu thiếu bước loại trừ, CHÍNH lệnh `.sold on`/`.sold off` cũng tự khớp
+(nó CÓ chữ "sold"), gây chuyển nhầm kênh admin đang gõ lệnh sang category sold ngay khi
+họ tắt/bật tính năng.
+
+**Quy tắc:** bất kỳ `on_message` handler nào so khớp nội dung kiểu "chứa ở bất kỳ đâu"
+(không phải so khớp lệnh CHÍNH XÁC qua `commands.command`), PHẢI loại trừ tin bắt đầu
+bằng prefix của guild TRƯỚC khi so khớp:
+```python
+prefix = get_guild_prefix(message.guild.id)   # KHÔNG hardcode "."
+if message.content.startswith(prefix):
+    return
+```
+Xem `handle_sold()` làm mẫu, hoặc CHANGELOG v4.47.0 để biết chi tiết đầy đủ.
+
+---
+
 ## Conventions quan trọng
 - **Admin gate:** `if ctx.author.id not in ADMIN_IDS: return` — import từ `core.data`
 - **Staff check:** `is_staff_member()` — ADMIN_IDS + support role + seller role + builder role (tất cả đều `cfg_*`, không hardcode)
@@ -208,6 +240,10 @@ Nếu gặp lỗi này ở vị trí MỚI (không nằm trong danh sách trên)
 - **View/Modal có nút bấm đọc/ghi data:** dùng `GuildContextView`/`GuildContextModal` (alias `View`/`Modal`) thay vì `discord.ui.View`/`discord.ui.Modal` trực tiếp. Nếu View đó CHỈ dành cho admin, PHẢI tự override `interaction_check()` gọi `super()` trước rồi check `ADMIN_IDS` — xem mục AUTH_GATE.
 - **View/Modal admin-only gửi qua `interaction.response.send_message`:** LUÔN kèm `ephemeral=True` nếu có `view=` — thiếu cái này từng khiến member thường click được nút admin trong panel `.setup` (lỗ hổng bảo mật thật, xem CHANGELOG v4.29.0).
 - **Không hardcode ID role/kênh/category:** xem mục riêng ở trên — luôn qua `cfg_*` + `.st`.
+- **Toggle bật/tắt cho tính năng ĐÃ CÓ SẴN (không phải tính năng mới):** default PHẢI là
+  giá trị GIỮ NGUYÊN hành vi hiện tại — thường là `True`/bật (vd `cfg_sold_detection_enabled`).
+  Chỉ tính năng MỚI/thử nghiệm mới default `False` (vd `cfg_shop_orders_enabled`). Default
+  sai chiều = âm thầm tắt mất tính năng đang chạy, cho MỌI guild chưa từng gọi lệnh toggle đó.
 - **ADMIN_IDS:** đọc từ env `ADMIN_IDS` (comma-separated), không hardcode
 - Response PUBLIC (không ephemeral) cho user thường, trừ ticket panel button và MỌI thứ admin-only (xem trên)
 
