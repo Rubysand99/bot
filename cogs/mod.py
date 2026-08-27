@@ -25,6 +25,7 @@ from core.data import (
     ADMIN_IDS, load_data, save_data, _uname_plain,
     add_tempban, remove_tempban, get_active_tempbans,
     set_current_guild,
+    get_cfg_category, get_cfg_stock_category, get_cfg_sold_category,
 )
 from cogs.logger import send_log
 
@@ -111,6 +112,76 @@ def _add_mod_log(action: str, target_id: int, target_str: str, by_str: str, reas
 
 def _get_mod_log(user_id: int) -> list:
     return [e for e in _get_mod_data().get("mod_log", []) if e.get("target_id") == user_id]
+
+# ══════════════════════════════════════════
+# CLEAR CATEGORY — xoá toàn bộ kênh con trong 1 category (.clearcategory)
+# ══════════════════════════════════════════
+async def _do_clear_category(category: discord.CategoryChannel, requester_str: str) -> tuple[list[str], list[str]]:
+    """Xoá lần lượt từng kênh con trong category. Trả về (tên kênh đã xoá, tên kênh lỗi).
+    Sleep giữa mỗi lần xoá để né rate-limit Discord khi category có nhiều kênh — cùng
+    nhịp với bulk font-change ở admin_views.py (_FontSelect)."""
+    deleted: list[str] = []
+    failed:  list[str] = []
+    for ch in list(category.channels):   # snapshot trước — category.channels đổi dần khi đang xoá
+        name = ch.name
+        try:
+            await ch.delete(reason=f"Dọn category '{category.name}' — bởi {requester_str}")
+            deleted.append(name)
+        except discord.Forbidden:
+            failed.append(f"{name} (thiếu quyền)")
+        except discord.HTTPException as e:
+            failed.append(f"{name} ({e})")
+        await asyncio.sleep(0.5)
+    return deleted, failed
+
+def _chunk_list_for_fields(items: list[str], header: str) -> list[tuple[str, str]]:
+    """Chia list tên kênh thành nhiều field embed (mỗi field ≤1024 ký tự) — category có
+    thể chứa tới 50 kênh, danh sách dễ vỡ giới hạn field value của Discord."""
+    if not items:
+        return [(header, "—")]
+    fields: list[tuple[str, str]] = []
+    buf = ""
+    for it in items:
+        line = f"• {it}\n"
+        if len(buf) + len(line) > 1000:
+            fields.append((header, buf))
+            header = f"{header} (tiếp)"
+            buf = ""
+        buf += line
+    if buf:
+        fields.append((header, buf))
+    return fields
+
+class _ClearCategoryConfirmView(discord.ui.View):
+    """Xác nhận/Huỷ dùng chung cho .clearcategory (prefix) và /clearcategory (slash).
+    Callback nút bấm KHÔNG đọc/ghi data theo guild (chỉ set cờ + defer) nên dùng
+    discord.ui.View thường là đủ — thao tác xoá thật chạy SAU await view.wait(), vẫn ở
+    trong Task gốc của lệnh (đã có guild context/AUTH_GATE từ before_invoke hoặc
+    GuildContextTree.interaction_check), cùng pattern với cogs/invite.py: resetinvites
+    (ConfirmView nội bộ)."""
+    def __init__(self, author_id: int):
+        super().__init__(timeout=30)
+        self.author_id = author_id
+        self.confirmed = False
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not await super().interaction_check(interaction):
+            return False
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Không phải lệnh của bạn.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="✅ Xác nhận xoá", style=discord.ButtonStyle.danger)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.confirmed = True
+        self.stop()
+        await interaction.response.defer()
+
+    @discord.ui.button(label="❌ Huỷ", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.edit_message(content="❌ Đã huỷ — không có kênh nào bị xoá.", view=None)
 
 # ══════════════════════════════════════════
 # PARSE THỜI GIAN  (10m, 1h, 2d)
@@ -902,6 +973,117 @@ class ModCog(commands.Cog):
                                 value=value, inline=False)
             embed.set_footer(text=f"Tổng {len(logs)} hành động")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ══════════════════════════════════════
+    # CLEAR CATEGORY — xoá toàn bộ kênh trong 1 category
+    # Riêng lệnh này CHỈ admin bot (ADMIN_IDS) mới dùng được — không dùng _is_mod() như
+    # các lệnh mod khác, vì đây là thao tác xoá HÀNG LOẠT/không thể hoàn tác, khác mức độ
+    # rủi ro so với ban/kick/warn từng người một.
+    # ══════════════════════════════════════
+    def _is_admin(self, member: discord.Member) -> bool:
+        return member.id in ADMIN_IDS
+
+    def _system_category_warning(self, category_id: int) -> str | None:
+        """Nếu category trùng với cfg_ticket_category/stock/sold — trả về tên để cảnh báo
+        trước khi xoá, tránh admin lỡ tay phá category bot đang dùng để vận hành."""
+        system_cats = {
+            get_cfg_category():       "🎫 Ticket Category",
+            get_cfg_stock_category(): "📦 Stock Category",
+            get_cfg_sold_category():  "✅ Sold Category",
+        }
+        system_cats.pop(0, None)  # 0 = "chưa cài", không tính
+        return system_cats.get(category_id)
+
+    def _build_clear_confirm_text(self, category: discord.CategoryChannel, channels: list) -> str:
+        preview = "\n".join(f"• {ch.name}" for ch in channels[:15])
+        if len(channels) > 15:
+            preview += f"\n… và {len(channels) - 15} kênh khác"
+        text = (
+            f"⚠️ **Xác nhận xoá toàn bộ kênh trong category**\n\n"
+            f"**Category:** {category.name}\n**Số kênh sẽ bị xoá:** {len(channels)}\n\n"
+            f"{preview}\n\nHành động này **không thể hoàn tác**!"
+        )
+        warn = self._system_category_warning(category.id)
+        if warn:
+            text += (
+                f"\n\n🚨 **CẢNH BÁO:** Category này đang được cấu hình làm **{warn}** của "
+                f"bot — xoá kênh trong này CÓ THỂ LÀM HỎNG tính năng liên quan!"
+            )
+        return text
+
+    def _build_clear_result_embed(self, category: discord.CategoryChannel, total: int,
+                                   deleted: list[str], failed: list[str], requester_str: str) -> discord.Embed:
+        embed = discord.Embed(
+            title="🗑️ Đã Dọn Category",
+            description=f"**Category:** {category.name} (`{category.id}`)\n**Đã xoá:** {len(deleted)}/{total} kênh",
+            color=0xED4245 if failed else 0x57F287,
+            timestamp=datetime.now(timezone.utc),
+        )
+        for name, value in _chunk_list_for_fields(deleted, "📋 Kênh đã xoá"):
+            embed.add_field(name=name, value=value, inline=False)
+        if failed:
+            for name, value in _chunk_list_for_fields(failed, "❌ Lỗi"):
+                embed.add_field(name=name, value=value, inline=False)
+        embed.set_footer(text=f"Thực hiện bởi {requester_str}")
+        return embed
+
+    @commands.command(name="clearcategory", aliases=["clearcat", "dondanhmuc"])
+    async def clear_category_cmd(self, ctx, *, category: discord.CategoryChannel = None):
+        if not self._is_admin(ctx.author):
+            return await ctx.reply("❌ Lệnh này chỉ dành cho admin.")
+        if not category:
+            return await ctx.reply(
+                "❌ Dùng: `.clearcategory <tên/ID/#category>`\n"
+                "VD: `.clearcategory 📦 KHO HÀNG` hoặc `.clearcategory 123456789012345678`"
+            )
+
+        channels = list(category.channels)
+        if not channels:
+            return await ctx.reply(f"ℹ️ Category **{category.name}** không có kênh nào để xoá.")
+
+        view = _ClearCategoryConfirmView(ctx.author.id)
+        confirm_msg = await ctx.reply(self._build_clear_confirm_text(category, channels), view=view)
+        await view.wait()
+        if not view.confirmed:
+            return
+
+        await confirm_msg.edit(content=f"⏳ Đang xoá {len(channels)} kênh trong **{category.name}**…", view=None)
+        deleted, failed = await _do_clear_category(category, str(ctx.author))
+
+        await ctx.send(embed=self._build_clear_result_embed(category, len(channels), deleted, failed, str(ctx.author)))
+        _add_mod_log("clearcategory", category.id, category.name, str(ctx.author), f"{len(deleted)}/{len(channels)} kênh")
+        await send_log(self.bot, "MOD_CHANNEL_CLEAR", f"Dọn category — {category.name}",
+            fields=[("📁 Category", f"{category.name} (`{category.id}`)", True),
+                    ("🗑️ Đã xoá", f"{len(deleted)}/{len(channels)} kênh", True),
+                    ("🛡️ Admin", str(ctx.author), True)],
+            user=ctx.author, color=0xED4245, guild_id=ctx.guild.id)
+
+    @app_commands.command(name="clearcategory", description="[Admin] Xoá toàn bộ kênh trong 1 category, gửi embed liệt kê kênh đã xoá")
+    @app_commands.describe(category="Category cần dọn sạch kênh con")
+    async def slash_clear_category(self, interaction: discord.Interaction, category: discord.CategoryChannel):
+        if not self._is_admin(interaction.user):
+            return await interaction.response.send_message("❌ Lệnh này chỉ dành cho admin.", ephemeral=True)
+
+        channels = list(category.channels)
+        if not channels:
+            return await interaction.response.send_message(f"ℹ️ Category **{category.name}** không có kênh nào để xoá.", ephemeral=True)
+
+        view = _ClearCategoryConfirmView(interaction.user.id)
+        await interaction.response.send_message(self._build_clear_confirm_text(category, channels), view=view, ephemeral=True)
+        await view.wait()
+        if not view.confirmed:
+            return
+
+        await interaction.edit_original_response(content=f"⏳ Đang xoá {len(channels)} kênh trong **{category.name}**…", view=None)
+        deleted, failed = await _do_clear_category(category, str(interaction.user))
+
+        await interaction.followup.send(embed=self._build_clear_result_embed(category, len(channels), deleted, failed, str(interaction.user)))
+        _add_mod_log("clearcategory", category.id, category.name, str(interaction.user), f"{len(deleted)}/{len(channels)} kênh")
+        await send_log(self.bot, "MOD_CHANNEL_CLEAR", f"Dọn category — {category.name}",
+            fields=[("📁 Category", f"{category.name} (`{category.id}`)", True),
+                    ("🗑️ Đã xoá", f"{len(deleted)}/{len(channels)} kênh", True),
+                    ("🛡️ Admin", str(interaction.user), True)],
+            user=interaction.user, color=0xED4245, guild_id=interaction.guild.id)
 
     # ══════════════════════════════════════
     # AUTO-MOD CONFIG
