@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.47.0"
+BOT_VERSION = "4.48.0"
 BOT_UPDATED = "2026-08-26"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
@@ -246,6 +246,23 @@ async def on_ready():
             print(f"✅ Synced {len(synced)} slash commands")
         except Exception as e:
             print(f"❌ Slash sync error: {e}")
+
+        # Test kết nối AI provider (Groq/Gemini) + in console — CHỈ 1 lần lúc khởi
+        # động thật, KHÔNG lặp lại mỗi lần reconnect (tốn quota gọi API vô ích).
+        # Chạy nền (spawn_background) để không delay phần còn lại của on_ready().
+        async def _print_ai_connection_status():
+            from cogs.ai_chat import check_ai_connections
+            print("🔌 Đang kiểm tra kết nối AI provider...")
+            try:
+                results = await check_ai_connections()
+            except Exception as e:
+                print(f"❌ Lỗi khi kiểm tra kết nối AI: {e}")
+                return
+            print("🔌 Trạng thái kết nối AI provider:")
+            for label, (ok, detail) in results.items():
+                icon = "✅" if ok else "❌"
+                print(f"   {icon} {label:<8}: {detail}")
+        spawn_background(_print_ai_connection_status())
 
     print(f"✅ Bot online: {bot.user} | {len(bot.guilds)} server(s)" + ("" if first_boot else " (reconnect)"))
 

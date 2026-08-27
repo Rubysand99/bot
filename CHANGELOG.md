@@ -1,5 +1,20 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.48.0] — 2026-08-26
+
+### ✨ Tính năng mới
+- **`cogs/ai_chat.py` + `bot.py` — In trạng thái kết nối AI provider ra console lúc
+  khởi động:** thêm `check_ai_connections()` — gọi API tối thiểu (`max_tokens=1`) tới
+  từng provider ĐỘC NHẤT trong `AI_MODELS_FAST` (dedup theo `base_url`, chỉ test 1
+  lần/provider dù Groq chiếm 5/6 entry — không gọi trùng lãng phí quota), dùng model
+  rẻ nhất của tier FAST cho việc ping. In kết quả ra console (`on_ready()`, khối
+  `if first_boot:` — CHỈ chạy 1 lần lúc khởi động thật, không lặp lại mỗi lần
+  reconnect) qua `spawn_background()` nên không delay phần còn lại của startup. Xem
+  log Railway ngay sau deploy để biết Groq/Gemini có kết nối được thật không, chứ
+  không chỉ "có set biến môi trường hay chưa".
+
+---
+
 ## [v4.47.0] — 2026-08-26
 
 ### ✨ Tính năng mới

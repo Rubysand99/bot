@@ -342,6 +342,58 @@ async def _call_ai_tools(messages: list, tools: list | None = None, models: list
     return {"role": "assistant", "content": f"⚠️ AI tạm thời không khả dụng ({last_err}). Vui lòng thử lại sau ít phút."}
 
 
+async def check_ai_connections() -> dict[str, tuple[bool, str]]:
+    """Test kết nối THẬT (gọi API tối thiểu, max_tokens=1) tới từng provider ĐỘC
+    NHẤT xuất hiện trong AI_MODELS_FAST — không test trùng nhiều lần cho cùng 1
+    provider dù nó xuất hiện ở nhiều entry (Groq có 5/6 entry cùng chung 1
+    base_url + key). Dùng model rẻ nhất của tier FAST cho việc ping này, không
+    cần model mạnh chỉ để kiểm tra còn sống hay không.
+    Trả về dict {tên_provider: (ok, chi_tiết)}. Gọi từ bot.py: on_ready() (khối
+    `if first_boot:`) qua spawn_background() — KHÔNG block startup, KHÔNG gọi lại
+    mỗi lần reconnect (tốn quota vô ích, xem AI_CONTEXT.md mục on_ready)."""
+    import asyncio
+    import aiohttp
+
+    def _label(base_url: str) -> str:
+        if base_url == GROQ_URL:
+            return "Groq"
+        if base_url == GEMINI_URL:
+            return "Gemini"
+        return base_url  # phòng khi thêm provider mới mà quên thêm nhãn ở đây
+
+    seen: set[str] = set()
+    to_test = []
+    for entry in AI_MODELS_FAST:
+        if entry["base_url"] in seen:
+            continue
+        seen.add(entry["base_url"])
+        to_test.append(entry)
+
+    async def _ping(entry: dict) -> tuple[str, bool, str]:
+        label   = _label(entry["base_url"])
+        model   = entry["model"]
+        api_key = entry["api_key"]
+        if not api_key:
+            return label, False, "chưa cấu hình API key"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    entry["base_url"],
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status == 200:
+                        return label, True, f"OK ({model})"
+                    err = (await resp.text())[:150]
+                    return label, False, f"HTTP {resp.status}: {err}"
+        except Exception as e:
+            return label, False, str(e)
+
+    results = await asyncio.gather(*(_ping(e) for e in to_test))
+    return {label: (ok, detail) for label, ok, detail in results}
+
+
 async def run_ai_tools_agent(ctx, system_prompt: str, tools: list, user_content: str,
                                history: list | None = None, models: list | None = None):
     """Vòng lặp tool-calling chính, dùng chung cho MỌI agent (v4.15.0, ý #8
