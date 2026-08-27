@@ -1,5 +1,24 @@
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
+## [v4.49.0] — 2026-08-28
+
+### ✨ Tính năng mới
+- **`cogs/mod.py` — Lệnh `.clearcategory`/`/clearcategory` (Admin) — xoá toàn bộ kênh
+  con trong 1 category, gửi embed liệt kê kênh đã xoá:** cả 2 bản prefix + slash, CHỈ
+  `ADMIN_IDS` dùng được (không dùng `_is_mod()` như ban/kick/warn vì đây là thao tác
+  hàng loạt/không thể hoàn tác). Có bước xác nhận (nút ✅/❌, preview tối đa 15 tên kênh,
+  timeout 30s, chỉ người gọi lệnh bấm được) trước khi xoá thật — cùng pattern với
+  `cogs/invite.py: resetinvites` (dùng `discord.ui.View` thường vì thao tác xoá chạy
+  SAU `view.wait()`, vẫn trong Task gốc đã có guild context). Tự cảnh báo thêm nếu
+  category trùng `cfg_ticket_category`/`cfg_stock_category`/`cfg_sold_category` (category
+  hệ thống bot đang dùng để vận hành). Xoá từng kênh có `sleep(0.5)` giữa các lần để né
+  rate-limit Discord. Kết quả (kênh đã xoá + kênh lỗi nếu có) hiển thị qua embed, tự chia
+  nhiều field nếu vượt giới hạn 1024 ký tự/field (category tối đa 50 kênh). Log vào nhóm
+  `mod` qua event type mới `MOD_CHANNEL_CLEAR` (thêm ở `cogs/logger.py`), và lưu vào
+  `mod_log` qua `_add_mod_log()` để tra được ở `.modlog`.
+
+---
+
 ## [v4.48.0] — 2026-08-26
 
 ### ✨ Tính năng mới
