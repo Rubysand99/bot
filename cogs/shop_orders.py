@@ -33,7 +33,7 @@ import string
 import shlex
 import logging
 from urllib.parse import quote
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import discord
 from discord.ext import commands
@@ -50,6 +50,7 @@ from core.data import (
     get_cfg_queue_channel, save_cfg_queue_channel,
     get_cfg_proof_channel,
     get_next_shop_order_number, set_shop_order_counter,
+    get_cfg_receipt_thankyou,
     load_data,
     GuildContextView, GuildContextModal,
 )
@@ -100,27 +101,56 @@ def gen_transfer_code() -> str:
     return f"{PAYMENT_CODE_PREFIX}{digits}"
 
 
-def build_receipt_embed(order_number: str, buyer_mention: str, product: str, amount: int,
-                         approver: discord.abc.User, transfer_code: str,
-                         seller_mention: str = "") -> discord.Embed:
-    """Hóa đơn công khai kiểu ảnh mẫu — gửi vào kênh proof khi đơn hàng đợi được đánh dấu
-    Hoàn thành. `transfer_code` giờ là mã CK THẬT đã in trên QR (đọc lại từ field
-    "📝 Mã CK" của embed hàng đợi) — KHÔNG còn sinh mã mới không liên quan như trước."""
+async def _resolve_member(guild: discord.Guild, user_id: int | None):
+    """Cache trước, fetch_member() fallback — né gọi API dư khi member đã có sẵn trong
+    cache (đa số trường hợp vì buyer/seller vừa tương tác trong ticket/queue xong)."""
+    if not user_id:
+        return None
+    member = guild.get_member(user_id)
+    if member:
+        return member
+    try:
+        return await guild.fetch_member(user_id)
+    except (discord.NotFound, discord.HTTPException):
+        return None
+
+
+def _fmt_receipt_person(member, fallback_id: int | None) -> str:
+    if member:
+        return f"{member.mention}\n`{member.name}`"
+    return f"<@{fallback_id}>" if fallback_id else "*(không rõ)*"
+
+
+async def build_receipt_embed(order_number: str, buyer_id: int, product: str, amount: int,
+                               approver: discord.abc.User, transfer_code: str,
+                               guild: discord.Guild, seller_id: int | None = None) -> discord.Embed:
+    """Hóa đơn công khai — gửi vào kênh proof khi đơn hàng đợi được đánh dấu Hoàn thành.
+    Layout theo mẫu ảnh admin gửi (26/8): lời cảm ơn kèm tên shop lên đầu (config được,
+    xem cfg_receipt_thankyou/.st), field gọn theo cặp mention + username thô, giờ hiển
+    thị theo VN (UTC+7). Mã CK + người duyệt vẫn giữ lại (không có trong ảnh mẫu nhưng
+    cần cho đối soát) — đưa xuống field/footer để không phá layout chính.
+    `transfer_code` là mã CK THẬT đã in trên QR (đọc lại từ field "📝 Mã CK" của embed
+    hàng đợi) — KHÔNG sinh mã mới không liên quan."""
+    buyer  = await _resolve_member(guild, buyer_id)
+    seller = await _resolve_member(guild, seller_id)
+
+    thankyou = get_cfg_receipt_thankyou().replace("{shop}", guild.name)
+    now_vn = datetime.now(timezone(timedelta(hours=7)))
+
     e = discord.Embed(
-        title=f"🧾 HÓA ĐƠN THANH TOÁN MUA HÀNG #{order_number}",
-        description="Giao dịch đã được xác nhận hoàn tất thành công bởi Admin!",
+        title=f"🧾 HÓA ĐƠN THANH TOÁN • #{order_number}",
+        description=thankyou,
         color=COLOR_QUEUE_DONE,
-        timestamp=datetime.now(timezone.utc),
     )
-    e.add_field(name="👤 Khách hàng", value=buyer_mention, inline=False)
-    if seller_mention:
-        e.add_field(name="🧑 Người bán", value=seller_mention, inline=False)
-    e.add_field(name="📦 Sản phẩm", value=product or "*(không rõ)*", inline=False)
-    e.add_field(name="💰 Số tiền", value=f"**{fmt_vnd(amount)}**", inline=True)
-    e.add_field(name="🧑 Người duyệt", value=approver.mention, inline=True)
-    e.add_field(name="📝 Nội dung CK", value=f"`{transfer_code}`", inline=False)
-    e.add_field(name="🚀 Trạng thái", value="🟢 Đã giao hàng", inline=False)
-    e.set_footer(text="Cảm ơn bạn đã tin tưởng!")
+    e.add_field(name="👤 Khách Hàng", value=_fmt_receipt_person(buyer, buyer_id), inline=True)
+    e.add_field(name="🏪 Bán Bởi",   value=_fmt_receipt_person(seller, seller_id), inline=True)
+    e.add_field(name="💳 Phương Thức", value="`VietQR`", inline=True)
+    e.add_field(name="💰 Tổng Thanh Toán", value=f"**{fmt_vnd(amount)}**", inline=True)
+    e.add_field(name="📦 Trạng Thái", value="🟢 Đã bàn giao", inline=True)
+    e.add_field(name="⏰ Thời Gian", value=now_vn.strftime("%d/%m/%Y %H:%M:%S"), inline=True)
+    e.add_field(name="🛒 Sản Phẩm & Dịch Vụ", value=product or "*(không rõ)*", inline=False)
+    e.add_field(name="📝 Mã Chuyển Khoản", value=f"`{transfer_code}`", inline=False)
+    e.set_footer(text=f"Hoá đơn #{order_number} • Xử lý bởi {approver}")
     return e
 
 
@@ -300,10 +330,10 @@ class ReceiptProductModal(GuildContextModal, title="🧾 Hoàn thành đơn hàn
             await self.message.edit(embed=embed, view=view)
             await interaction.response.send_message("✅ Đã hoàn thành đơn hàng.", ephemeral=True)
 
-        receipt = build_receipt_embed(
-            order_number=order_number, buyer_mention=buyer_mention,
+        receipt = await build_receipt_embed(
+            order_number=order_number, buyer_id=buyer_id,
             product=product, amount=amount, approver=interaction.user,
-            transfer_code=transfer_code, seller_mention=seller_mention,
+            transfer_code=transfer_code, guild=interaction.guild, seller_id=seller_id,
         )
         proof_ch_id = get_cfg_proof_channel()
         if proof_ch_id:
@@ -319,6 +349,7 @@ class ReceiptProductModal(GuildContextModal, title="🧾 Hoàn thành đơn hàn
         await send_log(
             interaction.client, "SHOP_QUEUE_DONE", "Đơn hàng đợi đã hoàn thành",
             fields=[
+                ("🙋 Khách hàng", buyer_mention, True),
                 ("🧑 Seller", seller_mention or _uname_plain(interaction.user), True),
                 ("📦 Sản phẩm", product or "(không rõ)", True),
                 ("🧾 Số hóa đơn", f"#{order_number}", True),

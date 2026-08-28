@@ -1,3 +1,25 @@
+## [v4.50.0] — 2026-08-28
+
+### ✨ Tính năng mới
+- **`cogs/shop_orders.py` — Thiết kế lại `build_receipt_embed()` theo mẫu hoá đơn admin
+  gửi:** đổi tiêu đề `🧾 HÓA ĐƠN THANH TOÁN • #{order_number}`, lời cảm ơn kèm tên
+  server đưa lên đầu (description) thay vì để ở footer. Field Khách Hàng/Bán Bởi giờ
+  hiện cả mention lẫn username thô (`{member.name}`) — tự resolve Member qua
+  `guild.get_member()`, fallback `fetch_member()` nếu chưa cache. Thêm field Phương
+  Thức (`VietQR`), Trạng Thái, Thời Gian (giờ VN UTC+7, không còn UTC). Mã CK + người
+  duyệt vẫn giữ (không có trong ảnh mẫu nhưng cần đối soát) — đưa xuống field riêng/
+  footer để không phá layout chính. Hàm giờ `async` (cần `await guild.fetch_member()`),
+  đã cập nhật chỗ gọi ở `ReceiptProductModal.on_submit`.
+- **`core/data.py` — Config hoá đơn mới:** `cfg_receipt_style` ("embed" mặc định |
+  "image" — Phần 2 chưa làm, tạo sẵn field cho lúc đó) và `cfg_receipt_thankyou` (lời
+  cảm ơn admin tự sửa, hỗ trợ placeholder `{shop}`).
+- **`cogs/admin.py` — Nút "🧾 Sửa Lời Cảm Ơn Hoá Đơn" trong `.st`:** mở modal cho admin
+  tự viết lại lời cảm ơn đầu hoá đơn công khai thay vì bị hardcode cứng 1 kiểu — đáp
+  ứng yêu cầu admin tuỳ ý thay đổi cách trình bày. Nút chọn kiểu Embed/Ảnh đồ hoạ sẽ
+  thêm sau khi bản Ảnh (Phần 2) xong.
+
+---
+
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
 ## [v4.48.0] — 2026-08-26

@@ -1558,6 +1558,32 @@ def get_cfg_shop_orders_enabled() -> bool:
 def set_cfg_shop_orders_enabled(enabled: bool) -> None:
     save_cfg("cfg_shop_orders_enabled", enabled)
 
+# ══════════════════════════════════════════
+# HOÁ ĐƠN CÔNG KHAI (build_receipt_embed ở shop_orders.py)
+# cfg_receipt_style: "embed" (mặc định, đã làm) | "image" (Phần 2 — CHƯA implement).
+# Tạo sẵn field này để lúc làm xong bản ảnh chỉ cần thêm nhánh xử lý + nút chọn ở .st,
+# không phải đổi schema/migrate data cũ.
+# ══════════════════════════════════════════
+DEFAULT_RECEIPT_THANKYOU = (
+    "✨ Cảm ơn quý khách đã tin tưởng và giao dịch tại **{shop}**!\n"
+    "Đơn hàng đã được xác nhận thanh toán & bàn giao thành công."
+)
+
+def get_cfg_receipt_style() -> str:
+    return load_data().get("cfg_receipt_style", "embed")
+
+def set_cfg_receipt_style(style: str) -> None:
+    save_cfg("cfg_receipt_style", style)
+
+def get_cfg_receipt_thankyou() -> str:
+    """Lời cảm ơn hiển thị đầu hóa đơn công khai — admin tự sửa qua nút "🧾 Sửa Lời Cảm
+    Ơn Hoá Đơn" trong `.st`. Hỗ trợ placeholder {shop} → thay bằng tên server lúc gửi
+    (thay bằng str.replace, KHÔNG dùng .format() — tránh vỡ nếu admin gõ dính dấu {})."""
+    return load_data().get("cfg_receipt_thankyou", DEFAULT_RECEIPT_THANKYOU)
+
+def set_cfg_receipt_thankyou(text: str) -> None:
+    save_cfg("cfg_receipt_thankyou", text)
+
 def get_shop_orders_bank(user_id: int) -> dict | None:
     """Bank riêng của 1 seller. None nếu seller đó chưa từng `.shopbank`."""
     return load_data().get("shop_orders_banks", {}).get(str(user_id))

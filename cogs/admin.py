@@ -35,6 +35,7 @@ from core.data import (
     add_pending_sold_buyer, get_pending_sold_buyer, get_all_pending_sold_buyer,
     remove_pending_sold_buyer, set_pending_sold_buyer_dm, mark_pending_sold_buyer_escalated,
     get_cfg_shop_orders_enabled, set_cfg_shop_orders_enabled,
+    get_cfg_receipt_thankyou, set_cfg_receipt_thankyou,
     get_embed_template, get_embed_templates, save_embed_template, delete_embed_template,
     GuildContextView as View, GuildContextModal as Modal,
 )
@@ -168,6 +169,8 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🧪 Shop Orders (thử nghiệm)", value=shop_status, inline=True)
         relay_status = "🟢 Bật" if data.get("cfg_ticket_relay", True) else "🔴 Tắt"
         embed.add_field(name="🪄 Relay Tin Admin (Ticket)", value=relay_status, inline=True)
+        thankyou_preview = get_cfg_receipt_thankyou().split("\n")[0]
+        embed.add_field(name="🧾 Lời Cảm Ơn Hoá Đơn", value=thankyou_preview[:100], inline=False)
         panel_cfg = get_panel_buttons_cfg()
         panel_on  = sum(1 for v in panel_cfg.values() if v)
         embed.add_field(name="🔘 Panel Buttons", value=f"{panel_on}/{len(PANEL_BUTTON_DEFS)} bật — `.panelbtn` để chỉnh", inline=True)
@@ -175,6 +178,7 @@ class AdminCog(commands.Cog):
 
         view = SettingsView(ctx.guild)
         view.add_item(ShopOrdersToggleButton())
+        view.add_item(ReceiptMessageButton())
         await ctx.reply(embed=embed, view=view)
 
     # ── .sv / .giaset ──
@@ -1843,6 +1847,52 @@ class ShopOrdersToggleButton(discord.ui.Button):
         await interaction.response.edit_message(embed=embed, view=self.view)
         await send_log(
             interaction.client, "SETTINGS", f"Shop Orders (thử nghiệm) → {status_text}",
+            fields=[("👤 Admin", f"{interaction.user}", True)],
+            user=interaction.user,
+            guild_id=interaction.guild_id,
+        )
+
+
+# ══════════════════════════════════════════
+# HOÁ ĐƠN — nút sửa lời cảm ơn trong .st (cfg_receipt_style="embed" giờ dùng bản này;
+# "image" là Phần 2, sẽ thêm nút chọn kiểu ở đây khi làm xong — xem core/data.py)
+# ══════════════════════════════════════════
+class ReceiptMessageButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Sửa Lời Cảm Ơn Hoá Đơn", emoji="🧾", style=discord.ButtonStyle.secondary, row=4)
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Bạn không có quyền dùng nút này.", ephemeral=True)
+        await interaction.response.send_modal(ReceiptMessageModal())
+
+
+class ReceiptMessageModal(Modal, title="🧾 Sửa Lời Cảm Ơn Hoá Đơn"):
+    """Đổi phần mở đầu hóa đơn công khai (build_receipt_embed ở shop_orders.py) — admin
+    tự viết lại theo ý mình thay vì bị hardcode 1 kiểu duy nhất."""
+
+    def __init__(self):
+        super().__init__()
+        self.message_input = TextInput(
+            label="Lời cảm ơn (đầu hóa đơn công khai)",
+            style=discord.TextStyle.paragraph,
+            placeholder="Dùng {shop} để tự chèn tên server. VD: Cảm ơn quý khách tại {shop}!",
+            default=get_cfg_receipt_thankyou()[:300],
+            max_length=300,
+            required=True,
+        )
+        self.add_item(self.message_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        text = self.message_input.value.strip()
+        set_cfg_receipt_thankyou(text)
+        preview = "> " + text.replace("{shop}", interaction.guild.name).replace("\n", "\n> ")
+        await interaction.response.send_message(
+            f"✅ Đã cập nhật lời cảm ơn hoá đơn.\n\n**Xem trước:**\n{preview}",
+            ephemeral=True,
+        )
+        await send_log(
+            interaction.client, "SETTINGS", "Sửa lời cảm ơn hoá đơn",
             fields=[("👤 Admin", f"{interaction.user}", True)],
             user=interaction.user,
             guild_id=interaction.guild_id,
