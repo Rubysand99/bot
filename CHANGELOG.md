@@ -1,3 +1,5 @@
+# CHANGELOG — TuyTam Bot (Rudeus Bot)
+
 ## [v4.50.0] — 2026-08-28
 
 ### ✨ Tính năng mới
@@ -19,8 +21,6 @@
   thêm sau khi bản Ảnh (Phần 2) xong.
 
 ---
-
-# CHANGELOG — TuyTam Bot (Rudeus Bot)
 
 ## [v4.49.0] — 2026-08-28
 
