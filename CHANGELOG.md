@@ -1,3 +1,50 @@
+## [v4.52.0] — 2026-08-30
+
+### ✨ Tính năng mới
+- **`cogs/ticket.py` — Lệnh `.claim`/`.nhan`:** staff/seller nhận xử lý 1 ticket. Sau khi
+  claim, `.done`/`.done+`/`/done` — dù ai gõ lệnh — đều tự tính QR (dùng bank của người
+  claim qua `.shopbank`), lưu `staff`/`staff_id` vào ticket record theo người claim, và
+  hiện field "🙋 Seller (đã claim)" trong embed/log nếu khác người gõ lệnh. Trước đây
+  luôn dùng ctx.author (người gõ lệnh) làm seller — sai nếu 1 seller nhờ admin/seller
+  khác gõ hộ, QR sẽ generate nhầm sang bank người gõ hộ thay vì người bán thật. Lưu claim
+  vào `data["ticket_claims"]` (Mongo, không đụng topic string — tránh rủi ro vỡ parser
+  `parts[N]` đang dùng ở nhiều chỗ khác). Chưa `.claim` thì hành vi y hệt cũ (ctx.author =
+  seller), tương thích ngược hoàn toàn với ticket cũ.
+- **`cogs/ticket.py` — `.thongke` thêm mục "🙋 Top Seller":** gộp `amount` theo
+  `staff_id` (giờ là người claim thật) trong `records` sẵn có của tháng, cùng cơ chế Top
+  Buyer đã có — không cần thêm bộ đếm/collection mới.
+- **`cogs/ticket.py` — Lệnh `.send`:** gửi nội dung/media thay mặt bot vào kênh hiện
+  tại — đính kèm ảnh/video/file vào tin nhắn gõ lệnh. Có chữ không media → chỉ gửi chữ;
+  có media không chữ → chỉ gửi media. Tự xoá tin nhắn gõ lệnh sau khi gửi thành công.
+  Dùng để tự post QR/thông tin thanh toán thủ công cho seller chưa `.shopbank`, hoặc
+  thông báo bất kỳ.
+- **`cogs/ticket.py` — Lệnh `.done+`:** hoàn thành đơn KHÔNG thử tạo QR/SePay — luôn
+  thẳng hàng đợi để admin xác nhận tay, dùng khi thu tiền mặt/chuyển khoản tay. Cú pháp
+  giống `.done`. Tách logic dùng chung giữa `.done`/`.done+` ra
+  `_complete_order_impl(use_qr=...)` để tránh lặp code.
+- **`cogs/listings.py` — Lệnh `/post`:** đăng tin vào 1 kênh bất kỳ, tuỳ chọn embed
+  on/off, ảnh, nội dung, và trạng thái Còn hàng/Đã bán kèm nút "🛒 Mua Ngay" tạo ticket
+  thẳng (không cần qua panel Ticket chính). Dùng lại hạ tầng có sẵn của
+  `.addlisting`/`ListingView` (cùng file, cùng role `listing`/`listing_manage`, cùng cơ
+  chế đọc trạng thái từ component của message bị bấm thay vì suy diễn) — chỉ khác nội
+  dung tự do thay vì schema IGN/Giá/Cape cố định. Thêm `StockPostView` (persistent, đăng
+  ký lại ở `cog_load()`) + `create_stockpost_ticket()` ở `cogs/ticket.py` (copy nội dung
+  bài đăng + link gốc vào ticket cho staff có ngữ cảnh).
+
+### 🐛 Sửa lỗi
+- **`cogs/ticket.py` — Đảo chiều ngữ nghĩa `buy`/`sell` cho khớp góc nhìn khách hàng:**
+  trước đây Donut/KingMC + `_close_ticket`'s type_map hiểu `sell`=khách mua/`buy`=khách
+  bán, ngược với Acc Pre/Build (đã đúng `buy`=khách mua từ trước). Đảo lại toàn bộ 8 chỗ
+  liên quan (embed tạo ticket Donut/KingMC, type_map transcript, action label transcript,
+  + 4 chỗ trong code chết `ItemSelect`/`ServerView`/`_TradeModeSelect` để không để bẫy
+  ngược chiều nếu sau này nối lại) — giờ nhất quán: `buy` = khách mua, `sell` = khách bán
+  ở mọi nơi.
+- **`cogs/ticket.py` — Bỏ tin nhắn cảnh báo "chưa đăng ký ngân hàng nhận tiền" khi
+  `.done`/`/done`:** seller chưa `.shopbank` vẫn tự động vào hàng đợi như cũ (không đổi
+  hành vi), chỉ không còn hiện dòng nhắc nữa.
+
+---
+
 # CHANGELOG — TuyTam Bot (Rudeus Bot)
 
 ## [v4.50.0] — 2026-08-28
