@@ -1,3 +1,18 @@
+## [v4.53.0] — 2026-08-31
+
+### ✨ Tính năng mới
+- `cogs/ticket.py` — Nút "🙋 Nhận xử lý" trong TicketButtons (mọi loại ticket): bản
+  bấm-nút của lệnh `.claim`/`.nhan`, cùng quyền `is_staff_member()` (seller/support/
+  builder role + admin). Bấm xong, `.done`/`.done+` sau đó — dù ai gõ — tự tính QR/tiền
+  cho người đã claim, y hệt hành vi lệnh text. Ghi log `TICKET_CLAIM`.
+
+### ♻️ Thay đổi
+- `cogs/ticket.py` — Tách logic ghi claim ra `_set_ticket_claim()` dùng chung giữa
+  `.claim` (text) và nút "🙋 Nhận xử lý" mới, tránh lệch hành vi giữa 2 cách gọi cùng
+  1 hành động.
+
+---
+
 ## [v4.52.0] — 2026-08-30
 
 ### ✨ Tính năng mới
