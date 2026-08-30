@@ -123,6 +123,22 @@ def _register_ticket(user_id: int, channel_id: int, guild_id: int):
 def _unregister_ticket(user_id: int, guild_id: int):
     _open_tickets.pop((guild_id, user_id), None)
 
+# Ghi nhận ai đang xử lý (claim) 1 ticket — lưu Mongo qua load_data()/save_data() (data
+# CỦA GUILD hiện tại, đã tự cô lập qua contextvar, xem AI_CONTEXT.md), KHÔNG phải cache
+# RAM nên không cần key (guild_id, user_id): mỗi guild vốn đã có document riêng, và
+# channel_id (dùng làm key con bên trong data["ticket_claims"]) là duy nhất toàn Discord
+# nên không lẫn giữa các guild. Dùng chung cho lệnh `.claim` (text) VÀ nút "🙋 Nhận xử lý"
+# (button, thêm ở TicketButtons bên dưới) — 1 nguồn logic duy nhất, tránh lệch hành vi
+# giữa 2 cách gọi cùng 1 hành động.
+def _set_ticket_claim(channel_id: int, claimer_id: int) -> int | None:
+    """Ghi claimer mới cho ticket, trả về ID người claim TRƯỚC ĐÓ (None nếu chưa ai claim)."""
+    data = load_data()
+    claims = data.setdefault("ticket_claims", {})
+    prev_id = claims.get(str(channel_id))
+    claims[str(channel_id)] = claimer_id
+    save_data(data)
+    return prev_id
+
 async def has_ticket(guild, user) -> bool:
     """Kiểm tra user có ticket đang mở Ở ĐÚNG GUILD NÀY không — dùng cache O(1) thay vì
     quét toàn bộ kênh."""
@@ -1490,6 +1506,37 @@ class TicketButtons(View):
             delete_after=20
         )
 
+    # Bản nút bấm của lệnh `.claim` — cùng quyền is_staff_member() (seller/support/builder
+    # role + admin, xem AI_CONTEXT.md mục Conventions), cùng dùng chung _set_ticket_claim()
+    # nên hành vi giữa gõ lệnh và bấm nút LUÔN đồng nhất (sửa 1 chỗ, cả 2 cùng đổi theo).
+    @discord.ui.button(label="Nhận xử lý", emoji="🙋", style=discord.ButtonStyle.blurple, custom_id="claim_ticket")
+    async def claim_ticket(self, interaction: discord.Interaction, button: Button):
+        if not is_staff_member(interaction.user):
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        if not _is_bot_ticket_topic(interaction.channel.topic):
+            return await interaction.response.send_message("❌ Đây không phải kênh ticket.", ephemeral=True)
+
+        prev_id = _set_ticket_claim(interaction.channel.id, interaction.user.id)
+        if prev_id and prev_id != interaction.user.id:
+            prev_member = interaction.guild.get_member(prev_id)
+            note = f" (trước đó do {prev_member.mention if prev_member else f'`{prev_id}`'} nhận)"
+        else:
+            note = ""
+
+        await interaction.response.send_message(
+            f"🙋 {interaction.user.mention} đã nhận xử lý ticket này{note}.\n"
+            f"`.done`/`.done+` sau đó — dù ai gõ — sẽ tự tính QR/tiền cho bạn."
+        )
+
+        await send_log(
+            interaction.client, "TICKET_CLAIM", f"Nhận xử lý ticket — {interaction.channel.name}",
+            fields=[
+                ("🎫 Kênh",     interaction.channel.mention, True),
+                ("🙋 Nhận bởi", _uname_plain(interaction.user), True),
+            ],
+            user=interaction.user, guild_id=interaction.guild_id,
+        )
+
 # ══════════════════════════════════════════
 # COG
 # ══════════════════════════════════════════
@@ -1654,11 +1701,7 @@ class TicketCog(commands.Cog):
         if not is_staff_member(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
         if not (ctx.channel.topic and "|" in ctx.channel.topic): return await ctx.reply("❌ Đây không phải kênh ticket.")
 
-        data = load_data()
-        claims = data.setdefault("ticket_claims", {})
-        prev_id = claims.get(str(ctx.channel.id))
-        claims[str(ctx.channel.id)] = ctx.author.id
-        save_data(data)
+        prev_id = _set_ticket_claim(ctx.channel.id, ctx.author.id)
 
         if prev_id and prev_id != ctx.author.id:
             prev_member = ctx.guild.get_member(prev_id)
