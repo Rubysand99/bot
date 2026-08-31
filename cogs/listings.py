@@ -135,13 +135,10 @@ def build_listing_embed(ign: str, price: str, cape: str, note: str, author: disc
 # Dùng cho các kênh 「stock」「sold」 — không cần bấm nút ở panel Ticket để tạo ticket
 # mua, khách bấm thẳng 🛒 Mua Ngay trên bài đăng. Cùng cơ chế đọc-trạng-thái-từ-live-
 # message như ListingView ở trên (view dùng chung cho nhiều tin nhắn, KHÔNG lưu ID sản
-# phẩm vào custom_id/Mongo).
+# phẩm vào custom_id/Mongo). Trạng thái CHỈ thể hiện qua nút toggle (label/icon/màu) —
+# KHÔNG còn field/badge text trong embed/content (xem build_stockpost_embed/text và
+# StockPostView.toggle_btn) để tránh phải edit embed mỗi lần đổi trạng thái.
 # ══════════════════════════════════════════
-STATUS_BADGE = {
-    "stock": "📦 **CÒN HÀNG**",
-    "sold":  "✅ **ĐÃ BÁN**",
-}
-
 # Nút "🛒 Mua Ngay" trên bài /post trước đây LUÔN tạo ticket chung (create_stockpost_ticket)
 # — không phân biệt món hàng thuộc server/loại nào, staff phải tự phân loại thủ công trong
 # ticket. Giờ hỏi người đăng ngay lúc /post (xem _StockPostTicketAskView) muốn nút Mua Ngay
@@ -177,10 +174,14 @@ async def _create_stockpost_dest_ticket(interaction: discord.Interaction, type_k
 
 
 def build_stockpost_embed(content: str | None, status: str, author: discord.abc.User, ticket_type_label: str | None = None) -> discord.Embed:
+    # FIX: bỏ field "Trạng thái" khỏi embed — trạng thái giờ CHỈ thể hiện qua nút
+    # toggle (label + icon + màu, xem StockPostView.toggle_btn). Lý do: field text từng
+    # phải đồng bộ lại mỗi lần bấm nút bằng cách edit embed → với bài có ảnh đính kèm,
+    # Discord có bug tách ảnh ra khỏi embed bất kể sửa gì trong embed đó (xem comment ở
+    # ListingView.toggle_btn). Bỏ hẳn field này = không còn gì cần đồng bộ = không còn gì
+    # cần edit embed = né hoàn toàn bug, đơn giản và triệt để hơn các bản vá field trước.
     color = COLOR_LISTING_SOLD if status == "sold" else COLOR_LISTING_AVAILABLE
     e = discord.Embed(description=content or None, color=color, timestamp=datetime.now(timezone.utc))
-    if status in STATUS_BADGE:
-        e.add_field(name="Trạng thái", value=STATUS_BADGE[status], inline=True)
     if ticket_type_label:
         e.add_field(name="🏷️ Loại", value=ticket_type_label, inline=True)
     e.set_footer(text=f"Đăng bởi {author.display_name}")
@@ -188,12 +189,7 @@ def build_stockpost_embed(content: str | None, status: str, author: discord.abc.
 
 
 def build_stockpost_text(content: str | None, status: str) -> str | None:
-    lines = []
-    if status in STATUS_BADGE:
-        lines.append(STATUS_BADGE[status])
-    if content:
-        lines.append(content)
-    return "\n\n".join(lines) if lines else None
+    return content or None
 
 
 class StockPostView(GuildContextView):
@@ -215,42 +211,22 @@ class StockPostView(GuildContextView):
                 if getattr(comp, "custom_id", None) == "stockpost_toggle":
                     currently_sold = (comp.style == discord.ButtonStyle.danger)
 
-        new_status = "stock" if currently_sold else "sold"
-
         if currently_sold:
             button.label, button.style = "📦 Còn Hàng", discord.ButtonStyle.success
         else:
-            button.label, button.style = "✅ Đã Bán", discord.ButtonStyle.danger
+            button.label, button.style = "❌ Đã Bán", discord.ButtonStyle.danger
 
         for item in self.children:
             if getattr(item, "custom_id", None) == "stockpost_buy":
                 item.disabled = not currently_sold  # đang chuyển SANG đã bán → khoá nút Mua
 
-        # Đồng bộ lại badge "Trạng thái" trong embed/nội dung theo trạng thái mới — trước
-        # đây chỉ đổi label/màu NÚT, embed/nội dung vẫn giữ nguyên "📦 CÒN HÀNG" mãi mãi dù
-        # đã bấm "Đã Bán" (bug thật: đơn hàng xong, admin toggle nút nhưng bài đăng vẫn
-        # hiện còn hàng). MUTATE TRỰC TIẾP embed đã có sẵn trên message (không dựng
-        # discord.Embed mới, không gọi set_image()/đụng file đính kèm) để né đúng bug
-        # Discord tách/mất ảnh khi edit embed kèm attachment mới — xem comment tương tự ở
-        # ListingView.toggle_btn phía trên.
-        kwargs = {"view": self}
-        if interaction.message.embeds:
-            embed = interaction.message.embeds[0]
-            embed.colour = COLOR_LISTING_SOLD if new_status == "sold" else COLOR_LISTING_AVAILABLE
-            for i, f in enumerate(embed.fields):
-                if f.name == "Trạng thái":
-                    embed.set_field_at(i, name="Trạng thái", value=STATUS_BADGE[new_status], inline=f.inline)
-                    break
-            kwargs["embed"] = embed
-        elif interaction.message.content:
-            # Tin thường (không embed) — badge nằm ở dòng đầu content (build_stockpost_text),
-            # bóc dòng badge cũ ra rồi build lại với trạng thái mới để tránh nhân đôi/kẹt badge cũ.
-            raw = interaction.message.content
-            first, _, rest = raw.partition("\n\n")
-            remainder = rest if first in STATUS_BADGE.values() else raw
-            kwargs["content"] = build_stockpost_text(remainder or None, new_status)
-
-        await interaction.response.edit_message(**kwargs)
+        # FIX: bỏ hẳn field "Trạng thái"/badge khỏi embed & content (xem
+        # build_stockpost_embed/build_stockpost_text) — trạng thái giờ CHỈ thể hiện qua
+        # nút này (label/icon/màu). Nên CHỈ edit view, TUYỆT ĐỐI không đụng embed/content
+        # nữa → không còn gì cần đồng bộ → không còn nguy cơ bug Discord tách ảnh ra khỏi
+        # embed khi PATCH embed của message có ảnh đính kèm (lỗi thật đã xảy ra ở bản vá
+        # trước — xem comment tương tự ở ListingView.toggle_btn).
+        await interaction.response.edit_message(view=self)
 
     @discord.ui.button(label="🛒 Mua Ngay", style=discord.ButtonStyle.primary, custom_id="stockpost_buy")
     async def buy_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -315,7 +291,7 @@ class _StockPostTicketAskView(GuildContextView):
         if self.status_val == "sold":
             for item in view.children:
                 if getattr(item, "custom_id", None) == "stockpost_toggle":
-                    item.label, item.style = "✅ Đã Bán", discord.ButtonStyle.danger
+                    item.label, item.style = "❌ Đã Bán", discord.ButtonStyle.danger
                 if getattr(item, "custom_id", None) == "stockpost_buy":
                     item.disabled = True
 
@@ -477,7 +453,7 @@ class ListingsCog(commands.Cog):
             if status_val == "sold":
                 for item in view.children:
                     if getattr(item, "custom_id", None) == "stockpost_toggle":
-                        item.label, item.style = "✅ Đã Bán", discord.ButtonStyle.danger
+                        item.label, item.style = "❌ Đã Bán", discord.ButtonStyle.danger
                     if getattr(item, "custom_id", None) == "stockpost_buy":
                         item.disabled = True
 

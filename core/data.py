@@ -220,6 +220,7 @@ def _default_data(guild_id: int) -> dict:
         "cfg_ticket_category": 0,
         "cfg_support_role":    0,
         "cfg_seller_role":     0,
+        "cfg_seller_roles_extra": [],  # Role seller PHỤ (ngoài cfg_seller_role "chính") — thêm qua .addsellerrole
         "cfg_counter_channel": 0,
         "cfg_legit_channel":   0,
         "cfg_proof_channel":   0,
@@ -701,6 +702,57 @@ def get_guild_prefix(guild_id: int) -> str:
     return "."
 def get_cfg_support_role()    -> int: return load_data().get("cfg_support_role", 0)
 def get_cfg_seller_role()     -> int: return load_data().get("cfg_seller_role", 0)
+
+def get_cfg_seller_roles() -> list[int]:
+    """TOÀN BỘ role được coi là "seller" — gồm role "chính" (cfg_seller_role, cấu hình
+    qua `.st`, giữ nguyên KHÔNG đổi UI đó) CỘNG các role PHỤ thêm qua `.addsellerrole`
+    (cfg_seller_roles_extra). Dùng hàm NÀY ở mọi nơi cần check/gán quyền seller — không
+    dùng riêng get_cfg_seller_role() nữa (giờ chỉ còn là 1 THÀNH PHẦN của danh sách này,
+    vẫn giữ hàm cũ để tương thích chỗ nào còn đọc trực tiếp role "chính")."""
+    data = load_data()
+    primary = data.get("cfg_seller_role", 0)
+    extra = data.get("cfg_seller_roles_extra", [])
+    seen, out = set(), []
+    for rid in ([primary] if primary else []) + list(extra):
+        if rid and rid not in seen:
+            seen.add(rid)
+            out.append(rid)
+    return out
+
+async def add_cfg_seller_role(role_id: int) -> bool:
+    """Thêm 1 role seller PHỤ cho guild đang thao tác. Trả về True nếu MỚI thêm — False
+    nếu role_id đã nằm trong danh sách seller (role chính HOẶC đã là role phụ) từ trước."""
+    if role_id in get_cfg_seller_roles():
+        return False
+    guild_id = get_current_guild_id()
+    if guild_id is None:
+        log.error("[DATA] ❌ add_cfg_seller_role() được gọi mà KHÔNG có guild context.")
+        return False
+    data = load_data()
+    lst = data.setdefault("cfg_seller_roles_extra", [])
+    lst.append(role_id)
+    _data_cache[guild_id] = data
+    await _flush_to_mongo(guild_id)
+    return True
+
+async def remove_cfg_seller_role(role_id: int) -> bool:
+    """Xoá 1 role seller khỏi danh sách PHỤ (cfg_seller_roles_extra) của guild đang thao
+    tác. Trả về True nếu có xoá thật. KHÔNG xoá được role "chính" (cfg_seller_role) qua
+    hàm này — role đó vẫn đổi qua `.st` như cũ."""
+    guild_id = get_current_guild_id()
+    if guild_id is None:
+        log.error("[DATA] ❌ remove_cfg_seller_role() được gọi mà KHÔNG có guild context.")
+        return False
+    data = load_data()
+    lst = data.get("cfg_seller_roles_extra", [])
+    if role_id not in lst:
+        return False
+    lst.remove(role_id)
+    data["cfg_seller_roles_extra"] = lst
+    _data_cache[guild_id] = data
+    await _flush_to_mongo(guild_id)
+    return True
+
 def get_cfg_counter_channel() -> int: return load_data().get("cfg_counter_channel", 0)
 def get_cfg_legit_channel()   -> int: return load_data().get("cfg_legit_channel", 0)
 def get_cfg_proof_channel()   -> int: return load_data().get("cfg_proof_channel", 0)
@@ -1409,8 +1461,11 @@ def is_staff_member(member) -> bool:
     guild = member.guild
     sr = guild.get_role(get_cfg_support_role())
     if sr and sr in member.roles: return True
-    slr = guild.get_role(get_cfg_seller_role())
-    if slr and slr in member.roles: return True
+    # FIX: check TOÀN BỘ role seller (chính + phụ, xem get_cfg_seller_roles()) thay vì
+    # chỉ 1 role seller "chính" như trước — hỗ trợ nhiều role seller cùng lúc.
+    for rid in get_cfg_seller_roles():
+        r = guild.get_role(rid)
+        if r and r in member.roles: return True
     bbr = guild.get_role(get_cfg_builder_role())
     if bbr and bbr in member.roles: return True
     return False

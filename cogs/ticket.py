@@ -16,7 +16,8 @@ from discord.ui import Button, Select, TextInput
 from core.data import (
     ADMIN_IDS, ADMIN_TUYTAM_ID,
     get_cfg_transcript_channel,
-    get_cfg_category, get_cfg_support_role, get_cfg_seller_role,
+    get_cfg_category, get_cfg_support_role, get_cfg_seller_role, get_cfg_seller_roles,
+    add_cfg_seller_role, remove_cfg_seller_role, is_admin,
     get_cfg_counter_channel,
     save_panel_channel_id,
     get_user_total_spent,
@@ -233,9 +234,10 @@ def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None
         if r:
             overwrites[r] = _staff_perm
     elif role_group == "seller":
-        seller_role = guild.get_role(get_cfg_seller_role())
-        if seller_role:
-            overwrites[seller_role] = _staff_perm
+        for rid in get_cfg_seller_roles():
+            seller_role = guild.get_role(rid)
+            if seller_role:
+                overwrites[seller_role] = _staff_perm
     elif role_group == "builder":
         builder_role = guild.get_role(get_cfg_builder_role())
         if builder_role:
@@ -247,9 +249,10 @@ def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None
         support_role = guild.get_role(get_cfg_support_role())
         if support_role:
             overwrites[support_role] = _staff_perm
-        seller_role = guild.get_role(get_cfg_seller_role())
-        if seller_role:
-            overwrites[seller_role] = _staff_perm
+        for rid in get_cfg_seller_roles():
+            seller_role = guild.get_role(rid)
+            if seller_role:
+                overwrites[seller_role] = _staff_perm
     return overwrites
 
 
@@ -282,14 +285,14 @@ def _build_ticket_overwrites_multi(guild, user, role_ids: list, seller_id: int |
                 if r:
                     overwrites[r] = _staff_perm
     else:
-        # Fallback
-        for rid in [get_cfg_support_role(), get_cfg_seller_role()]:
-            r = guild.get_role(rid)
-            if r:
-                overwrites[r] = _staff_perm
-        seller_role = guild.get_role(get_cfg_seller_role())
-        if seller_role:
-            overwrites[seller_role] = _staff_perm
+        # Fallback — support + TOÀN BỘ role seller (chính + phụ, xem get_cfg_seller_roles())
+        support_role = guild.get_role(get_cfg_support_role())
+        if support_role:
+            overwrites[support_role] = _staff_perm
+        for rid in get_cfg_seller_roles():
+            seller_role = guild.get_role(rid)
+            if seller_role:
+                overwrites[seller_role] = _staff_perm
         builder_role = guild.get_role(get_cfg_builder_role())
         if builder_role:
             overwrites[builder_role] = _staff_perm
@@ -2467,6 +2470,68 @@ class TicketCog(commands.Cog):
         await ctx.reply(msg[:1990])
 
     # ══════════════════════════════════════════
+    # ADMIN: QUẢN LÝ NHIỀU ROLE SELLER — role "chính" vẫn cấu hình qua `.st` như cũ
+    # (cfg_seller_role), 3 lệnh này quản lý danh sách role seller PHỤ
+    # (cfg_seller_roles_extra, xem get_cfg_seller_roles() ở core/data.py). Mọi nơi cấp
+    # quyền seller (is_staff_member, tạo ticket, .setrole key seller) đều đọc HỢP NHẤT cả
+    # role chính + phụ qua get_cfg_seller_roles() — không cần sửa gì thêm khi thêm role mới.
+    # ══════════════════════════════════════════
+    @commands.command(name="addsellerrole", aliases=["themrolesellersan"])
+    async def add_seller_role_cmd(self, ctx, role: discord.Role = None):
+        if not is_admin(ctx.author):
+            return await ctx.reply("❌ Bạn không có quyền.")
+        if not role:
+            return await ctx.reply("❌ Dùng: `.addsellerrole @role`")
+
+        added = await add_cfg_seller_role(role.id)
+        if not added:
+            return await ctx.reply(f"ℹ️ {role.mention} đã là role seller (chính hoặc phụ) từ trước rồi.")
+
+        await ctx.reply(f"✅ Đã thêm {role.mention} vào danh sách role seller — có quyền staff/seller ngay lập tức.")
+        await send_log(self.bot, "SETTINGS", "Thêm role seller phụ",
+            fields=[("👥 Role", f"{role.name} ({role.id})", True), ("👑 Bởi", str(ctx.author), True)],
+            user=ctx.author, guild_id=ctx.guild.id)
+
+    @commands.command(name="rmsellerrole", aliases=["xoarolesellersan"])
+    async def remove_seller_role_cmd(self, ctx, role: discord.Role = None):
+        if not is_admin(ctx.author):
+            return await ctx.reply("❌ Bạn không có quyền.")
+        if not role:
+            return await ctx.reply("❌ Dùng: `.rmsellerrole @role`")
+
+        if role.id == get_cfg_seller_role():
+            return await ctx.reply(f"❌ {role.mention} là role seller **chính** — đổi qua `.st`, không xoá được bằng lệnh này.")
+
+        removed = await remove_cfg_seller_role(role.id)
+        if not removed:
+            return await ctx.reply(f"ℹ️ {role.mention} không phải role seller phụ (thêm qua `.addsellerrole`).")
+
+        await ctx.reply(f"🗑️ Đã xoá {role.mention} khỏi danh sách role seller.")
+        await send_log(self.bot, "SETTINGS", "Xoá role seller phụ",
+            fields=[("👥 Role", f"{role.name} ({role.id})", True), ("👑 Bởi", str(ctx.author), True)],
+            user=ctx.author, guild_id=ctx.guild.id)
+
+    @commands.command(name="sellerroles", aliases=["dsrolesellersan"])
+    async def list_seller_roles_cmd(self, ctx):
+        if not is_admin(ctx.author):
+            return await ctx.reply("❌ Bạn không có quyền.")
+
+        primary_id = get_cfg_seller_role()
+        all_ids = get_cfg_seller_roles()
+        if not all_ids:
+            return await ctx.reply("📭 Chưa cấu hình role seller nào. Đặt role chính qua `.st`, hoặc thêm role phụ qua `.addsellerrole @role`.")
+
+        lines = []
+        for rid in all_ids:
+            role = ctx.guild.get_role(rid)
+            tag = " *(chính — đổi qua `.st`)*" if rid == primary_id else " *(phụ)*"
+            lines.append(f"{role.mention if role else f'`{rid}` (role đã bị xoá?)'}{tag}")
+
+        embed = discord.Embed(title="🏪 Danh sách Role Seller", description="\n".join(lines), color=0x5865F2)
+        embed.set_footer(text="Thêm: .addsellerrole @role  •  Xoá (role phụ): .rmsellerrole @role")
+        await ctx.reply(embed=embed)
+
+    # ══════════════════════════════════════════
     # ADMIN: GÁN ROLE CHO TỪNG LOẠI TICKET
     # ══════════════════════════════════════════
     @commands.command(name="setrole")
@@ -2547,11 +2612,11 @@ class TicketCog(commands.Cog):
                 "bất kể cấu hình role. Dùng `.setrole {} reset` nếu muốn xóa role khác đang gán.".format(ticket_key)
             )
 
-        if value_l in ("seller", "builder"):
-            role_id = get_cfg_seller_role() if value_l == "seller" else get_cfg_builder_role()
+        if value_l == "builder":
+            role_id = get_cfg_builder_role()
             role = ctx.guild.get_role(role_id)
             if not role:
-                return await ctx.reply(f"❌ Không tìm thấy role `{value_l}` (ID `{role_id}`) trong server.")
+                return await ctx.reply(f"❌ Không tìm thấy role `builder` (ID `{role_id}`) trong server.")
             current = get_ticket_role_ids(ticket_key)
             if role.id not in current:
                 current.append(role.id)
@@ -2559,6 +2624,27 @@ class TicketCog(commands.Cog):
             embed = discord.Embed(title="⚙️ Đã Gán Role Ticket", color=0xF1C40F, timestamp=datetime.now(timezone.utc))
             embed.add_field(name="🏷️ Loại ticket", value=label,             inline=True)
             embed.add_field(name="👥 Role",         value=role.mention,      inline=True)
+            embed.add_field(name="🔑 Key",          value=f"`{ticket_key}`", inline=True)
+            embed.set_footer(text=f"Cài bởi {_uname_plain(ctx.author)}")
+            return await ctx.reply(embed=embed)
+
+        if value_l == "seller":
+            # FIX: giờ có THỂ NHIỀU role seller (chính + phụ, xem get_cfg_seller_roles()/
+            # .addsellerrole) — trước đây chỉ thêm ĐÚNG 1 role seller "chính".
+            seller_role_ids = get_cfg_seller_roles()
+            if not seller_role_ids:
+                return await ctx.reply("❌ Chưa cấu hình role seller nào — dùng `.st` (role chính) hoặc `.addsellerrole @role` (role phụ) trước.")
+            current = get_ticket_role_ids(ticket_key)
+            added_mentions = []
+            for rid in seller_role_ids:
+                role = ctx.guild.get_role(rid)
+                if role and role.id not in current:
+                    current.append(role.id)
+                    added_mentions.append(role.mention)
+            set_ticket_role_ids(ticket_key, current)
+            embed = discord.Embed(title="⚙️ Đã Gán Role Ticket", color=0xF1C40F, timestamp=datetime.now(timezone.utc))
+            embed.add_field(name="🏷️ Loại ticket", value=label,             inline=True)
+            embed.add_field(name="👥 Role seller thêm mới", value=(", ".join(added_mentions) if added_mentions else "*(tất cả đã có sẵn từ trước)*"), inline=False)
             embed.add_field(name="🔑 Key",          value=f"`{ticket_key}`", inline=True)
             embed.set_footer(text=f"Cài bởi {_uname_plain(ctx.author)}")
             return await ctx.reply(embed=embed)
