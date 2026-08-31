@@ -234,6 +234,7 @@ def _default_data(guild_id: int) -> dict:
         "cfg_welcome_channel": 0,     # Kênh ping chào mừng member mới join — 0 = tắt
         "cfg_verify_extra_roles": [], # Role phụ gán kèm khi verify (ngoài role Verify chính)
         "cfg_font":            "normal",
+        "extra_admin_ids":     [],   # Admin PHỤ thêm qua `.ad` — CHỈ có quyền admin ở ĐÚNG guild này (xem is_admin())
         "dangerous_cmd_overrides": {},
         "sellers":          [],
         "sv_prices":        [],
@@ -521,39 +522,77 @@ async def set_guild_authorized(guild_id: int, authorized: bool) -> bool:
 # ══════════════════════════════════════════
 # BOT ADMIN — thêm qua lệnh .ad (cogs/admin.py), CHỈ Ruby dùng được
 # ══════════════════════════════════════════
-# Lưu ở global data ("_id": "main") — admin là khái niệm CHUNG cho cả bot, không thuộc
-# riêng guild nào, giống hệt lý do _authorized_guilds ở trên nằm ở đây.
+# FIX (thay đổi kiến trúc): TRƯỚC ĐÂY admin thêm qua `.ad` được lưu ở global data
+# ("_id": "main") và mutate thẳng vào ADMIN_IDS (list global, dùng chung MỌI guild) →
+# admin mới có TOÀN QUYỀN ở TẤT CẢ server bot đang hoạt động, không phân biệt server nào.
+# Theo yêu cầu mới: `.ad` dùng ở server nào thì admin đó CHỈ có quyền ở ĐÚNG server đó.
+# Nên giờ admin phụ được lưu NGAY TRONG document của guild đó (field "extra_admin_ids",
+# giống mọi cfg_* khác — đi qua load_data()/save_data() theo guild context hiện tại,
+# KHÔNG còn đụng tới ADMIN_IDS/global data nữa). 2 admin cố định (ADMIN_RUBY_ID/
+# ADMIN_TUYTAM_ID, đọc từ env) vẫn là list ADMIN_IDS y nguyên như cũ — không đổi gì,
+# vẫn có toàn quyền ở MỌI guild như trước giờ.
 def get_extra_admins() -> list[int]:
-    """Admin được thêm qua `.ad` (KHÔNG tính ADMIN_RUBY_ID/ADMIN_TUYTAM_ID cố định từ env)."""
-    g = load_global_data()
-    return list(g.get("_extra_admins", []))
+    """Admin PHỤ của GUILD ĐANG THAO TÁC (guild context hiện tại, xem load_data()) —
+    thêm qua `.ad`, CHỈ có hiệu lực ở guild đó. KHÔNG tính 2 admin cố định
+    ADMIN_RUBY_ID/ADMIN_TUYTAM_ID (luôn có quyền ở mọi guild, xem ADMIN_IDS)."""
+    return list(load_data().get("extra_admin_ids", []))
 
 async def add_extra_admin(user_id: int) -> bool:
-    """Thêm 1 admin mới. Trả về True nếu MỚI thêm — False nếu user_id đã là admin từ
-    trước (kể cả 2 admin cố định ADMIN_RUBY_ID/ADMIN_TUYTAM_ID, không riêng admin thêm
-    qua `.ad`).
-    - Admin là thao tác hiếm/nhạy cảm (cấp toàn quyền bot) — cùng lý do với
-      set_guild_authorized() ở trên: ghi Mongo NGAY (await trực tiếp, KHÔNG qua
-      loop.create_task() nền) trước khi lệnh `.ad` báo thành công, tránh mất dữ liệu nếu
-      bot reconnect ngay sau đó.
-    - ADMIN_IDS (định nghĩa đầu file) là 1 LIST OBJECT — mọi cog khác đều
-      `from core.data import ADMIN_IDS` (giữ tham chiếu tới ĐÚNG list này, không phải
-      bản copy). Ở đây CỐ Ý mutate in-place bằng `.append()`, KHÔNG gán lại
-      `ADMIN_IDS = [...]`, để admin mới có toàn quyền NGAY LẬP TỨC ở mọi cog đã import —
-      không cần restart bot. Lúc bot khởi động lại, init_data_cache() nạp lại danh sách
-      này từ Mongo (_extra_admins) vào ADMIN_IDS (xem bên dưới)."""
-    global _global_cache
+    """Thêm 1 admin PHỤ cho GUILD ĐANG THAO TÁC (guild context hiện tại). Trả về True
+    nếu MỚI thêm — False nếu user_id đã là admin từ trước (2 admin cố định HOẶC đã là
+    admin phụ của ĐÚNG guild này).
+    Admin là thao tác hiếm/nhạy cảm (cấp quyền admin) — cùng lý do với
+    set_guild_authorized(): update cache RAM rồi `await` ghi thẳng Mongo 1 LẦN (KHÔNG
+    gọi save_data() ở đây vì nó tự tạo thêm 1 task nền gọi _flush_to_mongo() song song →
+    ghi Mongo dư thừa 2 lần) trước khi lệnh `.ad` báo thành công, tránh mất dữ liệu nếu
+    bot reconnect ngay sau đó."""
     if user_id in ADMIN_IDS:
         return False
-    g = load_global_data()
-    lst = g.setdefault("_extra_admins", [])
+    guild_id = get_current_guild_id()
+    if guild_id is None:
+        log.error("[DATA] ❌ add_extra_admin() được gọi mà KHÔNG có guild context.")
+        return False
+    data = load_data()
+    lst = data.setdefault("extra_admin_ids", [])
     if user_id in lst:
         return False
     lst.append(user_id)
-    _global_cache = g
-    await _mongo_save_global(_global_cache)
-    ADMIN_IDS.append(user_id)
+    _data_cache[guild_id] = data
+    await _flush_to_mongo(guild_id)
     return True
+
+async def remove_extra_admin(user_id: int) -> bool:
+    """Thu hồi quyền admin phụ của user_id khỏi GUILD ĐANG THAO TÁC. Trả về True nếu có
+    xoá thật, False nếu user_id vốn không phải admin phụ của guild này. KHÔNG thể xoá 2
+    admin cố định (ADMIN_RUBY_ID/ADMIN_TUYTAM_ID) qua hàm này — phải đổi env."""
+    guild_id = get_current_guild_id()
+    if guild_id is None:
+        log.error("[DATA] ❌ remove_extra_admin() được gọi mà KHÔNG có guild context.")
+        return False
+    data = load_data()
+    lst = data.get("extra_admin_ids", [])
+    if user_id not in lst:
+        return False
+    lst.remove(user_id)
+    data["extra_admin_ids"] = lst
+    _data_cache[guild_id] = data
+    await _flush_to_mongo(guild_id)
+    return True
+
+def is_admin(member) -> bool:
+    """True nếu `member` là admin CỐ ĐỊNH (ADMIN_IDS — Ruby/TuyTam, quyền ở MỌI guild)
+    HOẶC admin PHỤ được thêm qua `.ad` cho ĐÚNG guild của member (dựa vào guild context
+    hiện tại/contextvar — PHẢI khớp member.guild, đúng quy tắc như mọi cfg_* getter khác
+    trong file này, xem load_data()). Dùng hàm này thay vì check thẳng
+    `member.id in ADMIN_IDS` ở bất kỳ đâu cần phân quyền admin theo guild.
+    Chủ động return False sớm nếu KHÔNG có guild context (vd lệnh gõ qua DM) thay vì gọi
+    get_extra_admins()/load_data() — tránh log lỗi giả "không có guild context" khi thật
+    ra chỉ đơn giản là không có admin phụ nào áp dụng được ở đây."""
+    if member.id in ADMIN_IDS:
+        return True
+    if get_current_guild_id() is None:
+        return False
+    return member.id in get_extra_admins()
 
 
 async def ensure_guild_loaded(guild_id: int) -> None:
@@ -598,13 +637,10 @@ async def init_data_cache(bot) -> None:
         _data_cache[guild.id] = await _mongo_load(guild.id)
 
     _global_cache = await _mongo_load_global()
-    # Nạp admin đã thêm qua `.ad` ở phiên trước vào ADMIN_IDS (mutate in-place — xem
-    # add_extra_admin() ở trên). Chỉ chạy ở first_boot vì nhánh refire phía trên đã
-    # return sớm, không tới được dòng này — admin thêm lúc runtime không bị mất khi
-    # reconnect vì không đụng lại ADMIN_IDS ở nhánh đó.
-    for _aid in _global_cache.get("_extra_admins", []):
-        if _aid not in ADMIN_IDS:
-            ADMIN_IDS.append(_aid)
+    # Admin phụ (thêm qua `.ad`) giờ lưu THEO GUILD trong _data_cache[guild_id]
+    # ("extra_admin_ids", nạp cùng _mongo_load(guild.id) ở vòng for phía trên) — không
+    # còn nằm ở _global_cache và KHÔNG cần backfill vào ADMIN_IDS lúc khởi động nữa,
+    # vì get_extra_admins()/is_admin() đọc trực tiếp từ guild context mỗi lần gọi.
 
     _, col_gw = _get_mongo()
     try:
@@ -1366,7 +1402,10 @@ def set_log_channel_db(group: str, channel_id: int):
     save_data(data)
 
 def is_staff_member(member) -> bool:
-    if member.id in ADMIN_IDS: return True
+    # FIX: dùng is_admin() thay vì check thẳng `member.id in ADMIN_IDS` — giờ admin phụ
+    # thêm qua `.ad` (guild-scoped, xem is_admin() ở trên) cũng được tính là staff, không
+    # chỉ 2 admin cố định ADMIN_RUBY_ID/ADMIN_TUYTAM_ID như trước.
+    if is_admin(member): return True
     guild = member.guild
     sr = guild.get_role(get_cfg_support_role())
     if sr and sr in member.roles: return True
@@ -1620,7 +1659,7 @@ def has_ticket_access(member: discord.Member) -> bool:
     `.shopbank`/`.listbank` — KHÔNG cấp thêm quyền xem ticket loại nào cả, quyền xem
     ticket vẫn do đúng cấu hình role riêng từng loại (get_ticket_role_ids) quyết định,
     không đổi gì ở đó."""
-    if member.id in ADMIN_IDS:
+    if is_admin(member):  # FIX: gồm cả admin phụ theo guild (.ad), không chỉ ADMIN_IDS cố định
         return True
     member_role_ids = {r.id for r in member.roles}
     for role_ids in get_all_ticket_multi_roles().values():

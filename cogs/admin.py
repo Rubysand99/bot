@@ -23,7 +23,7 @@ from core.data import (
     get_cfg_font, _uname_plain, is_staff_member,
     load_data, get_price_sections,
     is_guild_authorized, set_guild_authorized,
-    add_extra_admin,
+    add_extra_admin, get_extra_admins, remove_extra_admin, is_admin,
     ensure_guild_loaded,
     get_cfg_done_role,
     can_use_dangerous_cmd, parse_amount, fmt_amount,
@@ -107,14 +107,23 @@ class AdminCog(commands.Cog):
             )
         await ctx.reply(embed=embed, mention_author=False)
 
-    # ── .ad — Thêm admin bot mới (toàn quyền, mọi server). CHỈ Ruby được dùng ──
+    # ── .ad — Thêm admin PHỤ. FIX (đổi kiến trúc): trước đây admin thêm qua .ad có
+    # TOÀN QUYỀN Ở MỌI SERVER bot đang hoạt động. Giờ admin phụ CHỈ có quyền ở ĐÚNG
+    # server đang gõ lệnh — dùng `.ad` ở server nào thì chỉ server đó nhận quyền (xem
+    # is_admin()/get_extra_admins() ở core/data.py, lưu theo guild). Vẫn CHỈ Ruby dùng
+    # được — Ruby là người quyết định cấp quyền cho từng server.
     @commands.command(name="ad", aliases=["addadmin", "themadmin"])
     async def add_admin_cmd(self, ctx, user_id: str = None):
         if ctx.author.id != ADMIN_RUBY_ID:
             return await ctx.reply("❌ Chỉ Ruby được dùng lệnh này.", mention_author=False)
+        if not ctx.guild:
+            return await ctx.reply(
+                "❌ Dùng lệnh này **trong server** cần cấp quyền (không dùng qua DM) — "
+                "quyền admin phụ giờ chỉ áp dụng cho đúng server đang gõ lệnh.",
+                mention_author=False)
 
         if not user_id or not user_id.strip("<@!>").isdigit():
-            return await ctx.reply("❌ Dùng: `.ad <id>`", mention_author=False)
+            return await ctx.reply("❌ Dùng: `.ad <id>` (gõ ngay trong server muốn cấp quyền).", mention_author=False)
         uid = int(user_id.strip("<@!>"))
 
         try:
@@ -126,24 +135,97 @@ class AdminCog(commands.Cog):
 
         added = await add_extra_admin(uid)
         if not added:
-            return await ctx.reply(f"ℹ️ {user.mention} (`{uid}`) đã là admin từ trước rồi.", mention_author=False)
+            return await ctx.reply(
+                f"ℹ️ {user.mention} (`{uid}`) đã là admin (cố định hoặc đã là admin phụ của server này) từ trước rồi.",
+                mention_author=False)
 
         embed = discord.Embed(
-            title="✅ Đã thêm Admin mới",
+            title="✅ Đã thêm Admin server này",
             description=(
-                f"**User:** {user.mention} ({user})\n**ID:** `{uid}`\n\n"
-                f"Có toàn quyền admin ở **mọi** server bot đang hoạt động, có hiệu lực "
-                f"ngay lập tức — không cần restart bot."
+                f"**User:** {user.mention} ({user})\n**ID:** `{uid}`\n"
+                f"**Server:** {ctx.guild.name} (`{ctx.guild.id}`)\n\n"
+                f"Có toàn quyền admin **CHỈ ở server này**, có hiệu lực ngay lập tức — "
+                f"không cần restart bot. Dùng `.rmad {uid}` để thu hồi."
             ),
             color=0x57F287,
         )
         embed.set_footer(text=f"Thêm bởi {ctx.author}")
         await ctx.reply(embed=embed, mention_author=False)
 
+        await send_log(self.bot, "SETTINGS", "Thêm admin server (qua .ad)",
+            fields=[("👤 User", f"{user} ({uid})", True), ("👑 Bởi", str(ctx.author), True)],
+            user=ctx.author, guild_id=ctx.guild.id)
+
+    # ── .rmad — Thu hồi quyền admin PHỤ khỏi server đang gõ lệnh. KHÔNG đụng được 2
+    # admin cố định (ADMIN_RUBY_ID/ADMIN_TUYTAM_ID, đọc từ env). CHỈ Ruby dùng được. ──
+    @commands.command(name="rmad", aliases=["removeadmin", "xoaadmin"])
+    async def remove_admin_cmd(self, ctx, user_id: str = None):
+        if ctx.author.id != ADMIN_RUBY_ID:
+            return await ctx.reply("❌ Chỉ Ruby được dùng lệnh này.", mention_author=False)
+        if not ctx.guild:
+            return await ctx.reply("❌ Dùng lệnh này **trong server** cần thu hồi quyền (không dùng qua DM).", mention_author=False)
+
+        if not user_id or not user_id.strip("<@!>").isdigit():
+            return await ctx.reply("❌ Dùng: `.rmad <id>`", mention_author=False)
+        uid = int(user_id.strip("<@!>"))
+
+        if uid in ADMIN_IDS:
+            return await ctx.reply(
+                "❌ Không thể xoá admin cố định (Ruby/TuyTam) qua lệnh này — phải đổi biến "
+                "môi trường `ADMIN_RUBY_ID`/`ADMIN_TUYTAM_ID` trên Railway.",
+                mention_author=False)
+
+        removed = await remove_extra_admin(uid)
+        if not removed:
+            return await ctx.reply(f"ℹ️ `{uid}` không phải admin phụ của server này.", mention_author=False)
+
+        await ctx.reply(f"🗑️ Đã thu hồi quyền admin của <@{uid}> ở server **{ctx.guild.name}**.", mention_author=False)
+        await send_log(self.bot, "SETTINGS", "Xoá admin server (qua .rmad)",
+            fields=[("👤 User", f"`{uid}`", True), ("👑 Bởi", str(ctx.author), True)],
+            user=ctx.author, guild_id=ctx.guild.id)
+
+    # ── .admin — Xem danh sách TẤT CẢ admin bot: 2 admin cố định (mọi server) + admin
+    # phụ CỦA SERVER ĐANG GÕ LỆNH (thêm qua .ad — không phải mọi server). Ai đang có
+    # quyền admin (cố định hoặc phụ của server này) đều xem được, không riêng Ruby. ──
+    @commands.command(name="admin", aliases=["adminlist", "dsadmin"])
+    async def admin_list_cmd(self, ctx):
+        if not is_admin(ctx.author):
+            return
+
+        embed = discord.Embed(title="👑 Danh sách Admin", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+
+        fixed_lines = []
+        for uid in ADMIN_IDS:
+            tag = " *(Ruby)*" if uid == ADMIN_RUBY_ID else (" *(TuyTam)*" if uid == ADMIN_TUYTAM_ID else "")
+            fixed_lines.append(f"<@{uid}>{tag} — `{uid}`")
+        embed.add_field(
+            name="🌍 Admin cố định (mọi server)",
+            value="\n".join(fixed_lines) if fixed_lines else "*(chưa cài env)*",
+            inline=False,
+        )
+
+        if ctx.guild:
+            extra = get_extra_admins()
+            embed.add_field(
+                name=f"🏠 Admin phụ — chỉ server này ({ctx.guild.name})",
+                value=("\n".join(f"<@{uid}> — `{uid}`" for uid in extra) if extra
+                       else "*(chưa có — thêm qua `.ad <id>`)*"),
+                inline=False,
+            )
+        else:
+            embed.add_field(
+                name="🏠 Admin phụ theo server",
+                value="*(dùng lệnh trong 1 server để xem admin phụ của server đó)*",
+                inline=False,
+            )
+
+        embed.set_footer(text=f"Yêu cầu bởi {ctx.author}")
+        await ctx.reply(embed=embed, mention_author=False)
+
     # ── .settings ──
     @commands.command(name="settings", aliases=["setting", "caidat", "st"])
     async def settings_cmd(self, ctx):
-        if ctx.author.id not in ADMIN_IDS: return
+        if not is_admin(ctx.author): return
         data = load_data()
         # FIX: title trước đây hardcode "TuyTam Store" — hiện sai tên cho mọi guild khác.
         embed = discord.Embed(title=f"⚙️  Bot Settings — {ctx.guild.name}", color=0x5865F2, timestamp=datetime.now(timezone.utc))
@@ -188,7 +270,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="giaset", aliases=["setgia", "pricemanager", "priceset"])
     async def giaset_cmd(self, ctx):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
+        if not is_admin(ctx.author): return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
         sections = get_price_sections() or _DEFAULT_PRICE_SECTIONS
         embed = discord.Embed(title="⚙️  Quản Lý Bảng Giá — .sv", description=f"Hiện có **{len(sections)} mục** trong bảng giá.\nChọn mục từ dropdown để **sửa**, hoặc dùng nút bên dưới.\n\n" + "\n".join(f"`{i+1}.` {s['name']}" for i, s in enumerate(sections)), color=0x5865F2, timestamp=datetime.now(timezone.utc))
         embed.add_field(name="💡 Hướng dẫn", value="Hỗ trợ đầy đủ **Discord markdown**:\n› `**bold**`, `~~gạch~~`, `> blockquote`\n› Emoji server: `<:tên:id>`\n› `### Tiêu đề nhỏ`", inline=False)
@@ -206,14 +288,14 @@ class AdminCog(commands.Cog):
     # đường xử lý nên cả 2 đều được check như nhau.
     @commands.command(name="addrole", aliases=["giverole"])
     async def addrole_cmd(self, ctx, member: discord.Member = None):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền.")
+        if not is_admin(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
         if not member: return await ctx.reply("❌ Dùng: `.addrole @user`, sau đó chọn role trong danh sách hiện ra.")
         view = RoleAssignSelectView(member=member, invoker_id=ctx.author.id, action="add")
         await ctx.reply(f"Chọn role muốn **thêm cho** {member.mention}:", view=view)
 
     @commands.command(name="removerole", aliases=["takerole"])
     async def removerole_cmd(self, ctx, member: discord.Member = None):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Bạn không có quyền.")
+        if not is_admin(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
         if not member: return await ctx.reply("❌ Dùng: `.removerole @user`, sau đó chọn role trong danh sách hiện ra.")
         view = RoleAssignSelectView(member=member, invoker_id=ctx.author.id, action="remove")
         await ctx.reply(f"Chọn role muốn **xoá khỏi** {member.mention}:", view=view)
@@ -250,7 +332,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="delemoji")
     async def delemoji_cmd(self, ctx, *, args: str = None):
-        if ctx.author.id not in ADMIN_IDS: return await ctx.reply("❌ Chỉ admin.")
+        if not is_admin(ctx.author): return await ctx.reply("❌ Chỉ admin.")
         if not args: return await ctx.reply("❌ Dùng: `.delemoji <emoji1> <emoji2>...`")
         matches = _re.findall(r"<a?:[^:>]+:(\d+)>", args)
         if not matches: return await ctx.reply("❌ Không tìm thấy emoji hợp lệ.")
@@ -300,7 +382,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="mkchannel", aliases=["mkch", "taokenh"])
     async def mkchannel_cmd(self, ctx):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin.")
         cats = sorted(ctx.guild.categories, key=lambda c: c.position)
         cat_opts = [discord.SelectOption(label=c.name[:100], value=str(c.id)) for c in cats[:24]]
@@ -324,7 +406,7 @@ class AdminCog(commands.Cog):
     # ── .setup ──
     @commands.command(name="setup", aliases=["sv_setup", "serversetup"])
     async def setup_cmd(self, ctx):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin mới có quyền dùng lệnh này.")
         embed = discord.Embed(
             title="🔧  Setup Server — TuyTam Bot",
@@ -719,7 +801,7 @@ class AdminCog(commands.Cog):
     # ── .backfill ──
     @commands.command(name="backfill")
     async def backfill_cmd(self, ctx, limit: int = 25):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin mới có quyền dùng lệnh này.")
         from core.data import get_cfg_legit_channel
         import re as _re
@@ -815,7 +897,7 @@ class AdminCog(commands.Cog):
         m = raw.strip().lstrip("@").lower()
         if m not in ("everyone", "here"):
             return None, None
-        if user.id not in ADMIN_IDS:
+        if not is_admin(user):
             return None, "⚠️ Chỉ admin mới được ping @everyone/@here — thông báo sẽ gửi **không kèm ping**."
         return f"@{m}", None
 
@@ -964,7 +1046,7 @@ class AdminCog(commands.Cog):
         account_age_days = (datetime.now(timezone.utc) - m.created_at).days
 
         badges = []
-        if m.id in ADMIN_IDS:
+        if is_admin(m):
             badges.append("👑 Admin")
         if is_staff_member(m):
             badges.append("🛡️ Staff")
@@ -1035,7 +1117,7 @@ class AdminCog(commands.Cog):
         """`.sold on` / `.sold off` — bật/tắt auto nhận diện "sold" trong kênh
         stock (xem handle_sold() cuối file). Gõ trơ trọi `.sold` (không kèm
         on/off) để xem trạng thái hiện tại, không đổi gì cả."""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
 
         mode = (mode or "").strip().lower()
@@ -1069,7 +1151,7 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="clear", description="Xoá tin nhắn trong kênh")
     @app_commands.describe(amount="Số tin nhắn cần xoá (1-500)")
     async def slash_clear(self, interaction: discord.Interaction, amount: int):
-        if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
+        if not is_admin(interaction.user) and not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         if amount < 1 or amount > 500: return await interaction.response.send_message("❌ Số lượng phải từ 1 đến 500.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
@@ -1079,7 +1161,7 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="addrole", description="Thêm role cho thành viên")
     @app_commands.describe(member="Thành viên", role="Role cần thêm")
     async def slash_addrole(self, interaction: discord.Interaction, member: discord.Member, role: discord.Role):
-        if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
+        if not is_admin(interaction.user) and not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         if role >= interaction.guild.me.top_role: return await interaction.response.send_message("❌ Role này cao hơn role của bot.", ephemeral=True)
         await member.add_roles(role, reason=f"Bởi {interaction.user}")
@@ -1091,7 +1173,7 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="removerole", description="Xoá role của thành viên")
     @app_commands.describe(member="Thành viên", role="Role cần xoá")
     async def slash_removerole(self, interaction: discord.Interaction, member: discord.Member, role: discord.Role):
-        if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
+        if not is_admin(interaction.user) and not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         await member.remove_roles(role, reason=f"Bởi {interaction.user}")
         embed = discord.Embed(title="✅ Đã Xoá Role", color=0xFEE75C)
@@ -1828,7 +1910,7 @@ class ShopOrdersToggleButton(discord.ui.Button):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Bạn không có quyền dùng nút này.", ephemeral=True)
 
         new_state = not get_cfg_shop_orders_enabled()
@@ -1862,7 +1944,7 @@ class ReceiptMessageButton(discord.ui.Button):
         super().__init__(label="Sửa Lời Cảm Ơn Hoá Đơn", emoji="🧾", style=discord.ButtonStyle.secondary, row=4)
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Bạn không có quyền dùng nút này.", ephemeral=True)
         await interaction.response.send_modal(ReceiptMessageModal())
 
