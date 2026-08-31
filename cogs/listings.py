@@ -30,7 +30,10 @@ from core.data import (
     get_ticket_role_ids, GuildContextView,
 )
 from cogs.logger import send_log
-from cogs.ticket import create_listing_ticket, create_stockpost_ticket
+from cogs.ticket import (
+    create_listing_ticket, create_stockpost_ticket,
+    create_direct_order_ticket, create_accpre_ticket, create_build_ticket,
+)
 
 log = logging.getLogger(__name__)
 
@@ -139,12 +142,47 @@ STATUS_BADGE = {
     "sold":  "✅ **ĐÃ BÁN**",
 }
 
+# Nút "🛒 Mua Ngay" trên bài /post trước đây LUÔN tạo ticket chung (create_stockpost_ticket)
+# — không phân biệt món hàng thuộc server/loại nào, staff phải tự phân loại thủ công trong
+# ticket. Giờ hỏi người đăng ngay lúc /post (xem _StockPostTicketAskView) muốn nút Mua Ngay
+# dẫn thẳng tới loại ticket nào, rồi LƯU lựa chọn vào field "🏷️ Loại" của embed (đọc lại ở
+# buy_btn) — theo đúng cơ chế "đọc trạng thái từ message" đã dùng cho Trạng thái/toggle, KHÔNG
+# lưu Mongo riêng. Chỉ chọn được các loại có hàm tạo ticket "thẳng" (không cần chọn item/con
+# số bổ sung nào khác) — donut/kingmc/ff/accpre/build; rubyshop/giveaway/support/middleman
+# không đưa vào đây vì không phải ticket "mua món hàng đang rao".
+STOCKPOST_TICKET_TYPES = {
+    "donut":   "🍩 DonutSMP",
+    "kingmc":  "👑 KingMC",
+    "ff":      "🔥 Free Fire",
+    "accpre":  "🎭 Acc Pre",
+    "build":   "🏗️ Build",
+    "generic": "🛒 Ticket chung (không phân loại)",
+}
+_STOCKPOST_LABEL_TO_KEY = {label: key for key, label in STOCKPOST_TICKET_TYPES.items()}
 
-def build_stockpost_embed(content: str | None, status: str, author: discord.abc.User) -> discord.Embed:
+
+async def _create_stockpost_dest_ticket(interaction: discord.Interaction, type_key: str | None, content: str, source_link: str):
+    """Bấm 🛒 Mua Ngay → tạo đúng loại ticket đã chọn lúc /post (STOCKPOST_TICKET_TYPES).
+    type_key=None: bài đăng CŨ (trước khi có tính năng này, không có field "🏷️ Loại")
+    hoặc đăng ở chế độ text thường (không embed, không có chỗ lưu lựa chọn) → giữ NGUYÊN
+    hành vi cũ, tạo ticket chung — KHÔNG đổi hành vi bài đăng có sẵn."""
+    if type_key in ("donut", "kingmc", "ff"):
+        await create_direct_order_ticket(interaction, type_key)
+    elif type_key == "accpre":
+        await create_accpre_ticket(interaction, "buy")
+    elif type_key == "build":
+        await create_build_ticket(interaction, "buy")
+    else:
+        await create_stockpost_ticket(interaction, content, source_link)
+
+
+def build_stockpost_embed(content: str | None, status: str, author: discord.abc.User, ticket_type_label: str | None = None) -> discord.Embed:
     color = COLOR_LISTING_SOLD if status == "sold" else COLOR_LISTING_AVAILABLE
     e = discord.Embed(description=content or None, color=color, timestamp=datetime.now(timezone.utc))
     if status in STATUS_BADGE:
-        e.add_field(name="Trạng thái", value=STATUS_BADGE[status], inline=False)
+        e.add_field(name="Trạng thái", value=STATUS_BADGE[status], inline=True)
+    if ticket_type_label:
+        e.add_field(name="🏷️ Loại", value=ticket_type_label, inline=True)
     e.set_footer(text=f"Đăng bởi {author.display_name}")
     return e
 
@@ -197,8 +235,87 @@ class StockPostView(GuildContextView):
 
         msg = interaction.message
         content = msg.embeds[0].description if msg.embeds else (msg.content or "")
+
+        # Đọc lựa chọn loại ticket từ field "🏷️ Loại" của CHÍNH message bị bấm (không có
+        # ở bài đăng cũ / bài đăng dạng text thường) → _create_stockpost_dest_ticket tự
+        # fallback ticket chung nếu None, xem docstring hàm đó.
+        type_label = next((f.value for f in msg.embeds[0].fields if f.name == "🏷️ Loại"), None) if msg.embeds else None
+        type_key = _STOCKPOST_LABEL_TO_KEY.get(type_label)
+
         await interaction.response.defer(ephemeral=True)
-        await create_stockpost_ticket(interaction, content or "", msg.jump_url)
+        await _create_stockpost_dest_ticket(interaction, type_key, content or "", msg.jump_url)
+
+
+class _StockPostTicketSelect(discord.ui.Select):
+    """Dropdown chọn loại ticket — theo đúng pattern Select-subclass-override-callback đã
+    dùng ở ItemSelect/_TradeModeSelect/_RubyShopOptionSelect trong cogs/ticket.py."""
+
+    def __init__(self):
+        options = [discord.SelectOption(label=label, value=key) for key, label in STOCKPOST_TICKET_TYPES.items()]
+        super().__init__(placeholder="Chọn loại Ticket cho nút Mua Ngay…", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.finish(interaction, self.values[0])
+
+
+class _StockPostTicketAskView(GuildContextView):
+    """Hỏi loại Ticket cho nút 🛒 Mua Ngay TRƯỚC KHI đăng bài thật (chỉ dùng nội bộ trong
+    post_cmd — KHÔNG persistent/không add_view ở cog_load, timeout ngắn vì chỉ dùng 1 lần
+    ngay lúc /post, khác StockPostView vốn timeout=None vì gắn trên bài đăng vĩnh viễn)."""
+
+    def __init__(self, *, channel: discord.TextChannel, content: str | None, image: discord.Attachment | None, status_val: str):
+        super().__init__(timeout=180)
+        self.channel = channel
+        self.content = content
+        self.image = image
+        self.status_val = status_val
+        self.add_item(_StockPostTicketSelect())
+
+    async def finish(self, interaction: discord.Interaction, type_key: str):
+        type_label = STOCKPOST_TICKET_TYPES[type_key]
+
+        file = None
+        if self.image:
+            try:
+                file = await self.image.to_file()
+            except Exception as e:
+                return await interaction.response.edit_message(content=f"❌ Không đọc được ảnh: `{e}`", view=None)
+
+        embed = build_stockpost_embed(self.content, self.status_val, interaction.user, ticket_type_label=type_label)
+        if file:
+            embed.set_image(url=f"attachment://{file.filename}")
+
+        view = StockPostView()
+        if self.status_val == "sold":
+            for item in view.children:
+                if getattr(item, "custom_id", None) == "stockpost_toggle":
+                    item.label, item.style = "✅ Đã Bán", discord.ButtonStyle.danger
+                if getattr(item, "custom_id", None) == "stockpost_buy":
+                    item.disabled = True
+
+        kwargs = {"embed": embed, "view": view, "file": file} if file else {"embed": embed, "view": view}
+
+        try:
+            target_msg = await self.channel.send(**kwargs)
+        except discord.Forbidden:
+            return await interaction.response.edit_message(content="❌ Bot thiếu quyền đăng bài trong kênh này.", view=None)
+        except Exception as e:
+            return await interaction.response.edit_message(content=f"❌ Lỗi khi đăng bài: `{e}`", view=None)
+
+        await interaction.response.edit_message(
+            content=f"✅ Đã đăng: {target_msg.jump_url}\n🏷️ Mua Ngay sẽ tạo ticket: **{type_label}**", view=None,
+        )
+
+        await send_log(
+            interaction.client, "SHOP_LISTING_CREATE", "Đăng bài /post",
+            fields=[
+                ("📍 Kênh", self.channel.mention, True),
+                ("🧑 Người đăng", _uname_plain(interaction.user), True),
+                ("📦 Trạng thái", self.status_val, True),
+                ("🏷️ Loại ticket", type_label, True),
+            ],
+            user=interaction.user, guild_id=interaction.guild_id,
+        )
 
 
 class ListingsCog(commands.Cog):
@@ -306,6 +423,18 @@ class ListingsCog(commands.Cog):
             return await interaction.response.send_message("❌ Cần ít nhất nội dung hoặc ảnh.", ephemeral=True)
 
         status_val = status.value if status else "none"
+
+        # Có nút "🛒 Mua Ngay" (status stock/sold) VÀ dùng embed (nơi duy nhất lưu được
+        # lựa chọn loại ticket, field "🏷️ Loại" — xem STOCKPOST_TICKET_TYPES) → hỏi loại
+        # Ticket TRƯỚC khi đăng thật, việc đăng bài chuyển vào _StockPostTicketAskView.finish().
+        # Tin thường (status bỏ trống) hoặc tắt embed → đăng ngay, đường cũ bên dưới
+        # (không có nút Mua, hoặc không có field embed nào để lưu lựa chọn).
+        if status_val in ("stock", "sold") and use_embed:
+            ask_view = _StockPostTicketAskView(channel=channel, content=content, image=image, status_val=status_val)
+            return await interaction.response.send_message(
+                "🎯 **Bấm \"🛒 Mua Ngay\" trên bài này sẽ tạo Ticket loại nào?**",
+                view=ask_view, ephemeral=True,
+            )
 
         file = None
         if image:
