@@ -1,3 +1,22 @@
+## [v4.14.0] — 2026-08-31
+
+### ✨ Tính năng mới
+- `.admin` — xem danh sách admin cố định + admin phụ của server hiện tại
+- `.rmad <id>` — thu hồi quyền admin phụ khỏi server hiện tại
+
+### 💥 Breaking change (đổi kiến trúc quyền admin)
+- `.ad <id>` — admin thêm qua lệnh này giờ CHỈ có quyền ở server đang gõ lệnh,
+  không còn toàn quyền mọi server như trước. Bắt buộc gõ trong server (không DM).
+- `core/data.py`: extra_admin_ids chuyển từ lưu global → lưu theo guild.
+  is_staff_member()/has_ticket_access() dùng is_admin() (guild-scoped) mới.
+- 15 lệnh/nút trong admin.py (.settings, .giaset, .addrole, .removerole, .delemoji,
+  .mkchannel, .setup, .backfill, .sold, ping @everyone, /clear, /addrole,
+  /removerole, 2 nút .st) đổi sang is_admin() — admin phụ dùng được ở đúng server.
+  `.as` (uỷ quyền server) CỐ TÌNH giữ nguyên ADMIN_IDS-only vì lý do bảo mật.
+
+⚠️ Chưa cập nhật: seller.py, mod.py, ticket.py, invite.py, giveaway.py,
+  admin_views.py, shop_orders.py (phần admin) — vẫn dùng ADMIN_IDS cũ.
+---
 ## [v4.54.1] — 2026-08-31
 
 ### 🐛 Sửa lỗi
