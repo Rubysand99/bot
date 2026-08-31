@@ -215,6 +215,8 @@ class StockPostView(GuildContextView):
                 if getattr(comp, "custom_id", None) == "stockpost_toggle":
                     currently_sold = (comp.style == discord.ButtonStyle.danger)
 
+        new_status = "stock" if currently_sold else "sold"
+
         if currently_sold:
             button.label, button.style = "📦 Còn Hàng", discord.ButtonStyle.success
         else:
@@ -224,7 +226,31 @@ class StockPostView(GuildContextView):
             if getattr(item, "custom_id", None) == "stockpost_buy":
                 item.disabled = not currently_sold  # đang chuyển SANG đã bán → khoá nút Mua
 
-        await interaction.response.edit_message(view=self)
+        # Đồng bộ lại badge "Trạng thái" trong embed/nội dung theo trạng thái mới — trước
+        # đây chỉ đổi label/màu NÚT, embed/nội dung vẫn giữ nguyên "📦 CÒN HÀNG" mãi mãi dù
+        # đã bấm "Đã Bán" (bug thật: đơn hàng xong, admin toggle nút nhưng bài đăng vẫn
+        # hiện còn hàng). MUTATE TRỰC TIẾP embed đã có sẵn trên message (không dựng
+        # discord.Embed mới, không gọi set_image()/đụng file đính kèm) để né đúng bug
+        # Discord tách/mất ảnh khi edit embed kèm attachment mới — xem comment tương tự ở
+        # ListingView.toggle_btn phía trên.
+        kwargs = {"view": self}
+        if interaction.message.embeds:
+            embed = interaction.message.embeds[0]
+            embed.colour = COLOR_LISTING_SOLD if new_status == "sold" else COLOR_LISTING_AVAILABLE
+            for i, f in enumerate(embed.fields):
+                if f.name == "Trạng thái":
+                    embed.set_field_at(i, name="Trạng thái", value=STATUS_BADGE[new_status], inline=f.inline)
+                    break
+            kwargs["embed"] = embed
+        elif interaction.message.content:
+            # Tin thường (không embed) — badge nằm ở dòng đầu content (build_stockpost_text),
+            # bóc dòng badge cũ ra rồi build lại với trạng thái mới để tránh nhân đôi/kẹt badge cũ.
+            raw = interaction.message.content
+            first, _, rest = raw.partition("\n\n")
+            remainder = rest if first in STATUS_BADGE.values() else raw
+            kwargs["content"] = build_stockpost_text(remainder or None, new_status)
+
+        await interaction.response.edit_message(**kwargs)
 
     @discord.ui.button(label="🛒 Mua Ngay", style=discord.ButtonStyle.primary, custom_id="stockpost_buy")
     async def buy_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
