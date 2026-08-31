@@ -1,3 +1,15 @@
+## [v4.54.0] — 2026-08-31
+
+### ✨ Tính năng mới
+- `cogs/listings.py` — `/post`: khi chọn trạng thái Còn hàng/Đã bán + dùng embed, bot hỏi
+  (dropdown ephemeral) muốn nút "🛒 Mua Ngay" tạo thẳng ticket loại nào (DonutSMP/KingMC/
+  Free Fire/Acc Pre/Build/Ticket chung) TRƯỚC KHI đăng bài thật, thay vì luôn tạo ticket
+  chung như cũ. Lựa chọn lưu vào field "🏷️ Loại" của embed (đọc lại lúc bấm Mua Ngay) —
+  không cần Mongo riêng, đúng cơ chế đọc-trạng-thái-từ-message sẵn có. Bài đăng cũ / đăng
+  dạng text thường (không embed) không bị ảnh hưởng, vẫn tạo ticket chung như trước.
+
+---
+
 ## [v4.53.0] — 2026-08-31
 
 ### ✨ Tính năng mới
