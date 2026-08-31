@@ -1,3 +1,14 @@
+## [v4.54.1] — 2026-08-31
+
+### 🐛 Sửa lỗi
+- `cogs/listings.py` — `StockPostView.toggle_btn` (nút 📦 Còn Hàng/✅ Đã Bán trên bài
+  `/post`) trước đây chỉ đổi label/màu nút, không đồng bộ lại field "Trạng thái" trong
+  embed (hoặc badge trong content nếu tin thường) → admin toggle "Đã Bán" xong, bài đăng
+  vẫn hiện "📦 CÒN HÀNG". Giờ mutate luôn embed/content theo trạng thái mới, không đụng
+  ảnh đính kèm (né bug Discord tách ảnh khi edit embed).
+
+---
+
 ## [v4.54.0] — 2026-08-31
 
 ### ✨ Tính năng mới
