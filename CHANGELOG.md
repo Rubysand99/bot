@@ -1,3 +1,18 @@
+## [v4.15.0] — 2026-08-31
+
+### 🐛 Sửa lỗi
+- listings.py (/post): bug tách ảnh khỏi embed khi bấm nút Trạng thái tái diễn dù đã
+  né set_image() — nguyên nhân thật: PATCH embed của message có ảnh là đủ để Discord
+  tách ảnh, bất kể sửa gì. Giải pháp triệt để: bỏ hẳn field "Trạng thái" khỏi
+  embed/content — trạng thái giờ CHỈ thể hiện qua nút (không còn gì cần đồng bộ = không
+  còn gì cần PATCH embed). Icon "Đã Bán" đổi ✅ → ❌.
+
+### ✨ Tính năng mới
+- Hỗ trợ NHIỀU role seller cùng lúc (trước chỉ 1 role "cfg_seller_role"):
+  - `.addsellerrole @role` / `.rmsellerrole @role` / `.sellerroles`
+  - is_staff_member(), quyền ticket, `.setrole key seller` đều đọc hợp nhất qua
+    get_cfg_seller_roles() — role chính (.st) + role phụ (mới).
+---
 ## [v4.14.0] — 2026-08-31
 
 ### ✨ Tính năng mới
