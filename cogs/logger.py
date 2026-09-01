@@ -1,25 +1,23 @@
 """
-cogs/logger.py — Hệ thống log đa kênh.
-Mọi cog gọi: await send_log(bot, "TICKET_CREATE", "Tạo ticket", ...)
-Mỗi nhóm event được route vào kênh riêng, cài qua .setlog <nhóm> #kênh
+cogs/logger.py — LoggerCog: lệnh cấu hình log (.setlog/.setuplog/.testlog/.loginfo/.baocao)
++ listener tự động (member join/leave/update, command/interaction usage) + daily report.
 
-Nhóm kênh:
-  ticket   → TICKET_CREATE, TICKET_CLOSE, TICKET_DONE, TICKET_UNDONE, TICKET_CLAIM
-  mod      → MOD_BAN, MOD_KICK, MOD_MUTE, MOD_WARN
-  giveaway → GIVEAWAY_START, GIVEAWAY_END, GIVEAWAY_REROLL
-  member   → MEMBER_JOIN, MEMBER_LEAVE
-  role     → ROLE_ADD, ROLE_REMOVE
-  ai       → AI_USED
-  admin    → CMD_USED, SLASH_USED, SETTINGS
-  invite   → INVITE_JOIN, INVITE_VERIFY, INVITE_FAKE, INVITE_LEFT
-  general  → INFO, ERROR, RATING (fallback)
+Hàm send_log() thuần + bảng LOG_ICONS/LOG_ROUTES/LOG_GROUP_LABELS đã CHUYỂN sang
+shared/logger.py (dùng chung mọi bot) — file này chỉ còn phần Cog thật (có state, task
+nền, listener), import lại phần dùng chung ở khối dưới.
 
-Log format: plain text thay vì embed để không đẩy trôi history.
+⚠️ daily_report_task() bên dưới đọc get_ticket_history() (domain ticket) VÀ
+load_giveaways_data() (domain giveaway) — coupling CỐ Ý chấp nhận ở Phase 1, xem
+AI_CONTEXT_SHARED.md mục "Coupling đã biết".
 """
 
 from datetime import datetime, timezone, timedelta
 import discord
 from discord.ext import commands, tasks
+
+from shared.logger import (
+    LOG_ICONS, LOG_ROUTES, LOG_GROUP_LABELS, send_log, get_log_channel,
+)
 from core.data import (
     ADMIN_IDS, get_cfg_log_rudy, get_log_channels, get_log_channel_by_group,
     set_log_channel_db, get_or_fetch_channel,
@@ -27,234 +25,14 @@ from core.data import (
     load_data, set_current_guild, wait_data_cache_ready,
 )
 
-LOG_ICONS = {
-    "TICKET_CREATE":   ("🎫", 0x57F287),
-    "TICKET_CLOSE":    ("🔒", 0xED4245),
-    "TICKET_DONE":     ("✅", 0x57F287),
-    "TICKET_UNDONE":   ("↩️", 0xED4245),
-    "TICKET_CLAIM":    ("🙋", 0x5865F2),
-    "MOD_BAN":         ("🔨", 0xED4245),
-    "MOD_KICK":        ("👢", 0xE67E22),
-    "MOD_MUTE":        ("🔇", 0xF0A500),
-    "MOD_WARN":        ("⚠️",  0xFEE75C),
-    "MOD_CHANNEL_CLEAR": ("🗑️", 0xED4245),
-    "GIVEAWAY":        ("🎉", 0xF1C40F),
-    "GIVEAWAY_JOIN":   ("🙋", 0xF1C40F),
-    "GIVEAWAY_START":  ("🎉", 0xF1C40F),
-    "GIVEAWAY_END":    ("🏆", 0xF1C40F),
-    "GIVEAWAY_REROLL": ("🔄", 0xF1C40F),
-    "MEMBER_JOIN":     ("📥", 0x57F287),
-    "MEMBER_LEAVE":    ("📤", 0xED4245),
-    "ROLE_ADD":        ("🏷️", 0x57F287),
-    "ROLE_REMOVE":     ("🏷️", 0xED4245),
-    "CMD_USED":        ("⌨️",  0x5865F2),
-    "SLASH_USED":      ("🔧", 0x5865F2),
-    "INVITE":          ("📨", 0x9B59B6),
-    "INVITE_JOIN":     ("📥", 0x9B59B6),
-    "INVITE_VERIFY":   ("🔐", 0x5865F2),
-    "INVITE_FAKE":     ("🚨", 0xED4245),
-    "INVITE_LEFT":     ("🚪", 0xE67E22),
-    "RATING":          ("⭐", 0xF1C40F),
-    "AI_USED":         ("🤖", 0x1ABC9C),
-    "SETTINGS":        ("⚙️",  0xFEE75C),
-    "ERROR":           ("❌", 0xED4245),
-    "INFO":            ("ℹ️",  0x5865F2),
-    "SHOP_QR_SHOWN":       ("🧾", 0x2ECC71),
-    "SHOP_QUEUE_DONE":     ("✅", 0x2ECC71),
-}
-
-# Map event_type → nhóm kênh
-LOG_ROUTES: dict[str, str] = {
-    "TICKET_CREATE":   "ticket",
-    "TICKET_CLOSE":    "ticket",
-    "TICKET_DONE":     "ticket",
-    "TICKET_UNDONE":   "ticket",
-    "TICKET_CLAIM":    "ticket",
-    "MOD_BAN":         "mod",
-    "MOD_KICK":        "mod",
-    "MOD_MUTE":        "mod",
-    "MOD_WARN":        "mod",
-    "MOD_CHANNEL_CLEAR": "mod",
-    "GIVEAWAY":        "giveaway",
-    "GIVEAWAY_JOIN":   "giveaway",
-    "GIVEAWAY_START":  "giveaway",
-    "GIVEAWAY_END":    "giveaway",
-    "GIVEAWAY_REROLL": "giveaway",
-    "MEMBER_JOIN":     "member",
-    "MEMBER_LEAVE":    "member",
-    "ROLE_ADD":        "role",
-    "ROLE_REMOVE":     "role",
-    "AI_USED":         "ai",
-    "CMD_USED":        "admin",
-    "SLASH_USED":      "admin",
-    "SETTINGS":        "admin",
-    "INVITE":          "invite",
-    "INVITE_JOIN":     "invite",
-    "INVITE_VERIFY":   "invite",
-    "INVITE_FAKE":     "invite",
-    "INVITE_LEFT":     "invite",
-    "RATING":          "general",
-    "ERROR":           "general",
-    "INFO":            "general",
-    "SHOP_QR_SHOWN":       "shop",
-    "SHOP_QUEUE_DONE":     "shop",
-}
-
-# Tên hiển thị cho từng nhóm
-LOG_GROUP_LABELS: dict[str, str] = {
-    "ticket":   "🎫 Ticket",
-    "mod":      "🛡️ Mod",
-    "giveaway": "🎉 Giveaway",
-    "member":   "👥 Member",
-    "role":     "🏷️ Role",
-    "ai":       "🤖 AI",
-    "admin":    "⌨️ Admin",
-    "invite":   "📨 Invite",
-    "general":  "📋 General",
-    "shop":     "🛒 Shop Order",
-}
-
-# Lưu channel ID theo nhóm: đọc/ghi thẳng vào MongoDB qua core.data
 
 def set_log_channel(group: str, channel_id: int):
     """Cài kênh log cho một nhóm — lưu vào MongoDB."""
     set_log_channel_db(group, channel_id)
 
 
-def get_log_channel(group: str) -> int | None:
-    """Lấy channel ID của nhóm log từ MongoDB cache."""
-    return get_log_channel_by_group(group)
-
-
 def get_all_log_channels() -> dict[str, int]:
     return get_log_channels()
-
-# ══════════════════════════════════════════
-# FORMAT PLAIN TEXT LOG
-# ══════════════════════════════════════════
-
-import re as _re_log
-
-def _depinged(value: str) -> str:
-    """Vô hiệu hoá mention user/role còn sót lại trong giá trị field log (chèn
-    zero-width space sau '<@' / '<@&' để Discord không nhận diện là mention thật
-    nữa — KHÔNG áp dụng cho mention kênh <#...> vì kênh không gây ping).
-    Đây là lớp phòng vệ cuối — nguồn sửa đúng là đổi .mention -> _uname_plain()
-    ngay tại nơi tạo field (xem CHANGELOG v4.16.0), lớp này chỉ để chắc chắn
-    không sót trường hợp nào trong tương lai."""
-    zwsp = "\u200b"
-    value = _re_log.sub(r"<@&(\d+)>", f"<@&{zwsp}" + r"\1>", value)   # role mention
-    value = _re_log.sub(r"<@!?(\d+)>", f"<@{zwsp}" + r"\1>", value)   # user mention
-    return value
-
-
-def _fmt_log_text(
-    event_type: str,
-    title: str,
-    fields: list[tuple] = None,
-    description: str = None,
-    user: discord.Member | discord.User = None,
-) -> str:
-    """
-    Chuyển log thành plain text 1 dòng hoặc vài dòng nhỏ gọn.
-    Ví dụ:
-      🎫 [TICKET_CREATE] Ticket Tạo — money-042
-      › 🎫 Kênh: #money-042  › 🏷️ Loại: 🛒 MUA HÀNG  › 👤 Người tạo: @Ruby
-      🕐 05/06/2026 14:32 UTC+7
-    """
-    icon, _ = LOG_ICONS.get(event_type, ("📋", 0))
-    now_vn = datetime.now(timezone(timedelta(hours=7)))
-    time_str = now_vn.strftime("%d/%m/%Y %H:%M")
-
-    lines = []
-
-    # Dòng 1: header
-    header = f"{icon} `[{event_type}]` **{title}**"
-    if user:
-        header += f"  •  _{user}_"
-    lines.append(header)
-
-    # Dòng 2: description (nếu có, cắt ngắn)
-    if description:
-        short_desc = _depinged(description[:200].replace("\n", " "))
-        lines.append(f"> {short_desc}")
-
-    # Dòng 3+: fields gộp trên cùng 1 dòng (ngắn gọn)
-    if fields:
-        field_parts = []
-        for f in fields:
-            name  = f[0]
-            value = _depinged(str(f[1])[:80])  # giới hạn độ dài value
-            field_parts.append(f"**{name}:** {value}")
-        # Tối đa 3 field/dòng
-        for i in range(0, len(field_parts), 3):
-            lines.append("› " + "  ·  ".join(field_parts[i:i+3]))
-
-    # Dòng cuối: timestamp
-    lines.append(f"-# 🕐 {time_str} UTC+7")
-
-    return "\n".join(lines)
-
-
-# ══════════════════════════════════════════
-# SEND LOG
-# ══════════════════════════════════════════
-async def send_log(
-    bot: discord.Client,
-    event_type: str,
-    title: str,
-    fields: list[tuple] = None,
-    description: str = None,
-    user: discord.Member | discord.User = None,
-    color: int = None,
-    footer: str = None,
-    guild_id: int = None,
-):
-    """
-    Gửi log vào kênh tương ứng với nhóm của event_type.
-    Fallback về kênh log_rudy nếu nhóm chưa được cài.
-    fields: list of (name, value, inline?)
-    guild_id: truyền vào khi gọi từ background task (không có ctx/guild context).
-
-    Gửi dưới dạng plain text để tránh đẩy trôi history.
-    Báo cáo tổng hợp (daily report) vẫn dùng embed vì cần layout đẹp.
-    """
-    if bot is None:
-        return
-
-    # FIX: set guild context TRƯỚC khi đọc config, vì send_log() thường được gọi từ các
-    # listener (on_member_join, on_command, on_guild_join, v.v.) chạy trên 1 asyncio Task
-    # RIÊNG (do discord.py tự dispatch), không thừa hưởng contextvar đã set ở before_invoke/
-    # on_message/interaction_check. Thiếu dòng này khiến get_log_channel()/get_cfg_log_rudy()
-    # bên dưới gọi load_data() mà KHÔNG có guild context → log bị rớt âm thầm.
-    if guild_id:
-        set_current_guild(guild_id)
-
-    text = _fmt_log_text(event_type, title, fields, description, user)
-
-    # Xác định kênh đích
-    group   = LOG_ROUTES.get(event_type, "general")
-    ch_id   = get_log_channel(group) or get_cfg_log_rudy()
-    if not ch_id:
-        print(f"[LOG] ⚠️ Không có kênh log cho nhóm '{group}' ({event_type}), bỏ qua.")
-        return
-
-    # Nếu có guild_id, ưu tiên tìm channel trong guild đó (tránh gửi nhầm server)
-    channel = None
-    if guild_id:
-        guild = bot.get_guild(guild_id)
-        if guild:
-            channel = guild.get_channel(ch_id)
-    if not channel:
-        channel = await get_or_fetch_channel(bot, ch_id)
-
-    if not channel:
-        print(f"[LOG] ⚠️ Không tìm được kênh {ch_id} cho '{group}' ({event_type}), bỏ qua.")
-        return
-    try:
-        await channel.send(text)
-    except Exception as e:
-        print(f"[LOG] ❌ Không gửi được log {event_type} → #{channel.name}: {e}")
 
 
 # ══════════════════════════════════════════

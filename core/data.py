@@ -1,665 +1,41 @@
 """
-core/data.py — MongoDB storage, in-memory cache, và tất cả helper đọc/ghi data.
-v3.6.3 fixes:
-- save_data() dùng asyncio.create_task thay ensure_future (an toàn hơn)
-- get_ticket_number() có asyncio.Lock tránh trùng số
-- ADMIN_IDS đọc từ env ADMIN_IDS thay vì hardcode
-- Logging lỗi rõ ràng thay vì except: pass
+core/data.py — Accessor riêng cho từng tính năng (cfg_*, seller, ticket, giveaway,
+shop_orders, dangerous cmd overrides...) của bot NÀY (bot chính / bot_core, tuỳ tên bạn
+đặt cho thư mục bot đầu tiên).
+
+⚠️ Hạ tầng dùng CHUNG cho mọi bot (contextvar, Mongo cache engine, AUTH_GATE, admin,
+GuildContextView/Modal, init_data_cache) đã CHUYỂN sang shared/data.py — file này giờ
+CHỈ còn phần accessor đặc thù, import lại phần hạ tầng từ shared/ ở khối dưới đây.
+
+Nếu cần thêm hạ tầng MỚI dùng chung cho ≥2 bot: thêm vào shared/data.py, KHÔNG thêm vào
+đây. Nếu chỉ 1 bot cần: thêm thẳng vào đây (hoặc data_ext.py riêng của bot đó khi đã
+tách bot thật — xem AI_CONTEXT_SHARED.md).
 """
 
-import os
 import asyncio
 import logging
-import contextvars
 from datetime import datetime, timezone, timedelta
-from motor.motor_asyncio import AsyncIOMotorClient
 import discord
 
-log = logging.getLogger("data")
-
-# ══════════════════════════════════════════
-# MULTI-GUILD SUPPORT (thêm khi mở rộng ra server thứ 2)
-# ══════════════════════════════════════════
-# Guild ID của server chính (TuyTam Community) — dùng để migrate 1 lần dữ liệu
-# từ document "main" cũ (single-guild) sang document "guild_<id>" (multi-guild).
-LEGACY_MAIN_GUILD_ID = 1464407860640219189
-
-# ContextVar giữ guild_id đang được xử lý trong task/coroutine hiện tại.
-# Được set tự động ở bot.py (before_invoke + CommandTree.interaction_check + on_message)
-# và ở GuildContextView/GuildContextModal bên dưới (cho các nút bấm/modal).
-_current_guild_id: contextvars.ContextVar[int | None] = contextvars.ContextVar(
-    "current_guild_id", default=None
+from shared.data import (
+    LEGACY_MAIN_GUILD_ID,
+    set_current_guild, reset_current_guild, get_current_guild_id,
+    is_data_cache_ready, wait_data_cache_ready,
+    GuildContextView, GuildContextModal,
+    ADMIN_IDS, ADMIN_RUBY_ID, ADMIN_TUYTAM_ID,
+    MONGO_URI, get_db,
+    load_data, save_data, load_global_data, save_global_data, save_cfg,
+    get_authorized_guilds, is_guild_authorized, add_authorized_guild,
+    remove_authorized_guild, set_guild_authorized,
+    get_extra_admins, add_extra_admin, remove_extra_admin, is_admin,
+    ensure_guild_loaded, init_data_cache,
+    get_giveaways_cache, set_giveaways_cache,
+    get_ticket_lock, flush_to_mongo, flush_global_to_mongo, save_data_and_wait,
+    peek_guild_cache, poke_guild_cache_field, peek_global_cache,
+    _get_mongo,  # re-export: cogs/invite.py + cogs/admin.py vẫn "from core.data import _get_mongo"
 )
 
-def set_current_guild(guild_id: int | None):
-    """Set guild đang xử lý cho task hiện tại. Trả về token để reset (không bắt buộc dùng)."""
-    return _current_guild_id.set(guild_id)
-
-def reset_current_guild(token) -> None:
-    try:
-        _current_guild_id.reset(token)
-    except Exception:
-        pass
-
-def get_current_guild_id() -> int | None:
-    return _current_guild_id.get()
-
-
-# ══════════════════════════════════════════
-# DATA CACHE READY EVENT
-# ══════════════════════════════════════════
-# FIX: init_data_cache() chạy trong on_ready nhưng hoàn tất ĐỘC LẬP và có thể MUỘN
-# HƠN thời điểm bot.wait_until_ready() trả về (mất ~2-3s để load hết cache mọi guild).
-# Các tasks.loop nền (check_expiry_loop, daily_report_task...) trước đây chỉ
-# `await bot.wait_until_ready()` trong before_loop → vòng lặp đầu tiên có thể chạy
-# TRƯỚC KHI _data_cache được nạp xong → "Guild X chưa có trong cache" lúc khởi động.
-# Mọi tasks.loop nền đọc/ghi data theo guild PHẢI `await wait_data_cache_ready()`
-# trong before_loop, SAU bot.wait_until_ready().
-_data_cache_ready = asyncio.Event()
-
-def is_data_cache_ready() -> bool:
-    return _data_cache_ready.is_set()
-
-async def wait_data_cache_ready() -> None:
-    await _data_cache_ready.wait()
-
-
-class GuildContextView(discord.ui.View):
-    """Thay thế discord.ui.View — tự set guild context trước khi chạy callback của bất kỳ
-    nút/select nào bên trong, để load_data()/save_data() thao tác đúng document của guild đó.
-    Đồng thời áp dụng AUTH_GATE (xem bot.py) — chặn nút bấm/select ở server CHƯA được
-    ủy quyền. Bắt buộc: mọi View có nút bấm/select đọc-ghi data theo guild PHẢI dùng class
-    này (không phải discord.ui.View trực tiếp), nếu không nút bấm sẽ hoạt động ngay cả khi
-    server đã bị `.as` thu hồi ủy quyền (bug đã gặp thực tế ở panel ticket/giveaway/settings).
-    Dùng: từ discord.ui import Button, Select  (KHÔNG import View)
-          from core.data import GuildContextView as View
-    """
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.guild_id:
-            set_current_guild(interaction.guild_id)
-            if interaction.guild_id not in get_authorized_guilds():
-                if interaction.user.id in ADMIN_IDS:
-                    try:
-                        await interaction.response.send_message(
-                            f"🔒 Server này (`{interaction.guild_id}`) chưa được ủy quyền.\n"
-                            f"Dùng `.as {interaction.guild_id}` để bật.",
-                            ephemeral=True,
-                        )
-                    except Exception:
-                        pass
-                return False
-        return True
-
-
-class GuildContextModal(discord.ui.Modal):
-    """Tương tự GuildContextView nhưng cho Modal — cùng áp dụng AUTH_GATE, xem docstring trên."""
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.guild_id:
-            set_current_guild(interaction.guild_id)
-            if interaction.guild_id not in get_authorized_guilds():
-                if interaction.user.id in ADMIN_IDS:
-                    try:
-                        await interaction.response.send_message(
-                            f"🔒 Server này (`{interaction.guild_id}`) chưa được ủy quyền.\n"
-                            f"Dùng `.as {interaction.guild_id}` để bật.",
-                            ephemeral=True,
-                        )
-                    except Exception:
-                        pass
-                return False
-        return True
-
-
-# ══════════════════════════════════════════
-# CONSTANTS
-# ══════════════════════════════════════════
-LOG_CHANNEL           = 1482234024868053083   # (không dùng ở đâu trong code hiện tại — giữ lại phòng dùng sau, giống FEEDBACK_CHANNEL_ID)
-CHANGELOG_CHANNEL_ID  = 1486967511839801414   # bot.py gửi embed "Bot Khởi Động" — kênh cố định của dev để theo dõi deploy, không phải setting của guild nào cả
-FEEDBACK_CHANNEL_ID   = 1502464872686948403   # (không dùng ở đâu trong code hiện tại — giữ lại phòng dùng sau)
-
-# FIX: TRƯỚC ĐÂY toàn bộ role/channel/category ID riêng của từng guild (ticket category,
-# support role, seller role, stock/sold category, done role, transcript channel, builder
-# role...) được HARDCODE thẳng trong code làm giá trị "mặc định" cho MỌI guild — dù comment
-# ghi rõ "chỉ đúng cho TuyTam Community". Nhiều chỗ dùng SAI CÁCH (import thẳng hằng số,
-# không qua get_cfg_*), khiến tính năng liên quan im lặng không chạy ở server khác (xem
-# CHANGELOG các bản trước — DONE_ROLE_ID, TRANSCRIPT_CHANNEL_ID). Theo yêu cầu: KHÔNG còn
-# lưu ID nào trong code nữa — mọi guild (kể cả TuyTam) đều bắt đầu ở trạng thái "chưa cài"
-# (0) và admin PHẢI tự cấu hình qua `.st`. _default_data() bên dưới không còn tham chiếu
-# tới bất kỳ ID nào ở đây.
-#
-# _TUYTAM_LEGACY_CFG_MIGRATION chỉ tồn tại để giữ TuyTam Community KHÔNG bị "mất cấu hình"
-# đột ngột khi đợt sửa này lên (server đó đang chạy dựa vào các ID hardcode cũ, admin CHƯA
-# từng cần bấm `.st` cho từng mục vì nó "tự nhiên đúng"). _migrate_tuytam_legacy_cfg() ở
-# dưới sẽ TỰ backfill các giá trị này vào ĐÚNG 1 LẦN cho DUY NHẤT document của
-# LEGACY_MAIN_GUILD_ID nếu field đó vẫn đang trống — sau lần đó, TuyTam có giá trị lưu
-# TƯỜNG MINH trong DB như mọi guild khác, dict này không còn được dùng tới cho guild đó
-# nữa. KHÔNG guild nào khác (kể cả guild mới) nhận các giá trị này.
-_TUYTAM_LEGACY_CFG_MIGRATION = {
-    "cfg_ticket_category":    1464426174611456195,
-    "cfg_support_role":       1474572393908404305,
-    "cfg_proof_channel":      1469647159560241318,
-    "cfg_stock_category":     1506520186063163423,
-    "cfg_sold_category":      1506652491779932240,
-    "cfg_done_role":          1515393691206811901,
-    "cfg_transcript_channel": 1464430574524436679,
-    "cfg_builder_role":       1484158340849205308,
-    # Role phụ gán kèm khi verify (ping Stock/Notification/Member/ping media) — trước
-    # đây là list MEMBER_ROLE_IDS hardcode ở cogs/invite.py, dùng chung cho mọi guild.
-    "cfg_verify_extra_roles": [1500512964065755288, 1500513085096726528, 1464411190808805540, 1500512893139943455],
-}
-# LƯU Ý: "cfg_welcome_channel" (kênh ping chào mừng khi member mới join) KHÔNG có trong
-# migration này — hằng số cũ WELCOME_GUILDS ở cogs/invite.py map guild_id 950363132679831642,
-# KHÔNG PHẢI LEGACY_MAIN_GUILD_ID (1464407860640219189, TuyTam Community thật) — nghĩa là
-# tính năng này ĐÃ im lặng không chạy ở TuyTam từ trước (guild_id không khớp), không phải
-# đang hoạt động rồi bị tắt bởi đợt sửa này. Admin TuyTam muốn bật thì tự cấu hình qua `.st`.
-# ADMIN_IDS — đọc từ 2 biến riêng biệt:
-#   ADMIN_RUBY_ID   — Ruby (phát triển, quản lý bot & server)
-#   ADMIN_TUYTAM_ID — TuyTam (giao dịch, buôn bán)
-# Cả 2 đều có toàn quyền như nhau.
-def _load_admin_ids() -> list[int]:
-    ids = []
-    for var in ("ADMIN_RUBY_ID", "ADMIN_TUYTAM_ID"):
-        val = os.getenv(var, "").strip()
-        if val:
-            try:
-                ids.append(int(val))
-            except ValueError:
-                log.error(f"[DATA] ❌ {var} không hợp lệ (phải là số): '{val}'")
-        else:
-            log.warning(f"[DATA] ⚠️ {var} chưa được cài trong Railway env.")
-    if not ids:
-        log.critical("[DATA] ❌ Không có ADMIN nào! Hãy set ADMIN_RUBY_ID và ADMIN_TUYTAM_ID.")
-    return ids
-
-ADMIN_IDS = _load_admin_ids()
-
-# Tiện truy cập từng ID riêng nếu sau này cần phân quyền
-ADMIN_RUBY_ID   = next((i for i in ADMIN_IDS if str(i) == os.getenv("ADMIN_RUBY_ID","").strip()), None)
-ADMIN_TUYTAM_ID = next((i for i in ADMIN_IDS if str(i) == os.getenv("ADMIN_TUYTAM_ID","").strip()), None)
-QR_FILE   = "/data/qr_code.png" if os.path.isdir("/data") else "./qr_code.png"
-
-MONGO_URI = os.getenv("MONGO_URI")
-if not MONGO_URI:
-    raise RuntimeError("❌ Thiếu biến môi trường MONGO_URI!")
-
-# ══════════════════════════════════════════
-# MONGO CLIENT
-# ══════════════════════════════════════════
-_mongo_client = None
-_col_data     = None
-_col_giveaway = None
-def _get_mongo():
-    global _mongo_client, _col_data, _col_giveaway
-    if _mongo_client is None:
-        _mongo_client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        _db           = _mongo_client["tuytam_bot"]
-        _col_data     = _db["bot_data"]
-        _col_giveaway = _db["giveaways"]
-    return _col_data, _col_giveaway
-
-def get_db():
-    """Trả về database 'tuytam_bot' để module khác (vd core/rag.py) mở collection
-    riêng mà KHÔNG cần tạo AsyncIOMotorClient mới (tránh tốn connection pool)."""
-    _get_mongo()  # đảm bảo _mongo_client đã khởi tạo
-    return _mongo_client["tuytam_bot"]
-
-# ══════════════════════════════════════════
-# DEFAULT DATA (theo từng guild)
-# ══════════════════════════════════════════
-def _default_data(guild_id: int) -> dict:
-    return {
-        "_id": f"guild_{guild_id}",
-        "ticket": 0,
-        "panel_channel_id": None,
-        "qr_path": None,
-        "cfg_log_rudy":        0,
-        # FIX: KHÔNG còn hardcode ID nào ở đây nữa — MỌI guild (kể cả TuyTam Community)
-        # đều bắt đầu ở trạng thái "chưa cài" (0), admin tự cấu hình qua `.st`. TuyTam
-        # Community cụ thể được backfill giá trị lịch sử ĐÚNG 1 LẦN bởi
-        # _migrate_tuytam_legacy_cfg() — xem _TUYTAM_LEGACY_CFG_MIGRATION phía trên.
-        "cfg_ticket_category": 0,
-        "cfg_support_role":    0,
-        "cfg_seller_role":     0,
-        "cfg_seller_roles_extra": [],  # Role seller PHỤ (ngoài cfg_seller_role "chính") — thêm qua .addsellerrole
-        "cfg_counter_channel": 0,
-        "cfg_legit_channel":   0,
-        "cfg_proof_channel":   0,
-        "cfg_legit_emoji":     "✅",   # Emoji bot thả khi +1legit — đổi qua .st
-        "cfg_vouch_emoji":     "✅",   # Emoji bot thả khi done (vouch) — đổi qua .st
-        "cfg_ai_channel":      0,
-        "cfg_stock_category":  0,
-        "cfg_sold_category":   0,
-        "cfg_done_role":       0,
-        "cfg_transcript_channel": 0,
-        "cfg_builder_role":    0,
-        "cfg_welcome_channel": 0,     # Kênh ping chào mừng member mới join — 0 = tắt
-        "cfg_verify_extra_roles": [], # Role phụ gán kèm khi verify (ngoài role Verify chính)
-        "cfg_font":            "normal",
-        "extra_admin_ids":     [],   # Admin PHỤ thêm qua `.ad` — CHỈ có quyền admin ở ĐÚNG guild này (xem is_admin())
-        "dangerous_cmd_overrides": {},
-        "sellers":          [],
-        "sv_prices":        [],
-        "buy_roles":        [],
-        "user_total_spent": {},
-        "ratings":          [],
-        "ticket_notes":     {},
-        "invite_counts":    {},
-        "ticket_history":   [],
-        "seller_qr":        {},        # {user_id: qr_path} — QR riêng của từng seller
-        "seller_categories": {},       # {user_id: category_id} — category riêng của từng seller
-        "log_channels":     {},        # {group: channel_id} — kênh log theo nhóm
-        "seller_sales":      [],       # [{user_id, amount, channel_name, channel_id, time}] — lịch sử sold-stock
-    }
-
-def _default_data_global() -> dict:
-    """Data KHÔNG tách theo guild — chống multi-acc/VPN (_ip_records) và tempban
-    được cố ý dùng chung cho mọi server để không ai né được bằng cách nhảy server."""
-    return {
-        "_id": "main",
-        "_tempbans": {},
-        "_ip_records": {},
-        # {channel_id (str): {"base": str, "target_num": int}} — hàng đợi đổi tên kênh
-        # legit/vouch bị Discord rate limit (2 lần/10 phút), resume lại sau khi bot restart.
-        # Xem bot.py: _queue_or_rename / _apply_rename_with_retry / _resume_pending_renames
-        "_pending_renames": {},
-        # ── Sold-stock (xem cogs/admin.py: handle_sold) — CHUYỂN sang global (v4.18.0) vì
-        # các Modal/View xử lý nằm trong DM admin: interaction.guild_id LUÔN là None trong DM
-        # nên GuildContextView/Modal KHÔNG set được guild context → load_data() theo-guild sẽ
-        # đọc nhầm/rỗng. Data này tự chứa "guild_id" bên trong mỗi entry (đúng pattern global),
-        # nơi gọi tự set_current_guild(entry["guild_id"]) SAU khi đọc được entry.
-        "_pending_sold_price":  {},  # {channel_id: {seller_id, channel_name, old_name, guild_id, time, tuytam_message_id, ruby_message_id, escalated}}
-        "_resolved_sold_price": {},  # {channel_id: {amount, resolved_by, old_name, time}} — đơn đã được admin xử lý
-        "_pending_sold_buyer":  {},  # {channel_id: {seller_id, amount, channel_name, old_name, guild_id, time, tuytam_message_id, resolved}}
-        # ── Shop Orders — webhook thanh toán (SePay...) không có guild context sẵn khi gọi
-        # vào, giống lý do _pending_sold_price ở trên phải để global. entry tự chứa guild_id.
-        "_shop_pending_orders":        {},  # {ref_code: {guild_id, channel_id, seller_id, buyer_id, amount, account_number, created_at}}
-        "_shop_processed_webhook_ids": {},  # {webhook_id (str): xử lý lúc nào} — chống xử lý trùng khi SePay retry
-    }
-
-# ══════════════════════════════════════════
-# LOCKS (1 lock riêng mỗi guild + 1 lock cho global doc)
-# ══════════════════════════════════════════
-_save_locks: dict[int, asyncio.Lock] = {}
-_global_save_lock = None
-_ticket_locks: dict[int, asyncio.Lock] = {}   # FIX: 1 lock/guild (không phải 1 lock chung
-                                               # cho mọi guild) — xem get_ticket_number().
-
-def _get_save_lock(guild_id: int) -> asyncio.Lock:
-    if guild_id not in _save_locks:
-        _save_locks[guild_id] = asyncio.Lock()
-    return _save_locks[guild_id]
-
-def _get_global_save_lock() -> asyncio.Lock:
-    global _global_save_lock
-    if _global_save_lock is None:
-        _global_save_lock = asyncio.Lock()
-    return _global_save_lock
-
-def _get_ticket_lock(guild_id: int) -> asyncio.Lock:
-    if guild_id not in _ticket_locks:
-        _ticket_locks[guild_id] = asyncio.Lock()
-    return _ticket_locks[guild_id]
-
-
-# ══════════════════════════════════════════
-# LOW-LEVEL MongoDB
-# ══════════════════════════════════════════
-_data_cache: dict[int, dict] = {}      # {guild_id: data}
-_global_cache: dict | None = None      # data KHÔNG tách theo guild (tempban, ip records)
-_giveaways_cache: dict = {}            # {message_id: {...}} — KHÔNG tách theo guild (tự nhiên theo message_id)
-
-async def _mongo_load(guild_id: int) -> dict:
-    col, _ = _get_mongo()
-    doc_id = f"guild_{guild_id}"
-    try:
-        doc = await col.find_one({"_id": doc_id})
-        if doc is None and guild_id == LEGACY_MAIN_GUILD_ID:
-            # Migrate 1 lần: document "main" cũ (trước khi tách multi-guild) → "guild_<id>".
-            legacy = await col.find_one({"_id": "main"})
-            if legacy:
-                doc = {k: v for k, v in legacy.items() if k != "_id"}
-                doc["_id"] = doc_id
-                for k, v in _default_data(guild_id).items():
-                    doc.setdefault(k, v)
-                await col.insert_one(doc)
-                log.info(f"[DATA] 🔀 Đã migrate document 'main' → '{doc_id}'")
-        if doc is None:
-            doc = _default_data(guild_id)
-            await col.insert_one(doc)
-            print(f"[DATA] 🆕 Tạo document mới cho guild {guild_id}")
-        else:
-            changed = False
-            for k, v in _default_data(guild_id).items():
-                if k not in doc:
-                    doc[k] = v
-                    changed = True
-            if changed:
-                await _mongo_save(guild_id, doc)
-
-        # FIX: backfill giá trị lịch sử CHỈ cho TuyTam Community, xem
-        # _TUYTAM_LEGACY_CFG_MIGRATION phía trên. Chạy SAU CÙNG nên tác động lên mọi
-        # nhánh ở trên (doc mới tạo / migrate từ "main" / doc cũ thiếu field) như nhau.
-        # Field nào ĐÃ có giá trị thật rồi (kể cả do admin tự đổi sang giá trị khác qua
-        # `.st`) sẽ KHÔNG bị ghi đè — chỉ backfill field đang thật sự trống (0/thiếu).
-        if guild_id == LEGACY_MAIN_GUILD_ID:
-            legacy_changed = False
-            for k, v in _TUYTAM_LEGACY_CFG_MIGRATION.items():
-                if not doc.get(k):
-                    doc[k] = v
-                    legacy_changed = True
-            if legacy_changed:
-                await _mongo_save(guild_id, doc)
-                log.info("[DATA] 🔀 Đã backfill cấu hình role/kênh cũ cho TuyTam Community (1 lần)")
-
-        return doc
-    except Exception as e:
-        log.error(f"[DATA] ❌ Lỗi đọc MongoDB (guild {guild_id}): {e}")
-        return _default_data(guild_id)
-
-async def _mongo_save(guild_id: int, data: dict):
-    col, _ = _get_mongo()
-    doc_id = f"guild_{guild_id}"
-    try:
-        save = {k: v for k, v in data.items() if k != "_id"}
-        await col.update_one({"_id": doc_id}, {"$set": save}, upsert=True)
-    except Exception as e:
-        log.error(f"[DATA] ❌ Lỗi ghi MongoDB (guild {guild_id}): {e}")
-
-async def _mongo_load_global() -> dict:
-    col, _ = _get_mongo()
-    try:
-        doc = await col.find_one({"_id": "main"})
-        if doc is None:
-            doc = _default_data_global()
-            await col.insert_one(doc)
-        else:
-            changed = False
-            for k, v in _default_data_global().items():
-                if k not in doc:
-                    doc[k] = v
-                    changed = True
-            if changed:
-                await _mongo_save_global(doc)
-        return doc
-    except Exception as e:
-        log.error(f"[DATA] ❌ Lỗi đọc MongoDB (global): {e}")
-        return _default_data_global()
-
-async def _mongo_save_global(data: dict):
-    col, _ = _get_mongo()
-    try:
-        save = {k: v for k, v in data.items() if k != "_id"}
-        await col.update_one({"_id": "main"}, {"$set": save}, upsert=True)
-    except Exception as e:
-        log.error(f"[DATA] ❌ Lỗi ghi MongoDB (global): {e}")
-
-async def _flush_to_mongo(guild_id: int):
-    """FIX: Dùng Lock đảm bảo không ghi đồng thời (mỗi guild 1 lock riêng)."""
-    lock = _get_save_lock(guild_id)
-    async with lock:
-        data = _data_cache.get(guild_id)
-        if data is not None:
-            await _mongo_save(guild_id, data)
-
-async def _flush_global_to_mongo():
-    lock = _get_global_save_lock()
-    async with lock:
-        if _global_cache is not None:
-            await _mongo_save_global(_global_cache)
-
-# ══════════════════════════════════════════
-# HIGH-LEVEL API
-# ══════════════════════════════════════════
-def load_data() -> dict:
-    """Trả về shallow copy của cache CHO GUILD ĐANG XỬ LÝ (lấy từ contextvar).
-    Dùng save_data() để ghi lại sau khi thay đổi.
-    ⚠️ Nếu gọi mà không có guild context (bug ở nơi gọi), sẽ log lỗi và trả về default rỗng
-    thay vì crash hoặc lỡ tay ghi nhầm sang guild khác."""
-    guild_id = get_current_guild_id()
-    if guild_id is None:
-        # Đã xác định xong các nguồn gốc phổ biến nhất gây lỗi này (on_member_join/remove,
-        # verify callback ở invite.py, on_message relay ở ticket.py — xem CHANGELOG v4.10.3
-        # và AI_CONTEXT.md mục Multi-guild). Chỉ log 1 dòng ngắn, KHÔNG dump full stack trace
-        # nữa để tránh flood log (trước đây in kèm traceback.format_stack() gây hàng trăm dòng
-        # log lặp lại mỗi lần listener chạy).
-        log.error("[DATA] ⚠️ load_data() được gọi mà KHÔNG có guild context — trả về default tạm. "
-                  "Nếu vừa thêm listener/task mới, nhớ set_current_guild() đầu hàm.")
-        return _default_data(0)
-    if guild_id in _data_cache:
-        return dict(_data_cache[guild_id])
-    log.warning(f"[DATA] ⚠️ Guild {guild_id} chưa có trong cache — trả về default tạm (chưa lưu).")
-    return _default_data(guild_id)
-
-def save_data(data: dict):
-    """FIX: Dùng asyncio.create_task thay ensure_future. Ghi vào cache của guild đang xử lý
-    (lấy từ contextvar) — KHÔNG cần truyền guild_id, mọi cog cũ gọi save_data(data) vẫn hoạt động
-    y nguyên, chỉ khác là giờ nó tự biết ghi đúng guild nào."""
-    guild_id = get_current_guild_id()
-    if guild_id is None:
-        log.error("[DATA] ❌ save_data() được gọi mà KHÔNG có guild context — dữ liệu KHÔNG được lưu để tránh ghi nhầm guild.")
-        return
-    _data_cache[guild_id] = data
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_flush_to_mongo(guild_id))
-    except RuntimeError:
-        pass
-    except Exception as e:
-        log.error(f"[DATA] ❌ Lỗi tạo save task (guild {guild_id}): {e}")
-
-def load_global_data() -> dict:
-    """Data KHÔNG tách theo guild (tempban, ip records) — dùng chung cho mọi server."""
-    if _global_cache is not None:
-        return dict(_global_cache)
-    return _default_data_global()
-
-def save_global_data(data: dict):
-    global _global_cache
-    _global_cache = data
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_flush_global_to_mongo())
-    except RuntimeError:
-        pass
-    except Exception as e:
-        log.error(f"[DATA] ❌ Lỗi tạo save task (global): {e}")
-
-# ══════════════════════════════════════════
-# GUILD AUTHORIZATION — server chỉ hoạt động sau khi admin ủy quyền qua .as
-# ══════════════════════════════════════════
-# Lưu ở global data ("_id": "main") vì đây là danh sách quyền, KHÔNG thuộc riêng
-# guild nào — phải đọc được kể cả khi guild đó chưa có document guild_<id> (mới join).
-def get_authorized_guilds() -> list[int]:
-    g = load_global_data()
-    return list(g.get("_authorized_guilds", []))
-
-def is_guild_authorized(guild_id: int) -> bool:
-    return guild_id in get_authorized_guilds()
-
-def add_authorized_guild(guild_id: int) -> bool:
-    """Ủy quyền 1 guild. Trả về True nếu MỚI thêm (chưa từng được ủy quyền).
-    ⚠️ CỐ Ý dùng loop.create_task() bên trong (qua save_global_data) KHÔNG đủ an toàn
-    ở đây: on_ready() có thể refire bất cứ lúc nào (Discord gateway reconnect — không
-    chỉ chạy 1 lần lúc khởi động) và unconditionally RESET _global_cache từ Mongo
-    (xem init_data_cache()). Nếu chỉ update RAM rồi ghi Mongo nền (fire-and-forget) mà
-    chưa kịp xong, 1 lần reconnect ngay sau `.as` có thể làm MẤT ủy quyền vừa bật dù
-    bot đã báo thành công (đã gặp thực tế). Ủy quyền là thao tác hiếm/nhạy cảm nên
-    hàm này là async — GỌI KÈM `await` — và tự ghi Mongo NGAY, đảm bảo đã lưu chắc
-    chắn trước khi trả kết quả cho lệnh `.as`."""
-    global _global_cache
-    g = load_global_data()
-    lst = g.setdefault("_authorized_guilds", [])
-    if guild_id in lst:
-        return False
-    lst.append(guild_id)
-    _global_cache = g
-    return True
-
-def remove_authorized_guild(guild_id: int) -> bool:
-    """Thu hồi ủy quyền 1 guild. Trả về True nếu trước đó CÓ được ủy quyền.
-    Cùng lý do với add_authorized_guild() ở trên — hàm này KHÔNG tự ghi Mongo,
-    dùng bản async_* bên dưới để đảm bảo ghi xong trước khi phản hồi admin."""
-    global _global_cache
-    g = load_global_data()
-    lst = g.get("_authorized_guilds", [])
-    if guild_id not in lst:
-        return False
-    lst = [i for i in lst if i != guild_id]
-    g["_authorized_guilds"] = lst
-    _global_cache = g
-    return True
-
-async def set_guild_authorized(guild_id: int, authorized: bool) -> bool:
-    """Bản AWAIT được — dùng cho lệnh `.as` (cogs/admin.py). Update RAM NGAY (đồng bộ,
-    như add/remove_authorized_guild ở trên) rồi `await` ghi thẳng xuống Mongo trước khi
-    trả về, để tránh race với on_ready() refire (xem giải thích ở add_authorized_guild).
-    Trả về True nếu trạng thái THỰC SỰ đổi (False nếu đã ở đúng trạng thái đó rồi)."""
-    changed = add_authorized_guild(guild_id) if authorized else remove_authorized_guild(guild_id)
-    if changed:
-        await _mongo_save_global(_global_cache)
-    return changed
-
-
-# ══════════════════════════════════════════
-# BOT ADMIN — thêm qua lệnh .ad (cogs/admin.py), CHỈ Ruby dùng được
-# ══════════════════════════════════════════
-# FIX (thay đổi kiến trúc): TRƯỚC ĐÂY admin thêm qua `.ad` được lưu ở global data
-# ("_id": "main") và mutate thẳng vào ADMIN_IDS (list global, dùng chung MỌI guild) →
-# admin mới có TOÀN QUYỀN ở TẤT CẢ server bot đang hoạt động, không phân biệt server nào.
-# Theo yêu cầu mới: `.ad` dùng ở server nào thì admin đó CHỈ có quyền ở ĐÚNG server đó.
-# Nên giờ admin phụ được lưu NGAY TRONG document của guild đó (field "extra_admin_ids",
-# giống mọi cfg_* khác — đi qua load_data()/save_data() theo guild context hiện tại,
-# KHÔNG còn đụng tới ADMIN_IDS/global data nữa). 2 admin cố định (ADMIN_RUBY_ID/
-# ADMIN_TUYTAM_ID, đọc từ env) vẫn là list ADMIN_IDS y nguyên như cũ — không đổi gì,
-# vẫn có toàn quyền ở MỌI guild như trước giờ.
-def get_extra_admins() -> list[int]:
-    """Admin PHỤ của GUILD ĐANG THAO TÁC (guild context hiện tại, xem load_data()) —
-    thêm qua `.ad`, CHỈ có hiệu lực ở guild đó. KHÔNG tính 2 admin cố định
-    ADMIN_RUBY_ID/ADMIN_TUYTAM_ID (luôn có quyền ở mọi guild, xem ADMIN_IDS)."""
-    return list(load_data().get("extra_admin_ids", []))
-
-async def add_extra_admin(user_id: int) -> bool:
-    """Thêm 1 admin PHỤ cho GUILD ĐANG THAO TÁC (guild context hiện tại). Trả về True
-    nếu MỚI thêm — False nếu user_id đã là admin từ trước (2 admin cố định HOẶC đã là
-    admin phụ của ĐÚNG guild này).
-    Admin là thao tác hiếm/nhạy cảm (cấp quyền admin) — cùng lý do với
-    set_guild_authorized(): update cache RAM rồi `await` ghi thẳng Mongo 1 LẦN (KHÔNG
-    gọi save_data() ở đây vì nó tự tạo thêm 1 task nền gọi _flush_to_mongo() song song →
-    ghi Mongo dư thừa 2 lần) trước khi lệnh `.ad` báo thành công, tránh mất dữ liệu nếu
-    bot reconnect ngay sau đó."""
-    if user_id in ADMIN_IDS:
-        return False
-    guild_id = get_current_guild_id()
-    if guild_id is None:
-        log.error("[DATA] ❌ add_extra_admin() được gọi mà KHÔNG có guild context.")
-        return False
-    data = load_data()
-    lst = data.setdefault("extra_admin_ids", [])
-    if user_id in lst:
-        return False
-    lst.append(user_id)
-    _data_cache[guild_id] = data
-    await _flush_to_mongo(guild_id)
-    return True
-
-async def remove_extra_admin(user_id: int) -> bool:
-    """Thu hồi quyền admin phụ của user_id khỏi GUILD ĐANG THAO TÁC. Trả về True nếu có
-    xoá thật, False nếu user_id vốn không phải admin phụ của guild này. KHÔNG thể xoá 2
-    admin cố định (ADMIN_RUBY_ID/ADMIN_TUYTAM_ID) qua hàm này — phải đổi env."""
-    guild_id = get_current_guild_id()
-    if guild_id is None:
-        log.error("[DATA] ❌ remove_extra_admin() được gọi mà KHÔNG có guild context.")
-        return False
-    data = load_data()
-    lst = data.get("extra_admin_ids", [])
-    if user_id not in lst:
-        return False
-    lst.remove(user_id)
-    data["extra_admin_ids"] = lst
-    _data_cache[guild_id] = data
-    await _flush_to_mongo(guild_id)
-    return True
-
-def is_admin(member) -> bool:
-    """True nếu `member` là admin CỐ ĐỊNH (ADMIN_IDS — Ruby/TuyTam, quyền ở MỌI guild)
-    HOẶC admin PHỤ được thêm qua `.ad` cho ĐÚNG guild của member (dựa vào guild context
-    hiện tại/contextvar — PHẢI khớp member.guild, đúng quy tắc như mọi cfg_* getter khác
-    trong file này, xem load_data()). Dùng hàm này thay vì check thẳng
-    `member.id in ADMIN_IDS` ở bất kỳ đâu cần phân quyền admin theo guild.
-    Chủ động return False sớm nếu KHÔNG có guild context (vd lệnh gõ qua DM) thay vì gọi
-    get_extra_admins()/load_data() — tránh log lỗi giả "không có guild context" khi thật
-    ra chỉ đơn giản là không có admin phụ nào áp dụng được ở đây."""
-    if member.id in ADMIN_IDS:
-        return True
-    if get_current_guild_id() is None:
-        return False
-    return member.id in get_extra_admins()
-
-
-async def ensure_guild_loaded(guild_id: int) -> None:
-    """Gọi khi bot join guild mới giữa chừng (on_guild_join) để guild đó có cache ngay,
-    không phải đợi restart bot."""
-    if guild_id not in _data_cache:
-        _data_cache[guild_id] = await _mongo_load(guild_id)
-        log.info(f"[DATA] ✅ Đã load cache cho guild mới {guild_id}")
-
-async def init_data_cache(bot) -> None:
-    """Gọi ở on_ready. Load riêng document cho TỪNG guild bot đang ở, cộng thêm 1
-    document global (tempban/ip/ủy quyền) và toàn bộ giveaways.
-    ⚠️ FIX (lỗi nghiêm trọng, cùng gốc với bug .as ở CHANGELOG v4.25.1 nhưng ảnh hưởng
-    TOÀN BỘ data chứ không riêng ủy quyền): on_ready() KHÔNG chỉ chạy 1 lần lúc khởi
-    động — Discord gateway reconnect (rớt mạng, Railway restart container, session bị
-    Discord invalidate...) khiến on_ready() refire bất cứ lúc nào trong suốt vòng đời
-    bot. Bản cũ của hàm này UNCONDITIONALLY reset _data_cache/_global_cache/
-    _giveaways_cache = {} rồi load lại từ Mongo mỗi lần refire — nếu đúng lúc đó có 1
-    save_data()/save_global_data() nào vừa update RAM xong nhưng task ghi Mongo nền
-    (fire-and-forget) CHƯA kịp hoàn tất, thay đổi đó bị XOÁ SẠCH khỏi cache dù Mongo
-    volume chưa kịp nhận — y hệt kiểu bug `.as` đã gặp, nhưng ở đây ăn vào MỌI field
-    (giá, seller, invite count, ticket note...), không chỉ ủy quyền. Giờ chỉ full-load
-    ở LẦN GỌI ĐẦU TIÊN; các lần refire sau chỉ nạp thêm guild MỚI (phòng trường hợp bot
-    được mời vào lúc mất kết nối) — KHÔNG đụng vào cache/giveaways đã có sẵn."""
-    global _data_cache, _global_cache, _giveaways_cache
-
-    first_boot = not _data_cache_ready.is_set()
-
-    if not first_boot:
-        # on_ready refire (reconnect) — giữ nguyên cache hiện có, chỉ nạp guild mới nếu có.
-        new_guilds = [g for g in bot.guilds if g.id not in _data_cache]
-        for guild in new_guilds:
-            _data_cache[guild.id] = await _mongo_load(guild.id)
-        if new_guilds:
-            log.info(f"[DATA] 🔁 on_ready refire — nạp thêm {len(new_guilds)} guild mới, giữ nguyên cache cũ.")
-        else:
-            log.info("[DATA] 🔁 on_ready refire (reconnect) — giữ nguyên cache hiện có, không reload.")
-        return
-
-    _data_cache = {}
-    for guild in bot.guilds:
-        _data_cache[guild.id] = await _mongo_load(guild.id)
-
-    _global_cache = await _mongo_load_global()
-    # Admin phụ (thêm qua `.ad`) giờ lưu THEO GUILD trong _data_cache[guild_id]
-    # ("extra_admin_ids", nạp cùng _mongo_load(guild.id) ở vòng for phía trên) — không
-    # còn nằm ở _global_cache và KHÔNG cần backfill vào ADMIN_IDS lúc khởi động nữa,
-    # vì get_extra_admins()/is_admin() đọc trực tiếp từ guild context mỗi lần gọi.
-
-    _, col_gw = _get_mongo()
-    try:
-        giveaways = {}
-        async for doc in col_gw.find({}):
-            mid = str(doc.get("message_id", doc.get("_id", "")))
-            giveaways[mid] = {k: v for k, v in doc.items() if k not in ("_id", "message_id")}
-        _giveaways_cache = giveaways
-    except Exception as e:
-        log.warning(f"[DATA] ⚠️ Không load được giveaways: {e}")
-        _giveaways_cache = {}
-
-    guild_list = ", ".join(f"{g.id}(#{_data_cache[g.id].get('ticket', 0):03d})" for g in bot.guilds)
-    print(f"[DATA] ✅ Đã kết nối MongoDB — {len(_data_cache)} guild(s): {guild_list}")
-
-    # FIX: báo hiệu cho mọi tasks.loop nền đang chờ (xem wait_data_cache_ready())
-    # rằng _data_cache đã nạp xong, an toàn để load_data()/save_data() theo guild.
-    _data_cache_ready.set()
+log = logging.getLogger("core.data")
 
 # ══════════════════════════════════════════
 # CONFIG GETTERS / SETTERS
@@ -688,12 +64,12 @@ def get_guild_prefix(guild_id: int) -> str:
     """FIX: SetPrefixModal (cogs/admin_views.py) lưu "cfg_prefix" và báo THÀNH CÔNG cho
     admin, nhưng KHÔNG có gì từng đọc lại field này — bot.py hardcode command_prefix="."
     (chuỗi tĩnh) nên đổi prefix trước đây không có tác dụng gì, dù bot báo đổi thành công.
-    Hàm này để bot.py dùng làm command_prefix CALLABLE (đọc TRỰC TIẾP từ _data_cache,
+    Hàm này để bot.py dùng làm command_prefix CALLABLE (đọc TRỰC TIẾP qua peek_guild_cache(),
     KHÔNG qua load_data()/contextvar — hàm callable này chạy RẤT SỚM trong pipeline xử lý
     message của discord.py, trước khi before_invoke kịp set_current_guild()). Luôn có
     fallback "." an toàn nếu chưa load cache hoặc guild chưa cấu hình gì."""
     try:
-        d = _data_cache.get(guild_id)
+        d = peek_guild_cache(guild_id)
         if d:
             p = d.get("cfg_prefix", ".")
             return p if p else "."
@@ -731,8 +107,7 @@ async def add_cfg_seller_role(role_id: int) -> bool:
     data = load_data()
     lst = data.setdefault("cfg_seller_roles_extra", [])
     lst.append(role_id)
-    _data_cache[guild_id] = data
-    await _flush_to_mongo(guild_id)
+    await save_data_and_wait(data)
     return True
 
 async def remove_cfg_seller_role(role_id: int) -> bool:
@@ -749,8 +124,7 @@ async def remove_cfg_seller_role(role_id: int) -> bool:
         return False
     lst.remove(role_id)
     data["cfg_seller_roles_extra"] = lst
-    _data_cache[guild_id] = data
-    await _flush_to_mongo(guild_id)
+    await save_data_and_wait(data)
     return True
 
 def get_cfg_counter_channel() -> int: return load_data().get("cfg_counter_channel", 0)
@@ -1137,9 +511,9 @@ def remove_pending_sold_buyer(channel_id: int):
 async def get_ticket_number(guild_id: int) -> str:
     """FIX: async + Lock đảm bảo không bao giờ tạo 2 ticket trùng số.
     Mỗi guild đếm ticket riêng (guild_id bắt buộc truyền vào từ nơi gọi, VD ctx.guild.id).
-    Lock cũng tách riêng theo guild (_get_ticket_lock(guild_id)) — 2 server tạo ticket
+    Lock cũng tách riêng theo guild (get_ticket_lock(guild_id), shared/data.py) — 2 server tạo ticket
     cùng lúc không còn phải xếp hàng chờ nhau dù chẳng liên quan gì đến nhau."""
-    async with _get_ticket_lock(guild_id):
+    async with get_ticket_lock(guild_id):
         data = load_data()
         data["ticket"] = data.get("ticket", 0) + 1
         num = data["ticket"]
@@ -1149,9 +523,8 @@ async def get_ticket_number(guild_id: int) -> str:
         # save_data() — ghi đè NGUYÊN cache guild này bằng bản có số ticket cũ, làm cache
         # "tụt" lại → lần .newticket kế tiếp sinh trùng số. Cập nhật cache trước khi có
         # điểm yield nào đóng hẳn cửa sổ race này.
-        if guild_id in _data_cache:
-            _data_cache[guild_id]["ticket"] = num
-        col, _ = _get_mongo()
+        poke_guild_cache_field(guild_id, "ticket", num)
+        col = get_db()["bot_data"]
         try:
             await col.update_one({"_id": f"guild_{guild_id}"}, {"$set": {"ticket": num}}, upsert=True)
         except Exception as e:
@@ -1332,19 +705,20 @@ def save_price_sections(sections: list):
 # GIVEAWAY
 # ══════════════════════════════════════════
 def _load_giveaway_section() -> dict:
-    return dict(_giveaways_cache)
+    return dict(get_giveaways_cache())
 
 def _save_giveaway_section(giveaways: dict):
     """Giveaway KHÔNG đi qua load_data()/save_data() (vốn giờ tách theo guild) vì active_giveaways
     ở cogs/giveaway.py là 1 dict phẳng chứa giveaway của MỌI guild, phân biệt bằng message_id.
     Nếu đi qua save_data() sẽ vô tình ghi giveaway của cả 2 server lẫn vào document của guild
-    đang xử lý tại thời điểm gọi. col_gw (collection riêng) mới là nguồn lưu trữ chính thức."""
-    global _giveaways_cache
+    đang xử lý tại thời điểm gọi. col_gw (collection riêng) mới là nguồn lưu trữ chính thức.
+    Cache thật (_giveaways_cache) giờ sống ở shared/data.py — dùng get/set_giveaways_cache()
+    làm cầu nối, vì shared/data.py cũng là nơi init_data_cache() nạp nó lúc on_ready."""
     serializable = {
         str(mid): {k: list(v) if isinstance(v, set) else v for k, v in gw.items()}
         for mid, gw in giveaways.items()
     }
-    _giveaways_cache = serializable
+    set_giveaways_cache(serializable)
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(_sync_giveaways_to_mongo(serializable))
@@ -1354,7 +728,7 @@ def _save_giveaway_section(giveaways: dict):
         log.error(f"[DATA] ❌ Lỗi sync giveaway: {e}")
 
 async def _sync_giveaways_to_mongo(giveaways: dict):
-    _, col_gw = _get_mongo()
+    col_gw = get_db()["giveaways"]
     try:
         for mid_str, gw in giveaways.items():
             doc = dict(gw)
@@ -1611,7 +985,7 @@ async def atomic_register_ip(ip: str, user_id: int) -> list[int]:
     Tránh race condition khi 2 người verify cùng lúc.
     Trả về list user_ids hiện tại trên IP đó (SAU khi đã thêm).
     """
-    col, _ = _get_mongo()
+    col = get_db()["bot_data"]
     key = f"_ip_records.{ip.replace('.', '_')}"
     try:
         await col.update_one(
@@ -1622,14 +996,16 @@ async def atomic_register_ip(ip: str, user_id: int) -> list[int]:
         doc = await col.find_one({"_id": "main"}, {key: 1})
         users = (doc or {}).get("_ip_records", {}).get(ip.replace(".", "_"), [])
         # Sync lại cache global
-        if _global_cache is not None:
-            _global_cache.setdefault("_ip_records", {})[ip.replace(".", "_")] = users
+        _gc = peek_global_cache()
+        if _gc is not None:
+            _gc.setdefault("_ip_records", {})[ip.replace(".", "_")] = users
         return users
     except Exception as e:
         log.error(f"[DATA] ❌ atomic_register_ip lỗi: {e}")
         # Fallback: in-memory
-        if _global_cache is not None:
-            recs = _global_cache.setdefault("_ip_records", {})
+        _gc = peek_global_cache()
+        if _gc is not None:
+            recs = _gc.setdefault("_ip_records", {})
             ip_key = ip.replace(".", "_")
             if ip_key not in recs:
                 recs[ip_key] = []
@@ -1806,7 +1182,7 @@ def save_cfg_queue_channel(channel_id: int) -> None:
 
 async def get_ip_users_mongo(ip: str) -> list[int]:
     """Đọc trực tiếp từ MongoDB (không qua cache) — dùng khi check collision."""
-    col, _ = _get_mongo()
+    col = get_db()["bot_data"]
     key = f"_ip_records.{ip.replace('.', '_')}"
     try:
         doc = await col.find_one({"_id": "main"}, {key: 1})
@@ -1814,6 +1190,7 @@ async def get_ip_users_mongo(ip: str) -> list[int]:
     except Exception as e:
         log.error(f"[DATA] ❌ get_ip_users_mongo lỗi: {e}")
         # Fallback cache global
-        if _global_cache is not None:
-            return _global_cache.get("_ip_records", {}).get(ip.replace(".", "_"), [])
+        _gc = peek_global_cache()
+        if _gc is not None:
+            return _gc.get("_ip_records", {}).get(ip.replace(".", "_"), [])
         return []

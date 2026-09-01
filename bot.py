@@ -10,7 +10,6 @@ import asyncio
 from datetime import datetime, timezone
 
 import discord
-from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
@@ -41,111 +40,29 @@ def spawn_background(coro) -> asyncio.Task:
     return t
 
 
-# Lệnh dùng để ủy quyền server — LUÔN được phép chạy dù server chưa ủy quyền, để admin
-# còn cách bật ủy quyền (xem AUTH_GATE bên dưới + cogs/admin.py `.as`). Xem trạng thái
-# ủy quyền của từng server bằng `.serverlist` (cogs/invite.py) — lệnh đó KHÔNG cần
-# exempt vì luôn được chạy từ 1 server ĐÃ ủy quyền hoặc qua DM.
-AUTH_EXEMPT_COMMANDS = {"as"}
+# AUTH_GATE (lớp 1 + lớp 2) giờ dùng chung từ shared/auth_gate.py — xem docstring đầu
+# file đó để biết cách wiring. GuildContextTree/get_prefix/set_guild_context_prefix/
+# global_guild_authorization_check/notify_admins_unauthorized_guild ĐÃ chuyển sang đó,
+# KHÔNG còn định nghĩa riêng ở bot.py nữa.
+from shared.auth_gate import (
+    GuildContextTree, get_prefix, set_guild_context_prefix,
+    global_guild_authorization_check, notify_admins_unauthorized_guild,
+)
+from shared.data import ensure_guild_loaded, set_current_guild
 
-
-class GuildContextTree(app_commands.CommandTree):
-    """CommandTree tùy chỉnh — tự set guild context (contextvar ở core/data.py) TRƯỚC khi
-    chạy bất kỳ slash command nào, để load_data()/save_data() thao tác đúng document
-    của guild đang gõ lệnh (thay vì lẫn giữa 2 server). Đồng thời chặn slash command ở
-    server CHƯA được ủy quyền (xem AUTH_GATE — mục Multi-guild trong AI_CONTEXT.md)."""
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        from core.data import set_current_guild, is_guild_authorized, ADMIN_IDS
-        if interaction.guild_id:
-            set_current_guild(interaction.guild_id)
-            if not is_guild_authorized(interaction.guild_id):
-                if interaction.user.id in ADMIN_IDS:
-                    try:
-                        await interaction.response.send_message(
-                            f"🔒 Server này (`{interaction.guild_id}`) chưa được ủy quyền.\n"
-                            f"Dùng `.as {interaction.guild_id}` để bật.",
-                            ephemeral=True,
-                        )
-                    except Exception:
-                        pass
-                return False
-        return True
-
-
-async def _get_prefix(bot_: commands.Bot, message: discord.Message):
-    """FIX: prefix trước đây hardcode "." tĩnh — SetPrefixModal (cogs/admin_views.py)
-    cho admin đổi + báo thành công nhưng KHÔNG có gì đọc lại, nên đổi prefix im lặng
-    không có tác dụng gì (xem get_guild_prefix() ở core/data.py để biết chi tiết).
-    Giờ đọc riêng theo từng guild — DM (message.guild is None) và guild chưa cấu hình
-    đều fallback "." như cũ, không đổi hành vi mặc định."""
-    if message.guild:
-        from core.data import get_guild_prefix
-        return get_guild_prefix(message.guild.id)
-    return "."
-
-bot = commands.Bot(command_prefix=_get_prefix, intents=intents, help_command=None, tree_cls=GuildContextTree)
-
-@bot.before_invoke
-async def _set_guild_context_prefix(ctx: commands.Context):
-    """Tương tự GuildContextTree nhưng cho lệnh gõ chữ (.command) — chạy TRƯỚC mọi lệnh prefix."""
-    from core.data import set_current_guild
-    if ctx.guild:
-        set_current_guild(ctx.guild.id)
-
-@bot.check
-async def _global_guild_authorization_check(ctx: commands.Context) -> bool:
-    """AUTH_GATE — chặn MỌI lệnh prefix (.command) ở server CHƯA được admin ủy quyền
-    qua `.as <id_server>`, trừ chính lệnh `.as` (để admin còn cách bật).
-    DM luôn được phép (ctx.guild is None) — Ruby có thể ủy quyền server mới bằng cách
-    DM bot `.as <id_server>` mà không cần vào server đó. Xem AI_CONTEXT.md mục Multi-guild."""
-    if not ctx.guild:
-        return True
-    if ctx.command and ctx.command.qualified_name in AUTH_EXEMPT_COMMANDS:
-        return True
-    from core.data import is_guild_authorized, ADMIN_IDS
-    if is_guild_authorized(ctx.guild.id):
-        return True
-    if ctx.author.id in ADMIN_IDS:
-        try:
-            await ctx.reply(
-                f"🔒 Server này (`{ctx.guild.id}`) chưa được ủy quyền.\n"
-                f"Dùng `.as {ctx.guild.id}` (gõ ở server đã ủy quyền, hoặc DM bot) để bật.",
-                mention_author=False,
-            )
-        except Exception:
-            pass
-    return False
+bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None, tree_cls=GuildContextTree)
+bot.before_invoke(set_guild_context_prefix)
+bot.check(global_guild_authorization_check)
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):
     """Bot vừa được mời vào 1 server mới — load cache riêng cho guild đó ngay,
     không cần đợi bot restart mới hoạt động đúng. Server MẶC ĐỊNH CHƯA được ủy quyền
     (xem AUTH_GATE) — báo ngay cho admin qua DM để họ chạy `.as <id_server>`."""
-    from core.data import ensure_guild_loaded, set_current_guild, is_guild_authorized, ADMIN_IDS
     await ensure_guild_loaded(guild.id)
     set_current_guild(guild.id)
     print(f"[BOT] ✅ Đã tham gia guild mới: {guild.name} ({guild.id})")
-
-    if not is_guild_authorized(guild.id):
-        embed = discord.Embed(
-            title="🔒 Bot vừa được mời vào server mới — CHƯA được ủy quyền",
-            description=(
-                f"**Server:** {guild.name}\n"
-                f"**ID:** `{guild.id}`\n"
-                f"**Thành viên:** {guild.member_count}\n\n"
-                f"Bot sẽ KHÔNG hoạt động ở server này (mọi lệnh + tính năng tự động) "
-                f"cho đến khi được ủy quyền.\n\n"
-                f"Chạy lệnh sau để bật (DM bot hoặc gõ ở 1 server đã ủy quyền sẵn):\n"
-                f"`.as {guild.id}`"
-            ),
-            color=0xFEE75C,
-            timestamp=datetime.now(timezone.utc),
-        )
-        for admin_id in ADMIN_IDS:
-            try:
-                user = await bot.fetch_user(admin_id)
-                await user.send(embed=embed)
-            except Exception as e:
-                print(f"[BOT] ⚠️ Không gửi được DM ủy quyền cho admin {admin_id}: {e}")
+    await notify_admins_unauthorized_guild(bot, guild)
 
 # ══════════════════════════════════════════
 # LOAD COGS
@@ -358,7 +275,7 @@ async def on_message(message: discord.Message):
 
     # AUTH_GATE — server chưa được ủy quyền → bỏ qua mọi tính năng tự động
     # (auto-sold, AI channel, legit/vouch). Lệnh .command đã bị chặn riêng ở
-    # _global_guild_authorization_check() phía trên (bot.check), không cần lặp lại ở đây.
+    # global_guild_authorization_check() (shared/auth_gate.py, bot.check), không cần lặp lại ở đây.
     from core.data import is_guild_authorized
     if not is_guild_authorized(message.guild.id):
         return

@@ -1550,3 +1550,13 @@ VERIFY_GUILDS    = {1500513085096726528, 1500512893139943455}
 - Cá cược point minigame (WIN_RATE 0.9x), `.rank`, `.mgstats`
 - `mod.py` Ban/Kick/Mute/Warn/Automod; `logger.py`; slash commands
 - Tách bot.py 6000 dòng → cấu trúc Cog, MongoDB + cache
+
+## [Chưa release] — $(date +%Y-%m-%d)
+### Changed
+- Tách hạ tầng dùng chung (Mongo/AUTH_GATE/contextvar/logger) sang `shared/`, chuẩn bị cho việc tách bot
+- Đổi model đếm invite: bỏ verify/fake, net = total - left
+
+### Removed
+- Tính năng xác minh thành viên qua IP/VPN (`verify_server.py` phần /verify, role Verify/Unverify)
+- Giới hạn "1 IP = 1 suất" trong giveaway
+- Lệnh: `.verify`, `.checkip`, `.ipstats`, `.backfillip`, `.testip`, `.gwverify`
