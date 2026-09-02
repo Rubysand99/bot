@@ -120,9 +120,28 @@ _open_tickets: dict[tuple[int, int], int] = {}
 
 def _register_ticket(user_id: int, channel_id: int, guild_id: int):
     _open_tickets[(guild_id, user_id)] = channel_id
+    # Ghi song song xuống Mongo (field "open_tickets") — CHỈ để bot khác (vd bot AI, sau
+    # khi tách bot thật) đọc được trạng thái "đang có ticket mở" qua has_open_ticket_db()
+    # mà không cần chung process/cache RAM với bot_ticket. Nguồn thật (fast-path) của
+    # CHÍNH bot này vẫn là _open_tickets ở trên, KHÔNG đổi.
+    set_current_guild(guild_id)
+    data = load_data()
+    data.setdefault("open_tickets", {})[str(user_id)] = channel_id
+    save_data(data)
 
 def _unregister_ticket(user_id: int, guild_id: int):
     _open_tickets.pop((guild_id, user_id), None)
+    set_current_guild(guild_id)
+    data = load_data()
+    data.get("open_tickets", {}).pop(str(user_id), None)
+    save_data(data)
+
+def has_open_ticket_db(guild_id: int, user_id: int) -> bool:
+    """Bản ĐỌC QUA MONGO của has_ticket() — dùng cho bot KHÁC process (vd bot AI) không
+    có quyền truy cập _open_tickets (cache RAM riêng của bot_ticket). Chậm hơn 1 chút
+    (qua load_data() thay vì dict RAM) nhưng dùng được xuyên process."""
+    set_current_guild(guild_id)
+    return str(user_id) in load_data().get("open_tickets", {})
 
 # Ghi nhận ai đang xử lý (claim) 1 ticket — lưu Mongo qua load_data()/save_data() (data
 # CỦA GUILD hiện tại, đã tự cô lập qua contextvar, xem AI_CONTEXT.md), KHÔNG phải cache

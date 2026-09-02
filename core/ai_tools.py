@@ -24,8 +24,11 @@ from core.data import (
     ADMIN_IDS, get_user_total_spent, get_user_ticket_history,
     get_guild_prefix,
 )
-from cogs.seller import is_active_seller, _get_one as _seller_get_one
-from cogs.ticket import has_ticket
+# Trước đây import thẳng từ cogs.seller/cogs.ticket/cogs.invite — đổi sang các hàm đọc
+# THUẦN QUA MONGO (không đụng cache RAM riêng của cog nào), để core/ai_tools.py không
+# còn phụ thuộc trực tiếp vào cog khác — cần thiết để tách bot_ai thành bot riêng.
+from cogs.seller import is_active_seller, _get_one as _seller_get_one  # đọc qua load_data(), an toàn
+from cogs.ticket import has_open_ticket_db
 from cogs.invite import _get_net_invites, _get_net_invites_alltime
 
 
@@ -250,7 +253,7 @@ def _resolve_mentioned_user(ctx):
 # QUERY HANDLERS
 # ─────────────────────────────────────────────
 async def _h_check_ticket_status(ctx, params: dict) -> str:
-    open_ticket = await has_ticket(ctx.guild, ctx.author)
+    open_ticket = has_open_ticket_db(ctx.guild.id, ctx.author.id)
     return "Người dùng đang có 1 ticket mở." if open_ticket else "Người dùng hiện không có ticket nào đang mở."
 
 
@@ -265,10 +268,10 @@ async def _h_check_seller_status(ctx, params: dict) -> str:
 
 
 async def _h_check_invite_stats(ctx, params: dict) -> str:
-    _, _, ver_m, fake_m, left_m, net_m = _get_net_invites(ctx.author.id)
-    _, _, ver_a, fake_a, left_a, net_a = _get_net_invites_alltime(ctx.author.id)
-    return (f"Tháng này: {ver_m} verify, {fake_m} fake, {left_m} rời server, net {net_m}. "
-            f"All-time: {ver_a} verify, {fake_a} fake, {left_a} rời server, net {net_a}.")
+    total_m, left_m, net_m = _get_net_invites(ctx.author.id)
+    total_a, left_a, net_a = _get_net_invites_alltime(ctx.author.id)
+    return (f"Tháng này: {total_m} lượt mời, {left_m} người đã rời server, net {net_m}. "
+            f"All-time: {total_a} lượt mời, {left_a} người đã rời server, net {net_a}.")
 
 
 async def _h_check_purchase_history(ctx, params: dict) -> str:
