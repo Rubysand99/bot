@@ -1,3 +1,16 @@
+## [v4.55.0] — 2026-09-03
+
+### ✨ Tính năng mới
+- `bot_growth.py` — Entry point riêng cho Growth Bot (pilot, cùng mẫu bot_ai.py/
+  bot_ticket.py), chỉ load `cogs.giveaway`. Resume GiveawayView +
+  resume_active_giveaways() lúc on_ready, guard first_boot y hệt bot.py.
+  CHƯA load `cogs.invite` — phát hiện invite.py vẫn phụ thuộc VERIFY_CALLBACKS
+  (RAM) của verify_server.py, cùng lớp coupling process với PAYMENT_CALLBACK/
+  shop_orders.py. Cũng phát hiện AI_CONTEXT.md ghi nhận verify/IP "đã bỏ" nhưng
+  code thật chưa xoá — entry `[Chưa release]` cuối CHANGELOG.md chưa từng được
+  áp dụng.
+
+---
 ## [v4.15.0] — 2026-08-31
 
 ### 🐛 Sửa lỗi
