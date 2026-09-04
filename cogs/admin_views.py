@@ -366,8 +366,6 @@ class SettingsView(View):
     async def stock_cat(self, i, b): await self._send_category_select(i, "cfg_stock_category", "Stock Category", "Category chứa hàng đang bán (auto-sold)")
     @discord.ui.button(label="✅ Sold Category",    style=discord.ButtonStyle.secondary, row=3)
     async def sold_cat(self,  i, b): await self._send_category_select(i, "cfg_sold_category",  "Sold Category",  "Category chứa hàng đã bán")
-    @discord.ui.button(label="🎁 Verify Extra Roles", style=discord.ButtonStyle.secondary, row=3)
-    async def verify_extra(self, i, b): await self._send_multi_role_select(i, "cfg_verify_extra_roles", "Verify Extra Roles")
 
     @discord.ui.button(label="🪄 Relay Tin Admin (Ticket)", style=discord.ButtonStyle.secondary, row=4)
     async def ticket_relay_toggle(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -761,8 +759,9 @@ class RoleConfigSelect(Select):
 
 class MultiRoleConfigSelect(Select):
     """Giống RoleConfigSelect nhưng cho CHỌN NHIỀU role cùng lúc — lưu list vào cfg_key
-    thay vì 1 giá trị đơn. Dùng cho các cấu hình kiểu "danh sách role phụ" (vd role phụ
-    gán kèm khi verify — cfg_verify_extra_roles)."""
+    thay vì 1 giá trị đơn. Dùng cho các cấu hình kiểu "danh sách role phụ" (hiện chưa
+    có nút nào gọi tới class này — giữ lại làm hạ tầng dùng chung cho cấu hình
+    multi-role trong tương lai, xem _send_multi_role_select())."""
     def __init__(self, cfg_key, title, options, current_ids):
         super().__init__(
             placeholder=f"Chọn role cho {title}... (có thể chọn nhiều / để trống = xoá hết)",

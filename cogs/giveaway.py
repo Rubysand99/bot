@@ -16,7 +16,6 @@ from discord.ui import Button, Select
 from core.data import (
     ADMIN_IDS, load_giveaways_data, save_giveaways_data,
     _uname, _uname_plain, get_or_fetch_channel,
-    get_cfg_giveaway_require_verify, set_cfg_giveaway_require_verify,
     GuildContextView as View, GuildContextModal as Modal,
 )
 
@@ -32,12 +31,13 @@ def _next_gw_id() -> int:
 
 
 def _get_net_invites_from_cog(user_id: int) -> tuple:
-    """Lazy import để tránh circular — lấy invite stats từ cog invite."""
+    """Lazy import để tránh circular — lấy invite stats từ cog invite.
+    Trả về (total, left, net)."""
     try:
         from cogs.invite import _get_net_invites
         return _get_net_invites(user_id)
     except Exception:
-        return 0, 0, 0, 0
+        return 0, 0, 0
 
 
 # ══════════════════════════════════════════
@@ -130,11 +130,11 @@ async def _check_winner_invites(channel, winner_ids, prize):
         icon   = medals[i] if i < len(medals) else f"`{i+1}.`"
         member = channel.guild.get_member(uid)
         name   = _uname(member) if member else f"<@{uid}>"
-        total, fake, left, net = _get_net_invites_from_cog(uid)
-        lines.append(f"{icon} **{name}**\n  ✅ Net: **{net}**  •  📊 Tổng: `{total}`  •  ⚠️ Fake: `{fake}`  •  🚪 Rời: `{left}`")
+        total, left, net = _get_net_invites_from_cog(uid)
+        lines.append(f"{icon} **{name}**\n  ✅ Net: **{net}**  •  📊 Tổng: `{total}`  •  🚪 Rời: `{left}`")
     embed = discord.Embed(title="📨  Thống Kê Invite — Winner Giveaway", description="\n".join(lines) if lines else "*(không có winner nào)*", color=0xF1C40F, timestamp=datetime.now(timezone.utc))
     embed.add_field(name="🏆 Phần thưởng", value=prize, inline=False)
-    embed.set_footer(text="Net = Tổng − Fake − Đã rời  •  TuyTam Store")
+    embed.set_footer(text="Net = Tổng − Đã rời  •  TuyTam Store")
     try:
         await channel.send(embed=embed)
     except Exception as e:
@@ -159,42 +159,6 @@ class GiveawayView(View):
             return await interaction.response.send_message("❌ Giveaway đã kết thúc rồi!", ephemeral=True)
 
         uid = interaction.user.id
-
-        # Kiểm tra role Verify — bật/tắt được qua .gwverify (mặc định BẬT)
-        try:
-            if get_cfg_giveaway_require_verify():
-                from cogs.invite import _get_verify_role_id
-                member = interaction.guild.get_member(uid) if interaction.guild else None
-                if member:
-                    verify_role_id = _get_verify_role_id(interaction.guild.id)
-                    if not any(r.id == verify_role_id for r in member.roles):
-                        return await interaction.response.send_message(
-                            "❌ Bạn cần **xác minh tài khoản** trước khi tham gia giveaway.\n"
-                            "Gõ `.verify` để nhận link xác minh.",
-                            ephemeral=True,
-                        )
-        except Exception:
-            pass
-
-        # Kiểm tra IP — mỗi IP chỉ 1 tài khoản được tham gia giveaway
-        try:
-            from cogs.invite import _ip_records
-            entries_so_far = gw.get("entries", set())
-            user_ips = [ip for ip, users in _ip_records.items() if uid in users]
-            for ip in user_ips:
-                shared_users = _ip_records.get(ip, [])
-                conflict = [u for u in shared_users if u != uid and u in entries_so_far]
-                if conflict:
-                    return await interaction.response.send_message(
-                        "⚠️ **Bạn không thể tham gia giveaway này.**\n\n"
-                        "Địa chỉ IP của bạn đang được chia sẻ với một tài khoản khác đã tham gia giveaway này. "
-                        "Theo chính sách của server, **mỗi địa chỉ IP chỉ được 1 tài khoản tham gia giveaway**.\n\n"
-                        "Nếu bạn nghĩ đây là nhầm lẫn (ví dụ: dùng chung mạng gia đình), "
-                        "hãy liên hệ admin để được xem xét.",
-                        ephemeral=True,
-                    )
-        except Exception:
-            pass  # Nếu import lỗi thì bỏ qua, không chặn
 
         entries = gw.setdefault("entries", set())
         if not isinstance(entries, set):
@@ -492,27 +456,6 @@ class GiveawayCog(commands.Cog):
             f"**GW #{ref} — {len(entries)} người tham gia:**\n{mentions[:1900]}", ephemeral=True
         )
 
-
-    @commands.command(name="gwverify", aliases=["gwvr", "gwverifyreq"])
-    async def gwverify_toggle(self, ctx):
-        """Bật/tắt yêu cầu verify (role Verify) mới được tham gia giveaway. Mặc định: BẬT."""
-        if ctx.author.id not in ADMIN_IDS:
-            return
-        new_state = not get_cfg_giveaway_require_verify()
-        set_cfg_giveaway_require_verify(new_state)
-        embed = discord.Embed(
-            title=f"{'🔒 Yêu cầu verify: BẬT' if new_state else '🔓 Yêu cầu verify: TẮT'}",
-            description=(
-                "User giờ phải có role **Verify** mới bấm 🎉 Tham gia được. "
-                "Chưa verify sẽ bị chặn + gợi ý gõ `.verify`."
-                if new_state else
-                "User giờ có thể bấm 🎉 Tham gia mà **không cần** verify trước. "
-                "Check IP trùng (chống 1 người dùng nhiều tài khoản) vẫn giữ nguyên, không tắt theo."
-            ),
-            color=0x57F287 if new_state else 0xED4245,
-        )
-        embed.set_footer(text="Áp dụng cho giveaway MỚI bấm Tham gia kể từ bây giờ — không ảnh hưởng người đã tham gia trước đó.")
-        await ctx.reply(embed=embed, mention_author=False)
 
     @commands.command(name="gwstatus")
     async def gwstatus(self, ctx):

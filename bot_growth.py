@@ -4,19 +4,18 @@ bot_growth.py — Entry point RIÊNG cho Growth Bot (Phase 2, bot con thứ 3 sa
 Cùng repo, cùng cogs/core/shared với bot.py chính (xem docstring bot_ai.py để biết vì
 sao không tách thư mục riêng). Chỉ khác:
   - Token riêng (biến env TOKEN_GROWTH)
-  - CHỈ load 1 cog: cogs.giveaway — CHƯA load cogs.invite (xem lý do bên dưới)
-  - Resume GiveawayView + gw_cog.resume_active_giveaways() lúc on_ready (đây là domain
-    CỦA RIÊNG Growth — KHÔNG resume TicketPanel/MiddlemanPanelView/resume_pending_sold_views,
-    mấy cái đó thuộc bot Ticket/Shop, tự resume trong entry point của chính chúng)
+  - Load 2 cog: cogs.giveaway + cogs.invite
+  - Resume GiveawayView + gw_cog.resume_active_giveaways() lúc on_ready (domain
+    CỦA RIÊNG Growth — KHÔNG resume TicketPanel/MiddlemanPanelView/
+    resume_pending_sold_views, mấy cái đó thuộc bot Ticket/Shop, tự resume trong
+    entry point của chính chúng)
+  - cache_invites(guild) chạy MỖI lần refire (không chỉ first_boot) cho mọi guild —
+    y hệt lý do trong bot.py: invite cache có thể lệch thật sau khi mất kết nối gateway.
 
-⚠️ cogs.invite CHƯA được load ở đây, khác với roadmap gốc "Growth = giveaway.py +
-invite.py": code invite.py trong repo hiện tại vẫn import verify_server (create_token/
-VERIFY_CALLBACKS) cho lệnh `.verify` — dict VERIFY_CALLBACKS chỉ tồn tại thật trong
-process đang chạy start_verify_server() (hiện là bot.py). Nếu load cogs.invite ở process
-KHÁC (bot_growth.py) mà verify_server vẫn chỉ chạy trong bot.py, `.verify` sẽ LUÔN báo
-"Link không hợp lệ" — cùng loại lỗi mà PAYMENT_CALLBACK/shop_orders.py đã né bằng cách
-bắt buộc chạy chung process với verify_server.py. Xem tin nhắn chat đi kèm bản này để
-biết các phương án xử lý trước khi thêm cogs.invite vào COGS_GROWTH bên dưới.
+(Bản đầu tiên của file này — lúc mới tách — CHƯA load cogs.invite vì lúc đó invite.py
+vẫn còn phụ thuộc verify_server.py (VERIFY_CALLBACKS RAM, coupling process giống
+PAYMENT_CALLBACK/shop_orders.py). Rào cản đó đã hết: verify/IP đã bị xoá HOÀN TOÀN
+khỏi invite.py + verify_server.py cùng đợt này — xem CHANGELOG.md.)
 
 Deploy: Railway service riêng, Root Directory = gốc repo (giống bot.py/bot_ai.py/
 bot_ticket.py), Start Command = `python bot_growth.py`, biến env TOKEN_GROWTH +
@@ -61,6 +60,7 @@ async def on_guild_join(guild: discord.Guild):
 
 COGS_GROWTH = [
     "cogs.giveaway",
+    "cogs.invite",
 ]
 
 async def load_cogs():
@@ -77,13 +77,15 @@ _on_ready_first_boot_done = False
 @bot.event
 async def on_ready():
     """Bản RÚT GỌN của on_ready() bên bot.py chính — chỉ giữ phần thuộc domain Growth
-    (giveaway). KHÔNG resume ticket/sold-views/legit — domain của bot khác. Giữ nguyên
-    lý do CHỈ resume 1 lần (if first_boot) từ bot.py: resume_active_giveaways() tạo
-    THÊM task đếm giờ mỗi lần gọi, gọi lại lúc reconnect sẽ ra 2 task cho cùng 1
-    giveaway → end_giveaway() có thể chạy 2 lần."""
+    (giveaway + invite). KHÔNG resume ticket/sold-views/legit — domain của bot khác. Giữ
+    nguyên lý do CHỈ resume giveaway 1 lần (if first_boot) từ bot.py: resume_active_
+    giveaways() tạo THÊM task đếm giờ mỗi lần gọi, gọi lại lúc reconnect sẽ ra 2 task cho
+    cùng 1 giveaway → end_giveaway() có thể chạy 2 lần. cache_invites() thì NGƯỢC LẠI —
+    cố ý chạy mỗi lần refire, vì invite cache có thể lệch thật sau khi mất kết nối."""
     global _on_ready_first_boot_done
     from shared.data import init_data_cache
     from cogs.giveaway import GiveawayView
+    from cogs.invite import cache_invites
 
     await init_data_cache(bot)
 
@@ -99,6 +101,13 @@ async def on_ready():
 
         bot.add_view(GiveawayView())
 
+    # Sync invite cache — set context TRƯỚC mỗi guild vì cache_invites() gọi
+    # load_data()/save_data() bên trong. Chạy mỗi lần refire (không chỉ first_boot).
+    for guild in bot.guilds:
+        set_current_guild(guild.id)
+        await cache_invites(guild)
+
+    if first_boot:
         try:
             synced = await bot.tree.sync()
             print(f"✅ Synced {len(synced)} slash commands (bot_growth)")

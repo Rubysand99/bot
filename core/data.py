@@ -58,7 +58,6 @@ def get_cfg_done_role()       -> int: return load_data().get("cfg_done_role",   
 def get_cfg_transcript_channel() -> int: return load_data().get("cfg_transcript_channel", 0)
 def get_cfg_builder_role()    -> int: return load_data().get("cfg_builder_role",    0)
 def get_cfg_welcome_channel() -> int: return load_data().get("cfg_welcome_channel", 0)
-def get_cfg_verify_extra_roles() -> list: return list(load_data().get("cfg_verify_extra_roles", []))
 
 def get_guild_prefix(guild_id: int) -> str:
     """FIX: SetPrefixModal (cogs/admin_views.py) lưu "cfg_prefix" và báo THÀNH CÔNG cho
@@ -133,11 +132,6 @@ def get_cfg_proof_channel()   -> int: return load_data().get("cfg_proof_channel"
 def get_cfg_ai_channel()      -> int: return load_data().get("cfg_ai_channel", 0)
 def get_cfg_legit_emoji()     -> str: return load_data().get("cfg_legit_emoji", "✅")
 def get_cfg_vouch_emoji()     -> str: return load_data().get("cfg_vouch_emoji", "✅")
-def get_cfg_giveaway_require_verify() -> bool:
-    """Bắt buộc verify (role Verify) mới được bấm 🎉 Tham gia giveaway hay không.
-    Mặc định True — GIỮ ĐÚNG hành vi cũ trước khi có toggle này (check verify vốn
-    luôn bật cứng trong cogs/giveaway.py: GiveawayView.join). Bật/tắt qua `.gwverify`."""
-    return bool(load_data().get("cfg_giveaway_require_verify", True))
 
 def set_cfg_font(font: str):
     data = load_data(); data["cfg_font"] = font; save_data(data)
@@ -147,9 +141,6 @@ def set_cfg_legit_emoji(emoji: str):
 
 def set_cfg_vouch_emoji(emoji: str):
     save_cfg("cfg_vouch_emoji", emoji.strip())
-
-def set_cfg_giveaway_require_verify(enabled: bool):
-    save_cfg("cfg_giveaway_require_verify", bool(enabled))
 
 def set_cfg_done_role(role_id: int):
     save_cfg("cfg_done_role", int(role_id))
@@ -162,9 +153,6 @@ def set_cfg_builder_role(role_id: int):
 
 def set_cfg_welcome_channel(channel_id: int):
     save_cfg("cfg_welcome_channel", int(channel_id))
-
-def set_cfg_verify_extra_roles(role_ids: list):
-    save_cfg("cfg_verify_extra_roles", [int(r) for r in role_ids])
 
 def save_cfg(key: str, value):
     data = load_data(); data[key] = value; save_data(data)
@@ -940,12 +928,12 @@ def remove_tempban(user_id: int) -> None:
 
 # ══════════════════════════════════════════
 # INVITE STATE PERSISTENCE
-# Lưu _member_inviters và _pending_joins vào MongoDB
+# Lưu _member_inviters vào MongoDB
 # ══════════════════════════════════════════
 def get_member_inviters() -> dict:
     """Trả về {str(member_id): {inviter_id, guild_id}}.
     FIX: dữ liệu này CHUNG cho mọi guild (mỗi entry tự lưu guild_id riêng, giống
-    _tempbans/_ip_records) — trước đây dùng nhầm load_data() (theo guild) khiến
+    _tempbans) — trước đây dùng nhầm load_data() (theo guild) khiến
     cog_load() lỗi lúc khởi động (chưa có guild context) và dữ liệu bị tách lẻ
     sai theo guild hiện tại thay vì dùng chung như thiết kế ban đầu."""
     return dict(load_global_data().get("_member_inviters", {}))
@@ -954,65 +942,6 @@ def save_member_inviters(inviters: dict) -> None:
     data = load_global_data()
     data["_member_inviters"] = {str(k): v for k, v in inviters.items()}
     save_global_data(data)
-
-def get_pending_joins() -> dict:
-    """Trả về {str(member_id): {inviter_id, guild_id, joined_at}}.
-    FIX: tương tự get_member_inviters() — data CHUNG cho mọi guild."""
-    return dict(load_global_data().get("_pending_joins", {}))
-
-def save_pending_joins(pending: dict) -> None:
-    data = load_global_data()
-    data["_pending_joins"] = {str(k): v for k, v in pending.items()}
-    save_global_data(data)
-
-# ══════════════════════════════════════════
-# IP RECORDS PERSISTENCE — CHUNG cho mọi guild (cố ý, chống multi-acc né qua server khác)
-# Lưu {ip: [user_id, ...]} — dùng cho fake detection
-# ══════════════════════════════════════════
-
-def get_ip_records() -> dict:
-    """Trả về {ip: [user_id, ...]}."""
-    return dict(load_global_data().get("_ip_records", {}))
-
-def save_ip_records(records: dict) -> None:
-    data = load_global_data()
-    data["_ip_records"] = records
-    save_global_data(data)
-
-async def atomic_register_ip(ip: str, user_id: int) -> list[int]:
-    """
-    Atomic: dùng $addToSet để thêm user_id vào list IP trong MongoDB (document global).
-    Tránh race condition khi 2 người verify cùng lúc.
-    Trả về list user_ids hiện tại trên IP đó (SAU khi đã thêm).
-    """
-    col = get_db()["bot_data"]
-    key = f"_ip_records.{ip.replace('.', '_')}"
-    try:
-        await col.update_one(
-            {"_id": "main"},
-            {"$addToSet": {key: user_id}},
-            upsert=True,
-        )
-        doc = await col.find_one({"_id": "main"}, {key: 1})
-        users = (doc or {}).get("_ip_records", {}).get(ip.replace(".", "_"), [])
-        # Sync lại cache global
-        _gc = peek_global_cache()
-        if _gc is not None:
-            _gc.setdefault("_ip_records", {})[ip.replace(".", "_")] = users
-        return users
-    except Exception as e:
-        log.error(f"[DATA] ❌ atomic_register_ip lỗi: {e}")
-        # Fallback: in-memory
-        _gc = peek_global_cache()
-        if _gc is not None:
-            recs = _gc.setdefault("_ip_records", {})
-            ip_key = ip.replace(".", "_")
-            if ip_key not in recs:
-                recs[ip_key] = []
-            if user_id not in recs[ip_key]:
-                recs[ip_key].append(user_id)
-            return recs[ip_key]
-        return [user_id]
 
 
 # ══════════════════════════════════════════
@@ -1178,19 +1107,3 @@ def set_shop_order_counter(number: int) -> None:
 
 def save_cfg_queue_channel(channel_id: int) -> None:
     save_cfg("cfg_queue_channel", channel_id)
-
-
-async def get_ip_users_mongo(ip: str) -> list[int]:
-    """Đọc trực tiếp từ MongoDB (không qua cache) — dùng khi check collision."""
-    col = get_db()["bot_data"]
-    key = f"_ip_records.{ip.replace('.', '_')}"
-    try:
-        doc = await col.find_one({"_id": "main"}, {key: 1})
-        return (doc or {}).get("_ip_records", {}).get(ip.replace(".", "_"), [])
-    except Exception as e:
-        log.error(f"[DATA] ❌ get_ip_users_mongo lỗi: {e}")
-        # Fallback cache global
-        _gc = peek_global_cache()
-        if _gc is not None:
-            return _gc.get("_ip_records", {}).get(ip.replace(".", "_"), [])
-        return []

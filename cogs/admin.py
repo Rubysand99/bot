@@ -244,8 +244,6 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🤖 AI Channel",        value=ch("cfg_ai_channel"),      inline=True)
         embed.add_field(name="📦 Stock Category",    value=ch("cfg_stock_category"),  inline=True)
         embed.add_field(name="✅ Sold Category",     value=ch("cfg_sold_category"),   inline=True)
-        extra_roles = data.get("cfg_verify_extra_roles", [])
-        embed.add_field(name="🎁 Verify Extra Roles", value=(" ".join(f"<@&{r}>" for r in extra_roles) if extra_roles else "Chưa cài"), inline=True)
         embed.add_field(name="🔤 Font server",       value=FONT_LABELS.get(data.get("cfg_font","normal"),"normal"), inline=True)
         shop_status = "🟢 Bật" if get_cfg_shop_orders_enabled() else "🔴 Tắt"
         embed.add_field(name="🧪 Shop Orders (thử nghiệm)", value=shop_status, inline=True)
@@ -519,7 +517,7 @@ class AdminCog(commands.Cog):
                 ]
             },
             "invite": {
-                "emoji": "📨", "title": "Invite & Verify",
+                "emoji": "📨", "title": "Invite",
                 "fields": [
                     ("📋 Thống kê invite",
                      "`.invite [@user]` — Xem invite tháng này + all-time của bản thân / người khác\n"
@@ -528,17 +526,9 @@ class AdminCog(commands.Cog):
                      "  • `.invitetop 20` — top 20 tháng này\n"
                      "  • `.invitetop 06/2026` — top 10 tháng 6/2026\n"
                      "  • `.invitetop alltime` — top 10 all-time", False),
-                    ("✅ Verify thủ công (admin)",
-                     "`.verify [user_id]` — Verify tay 1 thành viên (đổi trạng thái unverify → verify),\n"
-                     "dùng khi verify server (chống VPN) bị lỗi/timeout", False),
                     ("🔄 Reset invite (admin)",
                      "`.resetinvite [@user|all]` — Reset invite **tháng hiện tại** (all-time giữ nguyên)\n"
                      "`.resetinvites [@user]` — Reset invite **all-time** *(hỏi lại trước khi xóa)*", False),
-                    ("🔐 Kiểm tra IP (admin)",
-                     "`.checkip @user` — Xem tất cả tài khoản chung IP với user đó\n"
-                     "`.ipstats` — Danh sách IP có từ 2 tài khoản trở lên\n"
-                     "`.backfillip [số]` — Đọc lại lịch sử kênh log, backfill IP records vào DB (mặc định 2000 message)\n"
-                     "`.testip` — Test kết nối verify server (chống VPN/multi-acc)", False),
                     ("🌐 Quản lý server bot (admin)",
                      "`.serverlist` (alias `.servers`/`.guildlist`) — Danh sách server bot đang ở, kèm ID + trạng thái ủy quyền\n"
                      "`.as <guild_id>` (alias `.authorize`/`.uyquyen`) — Bật/tắt (toggle) ủy quyền cho 1 server. "
@@ -573,8 +563,7 @@ class AdminCog(commands.Cog):
                     ("🔧 Prefix commands (admin)",
                      "`.gwstatus` — Xem toàn bộ giveaway đang chạy & đã kết thúc\n"
                      "`.gwpick <gw_id> <@user>` — Chọn tay winner cho giveaway\n"
-                     "`.gwreset <gw_id>` — Reset giveaway (xoá danh sách người tham gia)\n"
-                     "`.gwverify` (alias `.gwvr`) — Bật/tắt yêu cầu verify mới được tham gia giveaway (mặc định: BẬT)", False),
+                     "`.gwreset <gw_id>` — Reset giveaway (xoá danh sách người tham gia)", False),
                 ]
             },
             "mod": {
@@ -785,9 +774,9 @@ class AdminCog(commands.Cog):
             timestamp=datetime.now(timezone.utc)
         )
         embed.add_field(name="🎫 Ticket",    value="`.panel` `.mmpanel` `.panelbuttons` `.close` `.done` `.undone` `.addnote`\n`.ticketinfo` `.thongke` `.setsl` `.setrole`", inline=True)
-        embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite` `.verify`\n`/invite` `/invitetop`", inline=True)
+        embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
-        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick` `.gwreset` `.gwverify`", inline=True)
+        embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick` `.gwreset`", inline=True)
         embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.timeout` `.tempban`\n`.warn` `.modlog` `.xoa` `.automod`", inline=True)
         embed.add_field(name="🤖 AI Chat",   value="`.aireset` `.mychat` `.aisearch`", inline=True)
         embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo` `.baocao`", inline=True)
