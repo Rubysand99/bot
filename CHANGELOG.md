@@ -1,3 +1,28 @@
+## [v4.57.0] — 2026-09-04
+
+### ✨ Tính năng mới
+- `bot_shop.py` — Entry point riêng cho Shop Bot (pilot). Load `cogs.shop_admin` +
+  `cogs.listings` + `cogs.shop_orders` + `cogs.seller`. Tự chạy `verify_server.py`
+  (webhook SePay) trong process của mình. on_message riêng chỉ gọi `handle_sold()`.
+  `resume_pending_sold_views()` 1 lần/first_boot.
+- `cogs/shop_admin.py` — MỚI, tách từ `cogs/admin.py`: `.sv`/`.giaset`/`.giaset2`
+  (bảng giá dịch vụ — Ruby xác nhận thuộc Shop), `.sold`, `handle_sold()`,
+  `resume_pending_sold_views()`, luồng DM hỏi giá/người mua, `ShopOrdersToggleButton`,
+  `ReceiptMessageButton/Modal`.
+
+### ♻️ Thay đổi
+- `cogs/admin.py` — chỉ còn Core (AUTH_GATE, settings, role, embed, info...). Import
+  `ShopOrdersToggleButton`/`ReceiptMessageButton` từ `cogs.shop_admin` để `.st` vẫn
+  hiển thị đủ (dashboard chung, không phải Shop chưa tách sạch).
+- `bot.py` — thêm `cogs.shop_admin` vào `COGS`, 2 dòng import `handle_sold`/
+  `resume_pending_sold_views` trỏ từ `cogs.admin` sang `cogs.shop_admin`.
+
+### 🔍 Phát hiện, chưa xử lý
+- `cogs/admin.py: .backfill` — `from bot import _next_rename_target, _queue_or_rename`,
+  import thẳng module `bot.py`. Không ảnh hưởng Shop (lệnh này thuộc Ticket/legit),
+  nhưng sẽ vỡ khi tách Core — cần xử lý lúc đó.
+
+---
 ## [v4.55.0] — 2026-09-03
 
 ### ✨ Tính năng mới
