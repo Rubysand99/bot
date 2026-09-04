@@ -201,7 +201,6 @@ def _default_data(guild_id: int) -> dict:
         "cfg_transcript_channel": 0,
         "cfg_builder_role":    0,
         "cfg_welcome_channel": 0,
-        "cfg_verify_extra_roles": [],
         "cfg_font":            "normal",
         "extra_admin_ids":     [],
         "dangerous_cmd_overrides": {},
@@ -225,12 +224,11 @@ def _default_data(guild_id: int) -> dict:
     }
 
 def _default_data_global() -> dict:
-    """Data KHÔNG tách theo guild — chống multi-acc/VPN (_ip_records) và tempban dùng
-    chung cho mọi server để không ai né được bằng cách nhảy server."""
+    """Data KHÔNG tách theo guild — tempban dùng chung cho mọi server để không ai né
+    được bằng cách nhảy server. (_ip_records của bản verify/IP cũ đã bỏ hẳn.)"""
     return {
         "_id": "main",
         "_tempbans": {},
-        "_ip_records": {},
         "_pending_renames": {},
         "_pending_sold_price":  {},
         "_resolved_sold_price": {},
@@ -251,7 +249,6 @@ _TUYTAM_LEGACY_CFG_MIGRATION = {
     "cfg_done_role":          1515393691206811901,
     "cfg_transcript_channel": 1464430574524436679,
     "cfg_builder_role":       1484158340849205308,
-    "cfg_verify_extra_roles": [1500512964065755288, 1500513085096726528, 1464411190808805540, 1500512893139943455],
 }
 
 # ══════════════════════════════════════════
