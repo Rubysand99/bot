@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.55.0"
+BOT_VERSION = "4.54.1"
 BOT_UPDATED = "2026-09-04"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
@@ -75,6 +75,7 @@ COGS = [
     "cogs.invite",
     "cogs.giveaway",
     "cogs.admin",
+    "cogs.shop_admin",
     "cogs.mod",
     "cogs.seller",
     "cogs.shop_orders",
@@ -120,7 +121,7 @@ async def on_ready():
     from core.data import init_data_cache, set_current_guild
     from cogs.ticket import TicketPanel, TicketButtons, MiddlemanPanelView, sync_ticket_counter
     from cogs.giveaway import GiveawayView
-    from cogs.admin import resume_pending_sold_views
+    from cogs.shop_admin import resume_pending_sold_views
 
     await init_data_cache(bot)
 
@@ -281,7 +282,7 @@ async def on_message(message: discord.Message):
         return
 
     # Auto sold — stock → sold category
-    from cogs.admin import handle_sold
+    from cogs.shop_admin import handle_sold
     await handle_sold(bot, message)
 
     # AI channel
