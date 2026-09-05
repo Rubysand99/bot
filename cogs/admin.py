@@ -24,7 +24,7 @@ from core.data import (
     add_extra_admin, get_extra_admins, remove_extra_admin, is_admin,
     ensure_guild_loaded,
     can_use_dangerous_cmd,
-    get_or_fetch_channel, set_current_guild,
+    set_current_guild,
     get_cfg_shop_orders_enabled,
     get_cfg_receipt_thankyou,
     get_embed_template, get_embed_templates, save_embed_template, delete_embed_template,
@@ -763,88 +763,6 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🛒 Sản phẩm",    value="`.addlisting #forum \"IGN\" \"Giá\" \"Cape\"`\n*(xem `.help listings`)*", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
-
-    # ── .backfill ──
-    @commands.command(name="backfill")
-    async def backfill_cmd(self, ctx, limit: int = 25):
-        if not is_admin(ctx.author):
-            return await ctx.reply("❌ Chỉ admin mới có quyền dùng lệnh này.")
-        from core.data import get_cfg_legit_channel
-        import re as _re
-        IGNORED = {628400349979344919}
-
-        legit_ch_id = get_cfg_legit_channel()
-        if not legit_ch_id:
-            return await ctx.reply("❌ Chưa cài Legit Channel. Vào `.st` để cài trước.")
-
-        channel = await get_or_fetch_channel(self.bot, legit_ch_id)
-        if not channel:
-            return await ctx.reply(f"❌ Không tìm thấy kênh legit (ID: `{legit_ch_id}`).")
-
-        limit = max(1, min(limit, 100))
-        msg_status = await ctx.reply(f"🔍 Đang quét **{limit}** tin nhắn gần nhất trong {channel.mention}...")
-
-        # Thu thập các tin nhắn bị bỏ sót (chưa có ✅), sắp xếp từ cũ → mới
-        missed = []
-        scanned = 0
-        try:
-            msgs = []
-            async for msg in channel.history(limit=limit):
-                msgs.append(msg)
-            msgs.reverse()  # cũ → mới để xử lý đúng thứ tự
-
-            for msg in msgs:
-                if msg.author.bot: continue
-                if msg.author.id in IGNORED: continue
-                if not _re.match(r"^\+1\s*legit\b", msg.content.strip(), _re.IGNORECASE): continue
-                scanned += 1
-                already = any(r.emoji == "✅" and r.me for r in msg.reactions)
-                if not already:
-                    missed.append(msg)
-        except Exception as e:
-            return await msg_status.edit(content=f"❌ Lỗi khi quét: `{e}`")
-
-        # Xử lý từng tin bị bỏ sót: thả reaction + đổi tên kênh +1
-        fixed = 0
-        name_before = channel.name
-        for msg in missed:
-            try:
-                await msg.add_reaction("✅")
-            except Exception:
-                pass
-            # FIX: dùng CHUNG cơ chế hàng đợi rate-limit của bot.py (_next_rename_target +
-            # _queue_or_rename) thay vì channel.edit() trần trụi + bare except như trước.
-            # .backfill tồn tại ĐỂ xử lý NHIỀU tin nhắn bị bỏ sót cùng lúc — đúng kịch bản
-            # dễ dính rate limit Discord nhất (tối đa 2 lần đổi tên kênh / 10 phút). Code cũ
-            # nuốt lỗi rate-limit im lặng → kênh bị "đếm thiếu" dù MỌI tin nhắn đều đã có ✅
-            # (trông như xử lý xong hoàn chỉnh nhưng số đếm trên tên kênh thực ra bị hụt).
-            # _next_rename_target() cũng quan trọng không kém _queue_or_rename(): nó ưu tiên
-            # đọc số ĐANG CHỜ trong hàng đợi (nếu tin trước đó trong CHÍNH vòng lặp này chưa
-            # kịp đổi tên xong) thay vì đọc thẳng channel.name có thể đang stale — thiếu bước
-            # này thì 2 tin liên tiếp có thể cùng nhắm vào 1 số y hệt.
-            try:
-                from bot import _next_rename_target, _queue_or_rename
-                channel = await channel.guild.fetch_channel(channel.id)  # refresh tên mới nhất
-                base, new_num = _next_rename_target(channel)
-                if base is None:
-                    base, new_num = channel.name, 1
-                await _queue_or_rename(channel, base, new_num, f"Backfill +1 legit bởi {ctx.author}", "backfill")
-                fixed += 1
-            except Exception:
-                pass
-
-        name_after = channel.name
-        embed = discord.Embed(
-            title="✅ Backfill Legit Hoàn Tất",
-            color=0x57F287,
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.add_field(name="🔍 Quét", value=f"**{limit}** tin nhắn", inline=True)
-        embed.add_field(name="📝 Khớp +1legit", value=f"**{scanned}** tin", inline=True)
-        embed.add_field(name="✅ Đã xử lý", value=f"**{fixed}** tin bị bỏ sót", inline=True)
-        embed.add_field(name="📌 Kênh", value=f"`{name_before}` → `{name_after}`", inline=False)
-        embed.set_footer(text="Nếu dính rate limit đổi tên kênh (Discord giới hạn 2 lần/10 phút), phần còn lại sẽ tự đổi tiếp ở nền — số trên tên kênh có thể cập nhật chậm hơn vài phút so với số ✅ đã thả.")
-        await msg_status.edit(content=None, embed=embed)
 
     # ── PREFIX commands cho các slash ──
     @commands.command(name="ping")

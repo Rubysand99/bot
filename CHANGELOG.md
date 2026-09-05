@@ -1,3 +1,17 @@
+## [v4.58.0] — 2026-09-04
+
+### ⚠️ Breaking / Thay đổi hành vi runtime
+- `bot.py` — xoá bản legit/vouch/rename-queue trùng lặp (đã tồn tại sẵn, đầy đủ, độc
+  lập trong `cogs/legit.py` từ trước nhưng `bot.py` chưa từng ngừng tự làm). Thêm
+  `cogs.legit` vào `COGS`. Hành vi cho user KHÔNG đổi (`+1legit`/`done` vẫn hoạt động
+  y hệt) — chỉ đổi nơi xử lý thật.
+
+### ♻️ Thay đổi
+- `.backfill` chuyển từ `cogs/admin.py` sang `cogs/legit.py` (đúng domain, dùng
+  `self._next_rename_target`/`self._queue_or_rename` — giải quyết landmine
+  `from bot import` đã ghi nhận lúc tách Shop).
+
+---
 ## [v4.57.0] — 2026-09-04
 
 ### ✨ Tính năng mới

@@ -13,12 +13,13 @@ hơn ở bot khác, chuyển cũng không khó (đã tách gọn thành 1 cog đ
 
 import re as _re
 import asyncio
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands, tasks
 
 from core.data import (
-    set_current_guild, is_guild_authorized,
+    set_current_guild, is_guild_authorized, is_admin,
     get_cfg_legit_channel, get_cfg_legit_emoji,
     get_cfg_proof_channel, get_cfg_vouch_emoji,
     load_global_data, save_global_data, get_or_fetch_channel,
@@ -231,6 +232,85 @@ class LegitVouchCog(commands.Cog):
                 continue
 
             print(f"[BACKFILL] ✅ Guild {guild.id} hoàn tất — đã xử lý {fixed} tin nhắn bị bỏ sót.")
+
+    # ── Lệnh .backfill (thủ công, admin tự gọi) ──
+    # CHUYỂN từ cogs/admin.py (session tách bot Core — xem CHANGELOG.md). Trước đây
+    # command này `from bot import _next_rename_target, _queue_or_rename` — import
+    # thẳng module bot.py, vỡ nếu chạy ở process khác (đã ghi nhận là landmine lúc
+    # tách Shop). Giờ dùng self._next_rename_target/self._queue_or_rename — cùng file,
+    # không còn phụ thuộc bot.py nữa.
+    #
+    # FIX: khác với _backfill_legit() (auto lúc khởi động) dùng channel.edit() trần
+    # trụi, lệnh này CỐ Ý dùng self._next_rename_target()/self._queue_or_rename() (hàng
+    # đợi rate-limit) vì .backfill tồn tại để xử lý NHIỀU tin nhắn bị bỏ sót CÙNG LÚC —
+    # đúng kịch bản dễ dính rate limit Discord nhất (tối đa 2 lần đổi tên kênh/10 phút).
+    # Dùng channel.edit() trần trụi ở đây sẽ nuốt lỗi rate-limit im lặng → kênh bị
+    # "đếm thiếu" dù mọi tin nhắn đều đã có ✅ (trông như xử lý xong hoàn chỉnh nhưng số
+    # đếm trên tên kênh thực ra bị hụt).
+    @commands.command(name="backfill")
+    async def backfill_cmd(self, ctx, limit: int = 25):
+        if not is_admin(ctx.author):
+            return await ctx.reply("❌ Chỉ admin mới có quyền dùng lệnh này.")
+
+        legit_ch_id = get_cfg_legit_channel()
+        if not legit_ch_id:
+            return await ctx.reply("❌ Chưa cài Legit Channel. Vào `.st` để cài trước.")
+
+        channel = await get_or_fetch_channel(self.bot, legit_ch_id)
+        if not channel:
+            return await ctx.reply(f"❌ Không tìm thấy kênh legit (ID: `{legit_ch_id}`).")
+
+        limit = max(1, min(limit, 100))
+        msg_status = await ctx.reply(f"🔍 Đang quét **{limit}** tin nhắn gần nhất trong {channel.mention}...")
+
+        missed = []
+        scanned = 0
+        try:
+            msgs = []
+            async for msg in channel.history(limit=limit):
+                msgs.append(msg)
+            msgs.reverse()  # cũ → mới để xử lý đúng thứ tự
+
+            for msg in msgs:
+                if msg.author.bot: continue
+                if msg.author.id in IGNORED_USERS: continue
+                if not _re.match(r"^\+1\s*legit\b", msg.content.strip(), _re.IGNORECASE): continue
+                scanned += 1
+                already = any(r.emoji == "✅" and r.me for r in msg.reactions)
+                if not already:
+                    missed.append(msg)
+        except Exception as e:
+            return await msg_status.edit(content=f"❌ Lỗi khi quét: `{e}`")
+
+        fixed = 0
+        name_before = channel.name
+        for msg in missed:
+            try:
+                await msg.add_reaction("✅")
+            except Exception:
+                pass
+            try:
+                channel = await channel.guild.fetch_channel(channel.id)  # refresh tên mới nhất
+                base, new_num = self._next_rename_target(channel)
+                if base is None:
+                    base, new_num = channel.name, 1
+                await self._queue_or_rename(channel, base, new_num, f"Backfill +1 legit bởi {ctx.author}", "backfill")
+                fixed += 1
+            except Exception:
+                pass
+
+        name_after = channel.name
+        embed = discord.Embed(
+            title="✅ Backfill Legit Hoàn Tất",
+            color=0x57F287,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="🔍 Quét", value=f"**{limit}** tin nhắn", inline=True)
+        embed.add_field(name="📝 Khớp +1legit", value=f"**{scanned}** tin", inline=True)
+        embed.add_field(name="✅ Đã xử lý", value=f"**{fixed}** tin bị bỏ sót", inline=True)
+        embed.add_field(name="📌 Kênh", value=f"`{name_before}` → `{name_after}`", inline=False)
+        embed.set_footer(text="Nếu dính rate limit đổi tên kênh (Discord giới hạn 2 lần/10 phút), phần còn lại sẽ tự đổi tiếp ở nền — số trên tên kênh có thể cập nhật chậm hơn vài phút so với số ✅ đã thả.")
+        await msg_status.edit(content=None, embed=embed)
 
     # ── Events ──
 

@@ -70,6 +70,7 @@ async def on_guild_join(guild: discord.Guild):
 COGS = [
     "cogs.logger",
     "cogs.ticket",
+    "cogs.legit",
     "cogs.ai_chat",
     "cogs.message_search",
     "cogs.invite",
@@ -129,8 +130,8 @@ async def on_ready():
     _on_ready_first_boot_done = True
 
     if first_boot:
-        # Resume hàng đợi rename legit/vouch bị rate limit dở dang từ trước khi bot restart
-        await _resume_pending_renames(bot)
+        # Resume hàng đợi rename legit/vouch — ĐÃ chuyển sang LegitVouchCog.on_ready()
+        # (cogs/legit.py), tự resume trong listener riêng của chính nó.
 
         # Resume giveaways (không cần guild context — giveaway tách theo message_id, xem core/data.py)
         gw_cog = bot.cogs.get("GiveawayCog")
@@ -187,8 +188,8 @@ async def on_ready():
     if not first_boot:
         return  # Phần dưới (backfill legit + embed changelog) CHỈ chạy lúc khởi động thật
 
-    # Quét lại legit channel — thả ✅ cho tin nhắn bị bỏ sót lúc bot offline
-    spawn_background(_backfill_legit())
+    # Backfill legit — ĐÃ chuyển sang LegitVouchCog.on_ready() (cogs/legit.py), tự
+    # quét lại lúc khởi động thật trong listener riêng của chính nó.
 
     # Gửi changelog — đọc từ CHANGELOG.md
     from core.data import get_or_fetch_channel
@@ -290,9 +291,8 @@ async def on_message(message: discord.Message):
     await handle_ai_message(message)
 
 
-    # Legit & Vouch
-    await _handle_legit(message)
-    await _handle_vouch(message)
+    # Legit & Vouch — ĐÃ chuyển hẳn sang cogs/legit.py (LegitVouchCog tự có on_message
+    # listener riêng, xem COGS list). Không gọi gì ở đây nữa để tránh xử lý trùng.
 
     # Site feed — đẩy tin nhắn kênh thông báo/legit lên website real-time (core/site_feed.py)
     from core.site_feed import handle_site_feed
@@ -316,232 +316,6 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
         return
     from core.site_feed import handle_site_feed_edit
     await handle_site_feed_edit(after)
-
-
-# ══════════════════════════════════════════
-# LEGIT / VOUCH HANDLERS
-# ══════════════════════════════════════════
-
-def _parse_emoji(emoji_str: str):
-    """Chuyển chuỗi emoji lưu trong DB (unicode hoặc '<:name:id>') thành dạng
-    add_reaction() dùng được. Custom emoji không hợp lệ (bot không cùng server,
-    id sai...) → fallback về ✅ để không làm crash handler."""
-    try:
-        return discord.PartialEmoji.from_str((emoji_str or "").strip() or "✅")
-    except Exception:
-        return "✅"
-
-# ── Hàng đợi rename khi bị Discord rate limit (tối đa 2 lần đổi tên kênh / 10 phút) ──
-# Lưu bền trong Mongo (field "_pending_renames" ở global data "main") để không mất khi bot
-# restart giữa lúc đang chờ hết rate limit. asyncio.Task thì KHÔNG lưu được — chỉ giữ ở RAM
-# và được tạo lại lúc khởi động qua _resume_pending_renames() (gọi từ on_ready).
-_pending_tasks: dict = {}   # channel_id -> asyncio.Task đang chờ retry cho channel đó
-
-def _get_pending_rename(channel_id: int):
-    from core.data import load_global_data
-    g = load_global_data()
-    return g.get("_pending_renames", {}).get(str(channel_id))
-
-def _set_pending_rename(channel_id: int, base: str, target_num: int):
-    from core.data import load_global_data, save_global_data
-    g = load_global_data()
-    g.setdefault("_pending_renames", {})[str(channel_id)] = {"base": base, "target_num": target_num}
-    save_global_data(g)
-
-def _clear_pending_rename(channel_id: int):
-    from core.data import load_global_data, save_global_data
-    g = load_global_data()
-    if g.get("_pending_renames", {}).pop(str(channel_id), None) is not None:
-        save_global_data(g)
-
-def _next_rename_target(channel: discord.abc.GuildChannel):
-    """Tính (base, new_num) tiếp theo. Nếu đang có hàng đợi cho kênh này (do lần
-    trước bị rate limit, lưu trong Mongo), tính tiếp từ target đang chờ chứ KHÔNG
-    đọc tên kênh hiện tại (vì tên kênh thật chưa được cập nhật lúc đó). Trả (None, None)
-    nếu tên kênh không có số cuối và cũng không có hàng đợi."""
-    pending = _get_pending_rename(channel.id)
-    if pending:
-        return pending["base"], pending["target_num"] + 1
-    match = _re.search(r"-(\d+)$", channel.name)
-    if match:
-        return channel.name[:match.start()], int(match.group(1)) + 1
-    return None, None
-
-async def _apply_rename_with_retry(channel: discord.abc.GuildChannel, channel_id: int, label: str):
-    """Chạy nền: liên tục thử đổi tên kênh về target_num MỚI NHẤT trong hàng đợi (Mongo)
-    cho tới khi thành công. Nếu trong lúc chờ có +1 mới nữa (target_num tăng thêm),
-    lần retry tiếp theo sẽ tự áp dụng số mới nhất, không cần chạy lại từng bước."""
-    while True:
-        pending = _get_pending_rename(channel_id)
-        if not pending:
-            _pending_tasks.pop(channel_id, None)
-            return
-        base, target_num = pending["base"], pending["target_num"]
-        try:
-            await channel.edit(name=f"{base}-{target_num}", reason=f"+1 {label} (resume sau rate limit)")
-        except discord.HTTPException as e:
-            retry_after = getattr(e, "retry_after", None) or 60
-            print(f"[{label.upper()}] ⏳ Kênh {channel_id} vẫn đang rate limit, thử lại sau {retry_after:.0f}s")
-            await asyncio.sleep(retry_after + 1)
-            continue
-        except Exception as e:
-            print(f"[{label.upper()}] ❌ Lỗi khi resume rename: {e}")
-            _clear_pending_rename(channel_id)
-            _pending_tasks.pop(channel_id, None)
-            return
-        # Đổi tên thành công — nếu không có target mới hơn được set thêm trong lúc edit thì xong
-        latest = _get_pending_rename(channel_id)
-        if not latest or latest.get("target_num") == target_num:
-            _clear_pending_rename(channel_id)
-            _pending_tasks.pop(channel_id, None)
-            return
-        # Có target mới hơn (thêm +1 trong lúc đang retry) → lặp lại vòng while để áp số mới nhất
-
-async def _queue_or_rename(channel: discord.abc.GuildChannel, base: str, new_num: int, reason: str, label: str):
-    """Thử đổi tên ngay; nếu bị Discord rate limit thì lưu vào hàng đợi (Mongo) và chạy
-    task nền tự retry, KHÔNG làm crash/return sớm khỏi handler gọi hàm này."""
-    try:
-        await channel.edit(name=f"{base}-{new_num}", reason=reason)
-        _clear_pending_rename(channel.id)
-    except discord.HTTPException as e:
-        print(f"[{label.upper()}] ⚠️ Rate limit đổi tên kênh {channel.id}, xếp vào hàng đợi (target={new_num}): {e}")
-        _set_pending_rename(channel.id, base, new_num)
-        if channel.id not in _pending_tasks or _pending_tasks[channel.id].done():
-            _pending_tasks[channel.id] = asyncio.create_task(
-                _apply_rename_with_retry(channel, channel.id, label)
-            )
-
-async def _resume_pending_renames(bot: commands.Bot):
-    """Gọi 1 lần ở on_ready — nếu bot restart giữa lúc đang có hàng đợi rename dở dang
-    (rate limit Discord chưa hết hạn lúc bot tắt), tạo lại task retry cho từng kênh
-    thay vì bỏ dở vĩnh viễn. Kênh không còn tồn tại (đã bị xoá) → xoá khỏi hàng đợi luôn."""
-    from core.data import load_global_data, get_or_fetch_channel
-    pending_map = load_global_data().get("_pending_renames", {})
-    if not pending_map:
-        return
-    print(f"[RENAME] 🔁 Resume {len(pending_map)} hàng đợi rename dở dang từ trước khi restart")
-    for cid_str in list(pending_map.keys()):
-        channel_id = int(cid_str)
-        channel = await get_or_fetch_channel(bot, channel_id)
-        if channel is None:
-            print(f"[RENAME] ⚠️ Không tìm thấy kênh {channel_id} (có thể đã bị xoá) — bỏ khỏi hàng đợi")
-            _clear_pending_rename(channel_id)
-            continue
-        if channel_id not in _pending_tasks or _pending_tasks[channel_id].done():
-            _pending_tasks[channel_id] = asyncio.create_task(
-                _apply_rename_with_retry(channel, channel_id, "resume")
-            )
-
-async def _handle_legit(message: discord.Message):
-    try:
-        from core.data import get_cfg_legit_channel, get_cfg_legit_emoji
-        IGNORED = {628400349979344919}
-        if message.author.id in IGNORED: return
-        legit_ch = get_cfg_legit_channel()
-        if legit_ch:
-            if message.channel.id != legit_ch: return
-        else:
-            cname = message.channel.name.lower()
-            if "legit" not in cname and "vouch" not in cname: return
-        if not _re.match(r"^\+1\s*legit\b", message.content.strip(), _re.IGNORECASE): return
-
-        ch = message.channel
-        base, new_num = _next_rename_target(ch)
-        if base is not None:
-            await _queue_or_rename(ch, base, new_num, f"+1 legit bởi {message.author}", "legit")
-        # Không có số ở cuối tên kênh (và không có hàng đợi) → chỉ thả emoji, không đổi tên
-
-        await message.add_reaction(_parse_emoji(get_cfg_legit_emoji()))
-    except Exception as e:
-        print(f"[LEGIT] ❌ Lỗi: {e}")
-
-async def _handle_vouch(message: discord.Message):
-    try:
-        from core.data import get_cfg_proof_channel, get_cfg_vouch_emoji
-        IGNORED = {628400349979344919}
-        if message.author.id in IGNORED: return
-        proof_ch = get_cfg_proof_channel()
-        if proof_ch:
-            if message.channel.id != proof_ch: return
-        else:
-            cname = message.channel.name.lower()
-            if "vouch" not in cname and "proof" not in cname: return
-        if not _re.match(r"^done\b", message.content.strip(), _re.IGNORECASE): return
-
-        ch = message.channel
-        base, new_num = _next_rename_target(ch)
-        if base is not None:
-            await _queue_or_rename(ch, base, new_num, f"+1 vouch bởi {message.author}", "vouch")
-        # Không có số ở cuối tên kênh (và không có hàng đợi) → chỉ thả emoji, không đổi tên
-
-        await message.add_reaction(_parse_emoji(get_cfg_vouch_emoji()))
-    except Exception as e:
-        print(f"[VOUCH] ❌ Lỗi: {e}")
-
-
-
-# ══════════════════════════════════════════
-# BACKFILL LEGIT — Quét lại lúc khởi động
-# ══════════════════════════════════════════
-BACKFILL_LIMIT = 25  # Số tin nhắn gần nhất cần quét
-
-async def _backfill_legit():
-    """Sau khi bot online, quét 25 tin nhắn gần nhất trong kênh legit CỦA TỪNG GUILD.
-    Tin nào khớp +1legit mà chưa có reaction ✅ từ bot → thả reaction và đổi tên kênh +1.
-    Fetch lại tên kênh sau mỗi lần edit để tránh số đếm bị sai."""
-    await asyncio.sleep(3)  # Chờ cache sẵn sàng
-    from core.data import get_cfg_legit_channel, get_cfg_legit_emoji, get_or_fetch_channel, set_current_guild
-    IGNORED = {628400349979344919}
-
-    for guild in bot.guilds:
-        set_current_guild(guild.id)
-        legit_ch_id = get_cfg_legit_channel()
-        if not legit_ch_id:
-            print(f"[BACKFILL] ⚠️ Guild {guild.id} chưa cài legit channel, bỏ qua.")
-            continue
-        emoji_str    = get_cfg_legit_emoji()
-        target_emoji = _parse_emoji(emoji_str)
-
-        channel = await get_or_fetch_channel(bot, legit_ch_id)
-        if not channel:
-            print(f"[BACKFILL] ⚠️ Guild {guild.id}: không tìm thấy channel {legit_ch_id}")
-            continue
-
-        fixed = 0
-        try:
-            msgs = []
-            async for msg in channel.history(limit=BACKFILL_LIMIT):
-                msgs.append(msg)
-            msgs.reverse()  # cũ → mới
-
-            for msg in msgs:
-                if msg.author.bot: continue
-                if msg.author.id in IGNORED: continue
-                if not _re.match(r"^\+1\s*legit\b", msg.content.strip(), _re.IGNORECASE): continue
-
-                already = any(str(r.emoji) == str(target_emoji) and r.me for r in msg.reactions)
-                if not already:
-                    try:
-                        await msg.add_reaction(target_emoji)
-                    except Exception as e:
-                        print(f"[BACKFILL] ❌ Không thả được reaction msg {msg.id}: {e}")
-                    # Đổi tên kênh +1, fetch lại channel để lấy tên mới nhất
-                    try:
-                        channel = await channel.guild.fetch_channel(channel.id)  # refresh
-                        name = channel.name
-                        match = _re.search(r"-(\d+)$", name)
-                        new_num = (int(match.group(1)) + 1) if match else 1
-                        base = name[:match.start()] if match else name
-                        await channel.edit(name=f"{base}-{new_num}", reason=f"+1 legit backfill bởi {msg.author}")
-                        fixed += 1
-                        print(f"[BACKFILL] ✅ {msg.id} — kênh đổi thành {base}-{new_num}")
-                    except Exception as e:
-                        print(f"[BACKFILL] ❌ Không đổi được tên kênh: {e}")
-        except Exception as e:
-            print(f"[BACKFILL] ❌ Guild {guild.id}: lỗi khi quét legit channel: {e}")
-            continue
-
-        print(f"[BACKFILL] ✅ Guild {guild.id} hoàn tất — đã xử lý {fixed} tin nhắn bị bỏ sót.")
 
 
 # ══════════════════════════════════════════
