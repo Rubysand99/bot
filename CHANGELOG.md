@@ -1,3 +1,7 @@
+[v4.58.1] — 2026-09-05
+🐛 Sửa lỗi
+shared/logger.py — File này bị copy nhầm nguyên class LoggerCog từ cogs/logger.py thay vì chỉ chứa phần thuần (LOG_ICONS/LOG_ROUTES/LOG_GROUP_LABELS/send_log()/get_log_channel()) → tự import chính tên của nó lúc module khởi tạo dở, gây ImportError: partially initialized module 'shared.logger' (circular import), sập gần như toàn bộ cog phụ thuộc send_log() (ticket, mod, admin, giveaway, invite, ai_chat, seller, shop_admin, shop_orders, listings). Viết lại đúng nội dung thuần, send_log() tự set_current_guild(guild_id) đầu hàm theo đúng AI_CONTEXT.md.
+
 ## [v4.58.0] — 2026-09-04
 
 ### ⚠️ Breaking / Thay đổi hành vi runtime
