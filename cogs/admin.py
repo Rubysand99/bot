@@ -456,14 +456,14 @@ class AdminCog(commands.Cog):
                 "emoji": "🎫", "title": "Ticket",
                 "fields": [
                     ("📋 Lệnh cơ bản",
-                     "`.panel` — Đăng panel mua/bán\n"
+                     "`.panel` — Đăng panel mua/bán NGAY vào kênh hiện tại\n"
                      "`.mmpanel` — Đăng panel Giao Dịch Trung Gian (AutoMM)\n"
                      "`.panelbuttons` (alias `.panelbtn`) — Bật/tắt từng nút của panel (riêng theo server)\n"
-                     "`.setpanel #kênh` — Cài kênh đăng panel tự động\n"
+                     "`.setpanelchannel #kênh` (alias `.setpanel`) — CHỈ lưu kênh để bot tự gửi panel về sau, không gửi ngay (khác `.panel`)\n"
                      "`.close` — Đóng ticket hiện tại\n"
-                     "`.done <tiền>` — Hoàn thành đơn (chỉ admin)\n"
+                     "`.done <tiền>` — Hoàn thành đơn, tạo QR (chỉ admin)\n"
+                     "`.donecash <tiền>` (alias `.done+`) — Hoàn thành đơn KHÔNG cần QR, đã thu tiền mặt/chuyển khoản tay\n"
                      "`.undone <tiền>` (alias `.donesub`/`.trutien`) — Trừ tiền đã tiêu khi lỡ `.done` nhầm, tự mở lại ticket để `.done` lại đúng\n"
-                     "`.addnote <ghi chú>` — Thêm ghi chú vào ticket\n"
                      "`.orderbase` — Tạo ticket Order Base (admin)", False),
                     ("🏷️ Loại ticket → Role",
                      "`.setrole <ticket_key> <seller|builder|xoá>` — Gán loại ticket vào nhóm role\n"
@@ -471,26 +471,33 @@ class AdminCog(commands.Cog):
                     ("🛒 Ticket Mua Hàng",
                      "Panel có thêm nút 🛒 Ticket Mua Hàng — trước khi tạo ticket, bot hỏi user cần hỗ trợ "
                      "dịch vụ gì (chọn trong danh sách admin tự thêm)\n"
-                     "`.rubyoption add <tên>` (alias `.rbopt`) — Thêm 1 dịch vụ vào danh sách lựa chọn\n"
-                     "`.rubyoption remove <tên>` — Xoá 1 dịch vụ\n"
-                     "`.rubyoption edit <tên cũ> -> <tên mới>` — Đổi tên 1 dịch vụ\n"
-                     "`.rubyoption list` — Xem danh sách hiện tại\n"
-                     "-# Gộp nhiều thao tác cùng lúc, cách nhau bằng dấu phẩy: `.rbopt add A, add B, remove C, edit D -> E`\n"
+                     "`.ticketoptions add <tên>` (alias `.rubyoption`/`.rbopt`) — Thêm 1 dịch vụ vào danh sách lựa chọn\n"
+                     "`.ticketoptions remove <tên>` — Xoá 1 dịch vụ\n"
+                     "`.ticketoptions edit <tên cũ> -> <tên mới>` — Đổi tên 1 dịch vụ\n"
+                     "`.ticketoptions list` — Xem danh sách hiện tại\n"
+                     "-# Gộp nhiều thao tác cùng lúc, cách nhau bằng dấu phẩy: `.ticketoptions add A, add B, remove C, edit D -> E`\n"
                      "`.setrole rubyshop @role` — Gán role xử lý Ticket Mua Hàng", False),
                     ("🤝 Giao Dịch Trung Gian",
                      "`.mmpanel` — Đăng panel Giao Dịch Trung Gian (AutoMM)\n"
                      "User bấm **Tạo giao dịch** → bot hỏi ID tài khoản muốn giao dịch → tạo ticket riêng, "
                      "luôn ping admin TuyTam để trực tiếp làm trung gian\n"
                      "`.setrole middleman @role` — Gán thêm role hỗ trợ (ngoài admin TuyTam mặc định)", False),
-                    ("📦 Stock Limit",
-                     "`.setsl <item_key> <số lượng>` — Cài giới hạn tồn kho\n"
-                     "`.removesl <item_key>` — Xoá giới hạn tồn kho\n"
-                     "`.listsl` — Xem danh sách stock limit hiện tại", False),
+                    ("📁 Category riêng theo Seller",
+                     "`.setsellercat @seller #category` (alias `.setsl`) — Gán category riêng cho 1 seller\n"
+                     "`.removesellercat @seller` (alias `.removesl`) — Xoá category riêng của 1 seller\n"
+                     "`.sellercats` (alias `.listsl`) — Xem danh sách seller → category\n"
+                     "-# Khác với mục dưới: đây là **kênh** riêng của seller, không phải **role**.", False),
+                    ("🎭 Role được tính là Seller",
+                     "`.addsellerrole @role` — Thêm 1 role vào danh sách được tính là seller\n"
+                     "`.rmsellerrole @role` — Bỏ 1 role khỏi danh sách\n"
+                     "`.sellerroles` — Xem danh sách role hiện tại\n"
+                     "-# Khác `.seller add/remove/list` (xem `.help admin`): đó là danh sách seller cụ thể "
+                     "(có hạn ngày), còn đây là ROLE nào thì tự động được coi là seller.", False),
                     ("📊 Thống kê",
                      "`.ticketinfo [@user]` — Xem lịch sử ticket của user\n"
                      "`.thongke [MM/YYYY]` — Thống kê doanh thu theo tháng", False),
                     ("🔷 Slash commands",
-                     "`/close` `/done` `/addnote`", False),
+                     "`/close` `/done`", False),
                 ]
             },
             "invite": {
@@ -504,8 +511,8 @@ class AdminCog(commands.Cog):
                      "  • `.invitetop 06/2026` — top 10 tháng 6/2026\n"
                      "  • `.invitetop alltime` — top 10 all-time", False),
                     ("🔄 Reset invite (admin)",
-                     "`.resetinvite [@user|all]` — Reset invite **tháng hiện tại** (all-time giữ nguyên)\n"
-                     "`.resetinvites [@user]` — Reset invite **all-time** *(hỏi lại trước khi xóa)*", False),
+                     "`.resetinvitemonth [@user|all]` (alias `.resetinvite`) — Reset invite **tháng hiện tại** (all-time giữ nguyên)\n"
+                     "`.resetinviteall [@user]` (alias `.resetinvites`) — Reset invite **all-time** *(hỏi lại trước khi xóa — khác hẳn lệnh trên, đừng nhầm)*", False),
                     ("🌐 Quản lý server bot (admin)",
                      "`.serverlist` (alias `.servers`/`.guildlist`) — Danh sách server bot đang ở, kèm ID + trạng thái ủy quyền\n"
                      "`.as <guild_id>` (alias `.authorize`/`.uyquyen`) — Bật/tắt (toggle) ủy quyền cho 1 server. "
@@ -660,12 +667,16 @@ class AdminCog(commands.Cog):
                      "`.setup` — Setup server (kênh / category / role / server)\n"
                      "`.botinfo` — Thông tin bot\n"
                      "`.ping` — Kiểm tra độ trễ\n"
-                     "`.clear <n>` — Xóa n tin nhắn\n"
+                     "`.del <n>` (alias `.xoa`/`.purge`) — Xóa n tin nhắn\n"
                      "`.addrole @user` — Thêm role (chọn qua danh sách)\n"
                      "`.removerole @user` — Xóa role (chọn qua danh sách)\n"
                      "`.userinfo [@user]` — Thông tin thành viên\n"
                      "`.serverinfo` — Thông tin server\n"
                      "`.backfill [số]` — Quét lại kênh legit, thả ✅ cho tin bị bỏ sót (mặc định 25)", False),
+                    ("⚠️ Xoá category (cẩn thận — không thể hoàn tác)",
+                     "`.clearcategory <category>` (alias `.clearcat`/`.dondanhmuc`) — Xoá **TOÀN BỘ kênh** "
+                     "trong 1 category, có bước xác nhận trước khi xoá. Khác hẳn `.del` (chỉ xoá tin nhắn) — "
+                     "đừng nhầm 2 lệnh này.", False),
                     ("🎨 Emoji & Kênh",
                      "`.emoji <url/file> <tên>` — Thêm emoji\n"
                      "`.delemoji <tên>` — Xóa emoji\n"
@@ -750,15 +761,15 @@ class AdminCog(commands.Cog):
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="🎫 Ticket",    value="`.panel` `.mmpanel` `.panelbuttons` `.close` `.done` `.undone` `.addnote`\n`.ticketinfo` `.thongke` `.setsl` `.setrole`", inline=True)
-        embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvite`\n`/invite` `/invitetop`", inline=True)
+        embed.add_field(name="🎫 Ticket",    value="`.panel` `.mmpanel` `.panelbuttons` `.close` `.done` `.donecash` `.undone`\n`.ticketinfo` `.thongke` `.setrole`", inline=True)
+        embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvitemonth`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick` `.gwreset`", inline=True)
-        embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.timeout` `.tempban`\n`.warn` `.modlog` `.xoa` `.automod`", inline=True)
+        embed.add_field(name="🔨 Mod",       value="`.ban` `.kick` `.timeout` `.tempban`\n`.warn` `.clearwarn` `.modlog` `.xoa` `.automod`", inline=True)
         embed.add_field(name="🤖 AI Chat",   value="`.aireset` `.mychat` `.aisearch`", inline=True)
         embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo` `.baocao`", inline=True)
-        embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clear` `.addrole` `.emoji`\n`.rename` `.mkchannel`", inline=True)
-        embed.add_field(name="🏪 Seller",    value="`.seller add/remove/list/panel`\n`.myseller`", inline=True)
+        embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clearcategory` `.addrole` `.emoji`\n`.rename` `.mkchannel`", inline=True)
+        embed.add_field(name="🏪 Seller",    value="`.seller add/remove/list/panel` `.myseller`\n`.setsellercat` `.addsellerrole` *(xem `.help ticket`)*", inline=True)
         embed.add_field(name="🧾 Shop Orders", value="`.shopbank` `.setqueue` `.shoporderno`\n`.bxh` — bảng xếp hạng\n*(dùng chung `.done` ở Ticket)*", inline=True)
         embed.add_field(name="🛒 Sản phẩm",    value="`.addlisting #forum \"IGN\" \"Giá\" \"Cape\"`\n*(xem `.help listings`)*", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")

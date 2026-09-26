@@ -1,3 +1,41 @@
+## [v4.59.0] — 2026-09-25
+
+### ♻️ Dọn tên lệnh — dễ nhầm / khó tìm (rà theo yêu cầu, không đổi logic, chỉ đổi tên + gộp)
+Tất cả tên cũ đều giữ lại làm **alias** — không lệnh nào bị mất, chỉ đổi tên hiển thị
+mặc định trong `.help`.
+
+- `cogs/mod.py` — bỏ alias `"clear"` khỏi `.del` (đã có `xoa`/`purge`). "clear" dễ
+  gõ nhầm với `.clearcategory` (xoá cả category kênh) và `.clearwarn` — 2 lệnh khác
+  hẳn về mức độ phá hoại nhưng cùng chung tiền tố "clear".
+- `cogs/invite.py` — `resetinvite` → `resetinvitemonth` (alias `resetinvite`/`resetinv`),
+  `resetinvites` → `resetinviteall` (alias `resetinvites`). 2 lệnh cũ chỉ khác 1 chữ
+  "s" nhưng 1 cái reset THÁNG, 1 cái reset ALL-TIME — dễ gõ nhầm.
+- `cogs/ticket.py`:
+  - `done+` → `donecash` (alias `done+`) — dấu "+" khó gõ/khó nhớ.
+  - `setsl`/`removesl`/`listsl` → `setsellercat`/`removesellercat`/`sellercats`
+    (alias tên cũ) — "sl" không ai đoán được nghĩa; đổi theo khuôn mẫu của
+    `sellerroles` cho 2 family (role vs category) dễ liên tưởng nhau hơn.
+  - `rubyoption`/`rbopt` → `ticketoptions` (alias tên cũ) — tên cũ đặt theo tên
+    riêng 1 admin, không nói lên chức năng.
+  - `setpanel` → `setpanelchannel` (alias `setpanel`) — dễ nhầm với `.panel` (gửi
+    NGAY) trong khi lệnh này chỉ LƯU kênh cho panel tự động sau này.
+- `cogs/shop_admin.py` — gộp `giaset2`/`priceset2` (trước là 1 command riêng chỉ để
+  forward sang `.giaset`) thẳng vào alias của `.giaset` — bớt 1 command thừa.
+- `cogs/admin.py` (`.help`):
+  - Xoá mọi tham chiếu `.addnote` / `/addnote` — lệnh này **không tồn tại**, được
+    quảng cáo trong help 3 chỗ nhưng gõ vào sẽ báo lỗi.
+  - Xoá mục "📦 Stock Limit" mô tả `.setsl <item_key> <số lượng>` (giới hạn tồn
+    kho) — tính năng này **không tồn tại trong code**, mục help này mô tả sai hoàn
+    toàn cho đúng cái tên lệnh `.setsl` mà tính năng category-riêng-seller đang dùng.
+  - Thêm `.clearcategory` (trước đây không có trong help nào — chỉ nằm trong flat
+    overview dưới dạng `.clear` dễ hiểu lầm là `.del`) kèm cảnh báo không thể hoàn tác.
+  - Thêm 2 mục mới hoàn toàn chưa từng có trong help: `.addsellerrole`/`.rmsellerrole`/
+    `.sellerroles` (role nào tính là seller) và `.setsellercat`/`.removesellercat`/
+    `.sellercats` (category riêng theo seller) — trước đây 2 family này không được
+    nhắc tới ở đâu trong `.help` cả.
+  - Cập nhật flat overview (`.help`) cho khớp toàn bộ tên mới.
+
+---
 [v4.58.1] — 2026-09-05
 🐛 Sửa lỗi
 shared/logger.py — File này bị copy nhầm nguyên class LoggerCog từ cogs/logger.py thay vì chỉ chứa phần thuần (LOG_ICONS/LOG_ROUTES/LOG_GROUP_LABELS/send_log()/get_log_channel()) → tự import chính tên của nó lúc module khởi tạo dở, gây ImportError: partially initialized module 'shared.logger' (circular import), sập gần như toàn bộ cog phụ thuộc send_log() (ticket, mod, admin, giveaway, invite, ai_chat, seller, shop_admin, shop_orders, listings). Viết lại đúng nội dung thuần, send_log() tự set_current_guild(guild_id) đầu hàm theo đúng AI_CONTEXT.md.

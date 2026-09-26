@@ -56,7 +56,10 @@ class ShopAdminCog(commands.Cog):
     async def sv_cmd(self, ctx):
         await ctx.send(embed=build_sv_embed())
 
-    @commands.command(name="giaset", aliases=["setgia", "pricemanager", "priceset"])
+    # FIX (UX): gộp "giaset2"/"priceset2" (trước là 1 command RIÊNG chỉ để forward
+    # sang giaset_cmd) vào thẳng danh sách alias bên dưới — 1 tính năng không cần 2
+    # command riêng biệt để làm cùng 1 việc.
+    @commands.command(name="giaset", aliases=["setgia", "pricemanager", "priceset", "giaset2", "priceset2"])
     async def giaset_cmd(self, ctx):
         if not is_admin(ctx.author): return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
         sections = get_price_sections() or _DEFAULT_PRICE_SECTIONS
@@ -64,11 +67,6 @@ class ShopAdminCog(commands.Cog):
         embed.add_field(name="💡 Hướng dẫn", value="Hỗ trợ đầy đủ **Discord markdown**:\n› `**bold**`, `~~gạch~~`, `> blockquote`\n› Emoji server: `<:tên:id>`\n› `### Tiêu đề nhỏ`", inline=False)
         embed.set_footer(text=f"Yêu cầu bởi {ctx.author}  •  Timeout 2 phút")
         await ctx.reply(embed=embed, view=PriceManagerView())
-
-    @commands.command(name="giaset2", aliases=["priceset2"])
-    async def giaset2_prefix(self, ctx):
-        """Alias prefix cho /giaset — giống .giaset"""
-        await self.giaset_cmd(ctx)
 
     @commands.command(name="sold")
     async def sold_toggle_cmd(self, ctx, mode: str = None):

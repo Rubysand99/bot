@@ -903,7 +903,7 @@ async def create_build_ticket(interaction: discord.Interaction, trade_type: str)
 
 async def create_ruby_ticket(interaction: discord.Interaction, option_label: str):
     """Tạo ticket Mua Hàng — sau khi user chọn 1 dịch vụ từ danh sách do admin
-    cấu hình thủ công (.rubyoption add), xem _RubyShopOptionSelect."""
+    cấu hình thủ công (.ticketoptions add), xem _RubyShopOptionSelect."""
     guild = interaction.guild
     try:
         if await has_ticket(guild, interaction.user):
@@ -1252,7 +1252,7 @@ class AccPreView(View):
 
 class _RubyShopOptionSelect(Select):
     """Bước chọn dịch vụ trước khi tạo ticket Mua Hàng — options đến từ danh
-    sách admin tự thêm bằng `.rubyoption add <tên>` (core/data.py:
+    sách admin tự thêm bằng `.ticketoptions add <tên>` (core/data.py:
     get_ruby_shop_options), KHÔNG hardcode trong code."""
     def __init__(self, options: list[str]):
         self._labels = options
@@ -1436,7 +1436,7 @@ class TicketPanel(View):
             if not options:
                 return await interaction.response.send_message(
                     "❌ Ticket Mua Hàng hiện chưa có dịch vụ nào được thiết lập. Vui lòng liên hệ staff "
-                    "hoặc admin thêm bằng `.rubyoption add <tên dịch vụ>`.",
+                    "hoặc admin thêm bằng `.ticketoptions add <tên dịch vụ>`.",
                     ephemeral=True,
                 )
             await interaction.response.send_message(
@@ -1547,7 +1547,7 @@ class TicketButtons(View):
 
         await interaction.response.send_message(
             f"🙋 {interaction.user.mention} đã nhận xử lý ticket này{note}.\n"
-            f"`.done`/`.done+` sau đó — dù ai gõ — sẽ tự tính QR/tiền cho bạn."
+            f"`.done`/`.donecash` sau đó — dù ai gõ — sẽ tự tính QR/tiền cho bạn."
         )
 
         await send_log(
@@ -1677,10 +1677,13 @@ class TicketCog(commands.Cog):
         )
         await ctx.send(embed=embed, view=PanelButtonToggleView(ctx))
 
-    @commands.command()
+    @commands.command(name="setpanelchannel", aliases=["setpanel"])
+    # FIX (UX): đổi tên chính từ "setpanel" → "setpanelchannel" — dễ nhầm với lệnh
+    # `.panel` (gửi panel NGAY vào kênh hiện tại). Lệnh này chỉ LƯU kênh để bot tự gửi
+    # panel về sau, không gửi gì ngay lập tức. Tên cũ giữ lại làm alias.
     async def setpanel(self, ctx, channel: discord.TextChannel = None):
         if ctx.author.id not in ADMIN_IDS: return
-        if channel is None: return await ctx.reply("❌ Thiếu kênh! Ví dụ: `.setpanel #shop`")
+        if channel is None: return await ctx.reply("❌ Thiếu kênh! Ví dụ: `.setpanelchannel #shop`")
         save_panel_channel_id(channel.id)
         embed = discord.Embed(title="⚙️  Đã Cài Đặt Panel Channel", description=f"Bot sẽ gửi panel ticket vào {channel.mention}.", color=0x57F287, timestamp=datetime.now(timezone.utc))
         embed.set_footer(text=f"Cài bởi {ctx.author}")
@@ -1717,7 +1720,7 @@ class TicketCog(commands.Cog):
 
     @commands.command(name="claim", aliases=["nhan"])
     async def claim_cmd(self, ctx):
-        """Nhận xử lý ticket này. Sau khi claim, `.done`/`.done+` — dù AI gõ — đều tự
+        """Nhận xử lý ticket này. Sau khi claim, `.done`/`.donecash` — dù AI gõ — đều tự
         tính QR (dùng bank của người claim) + ghi nhận đơn cho người đã claim, không
         phải người gõ lệnh. Dùng khi 1 seller nhờ admin/seller khác gõ .done hộ."""
         if not is_staff_member(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
@@ -1732,7 +1735,7 @@ class TicketCog(commands.Cog):
             note = ""
         await ctx.reply(
             f"🙋 {ctx.author.mention} đã nhận xử lý ticket này{note}.\n"
-            f"`.done`/`.done+` sau đó — dù ai gõ — sẽ tự tính QR/tiền cho bạn."
+            f"`.done`/`.donecash` sau đó — dù ai gõ — sẽ tự tính QR/tiền cho bạn."
         )
 
         await send_log(
@@ -1751,13 +1754,16 @@ class TicketCog(commands.Cog):
         chuyển khoản tay, admin tự xác nhận qua hàng đợi."""
         await self._complete_order_impl(ctx, args, use_qr=True, cmd_prefix=".done")
 
-    @commands.command(name="done+")
+    @commands.command(name="donecash", aliases=["done+"])
+    # FIX (UX): đổi tên chính từ "done+" → "donecash" — dấu "+" khó gõ/khó nhớ trên
+    # nhiều bàn phím và không tự nói lên khác biệt với .done. Tên cũ "done+" giữ lại
+    # làm alias.
     async def done_plus_cmd(self, ctx, *, args: str = None):
         """Hoàn thành đơn KHÔNG cần QR/SePay — dùng khi đã thu tiền mặt hoặc chuyển
         khoản tay (không qua QR động). Bỏ qua hẳn bước tạo QR, đơn vào thẳng hàng đợi để
         admin bấm "✅ Hoàn thành" xác nhận + xuất bill như bình thường.
-        Trong ticket: `.done+ 50k`  ·  Ngoài ticket: `.done+ @user 50k`"""
-        await self._complete_order_impl(ctx, args, use_qr=False, cmd_prefix=".done+")
+        Trong ticket: `.donecash 50k`  ·  Ngoài ticket: `.donecash @user 50k`"""
+        await self._complete_order_impl(ctx, args, use_qr=False, cmd_prefix=".donecash")
 
     async def _complete_order_impl(self, ctx, args: str, *, use_qr: bool, cmd_prefix: str):
         if ctx.author.id not in ADMIN_IDS:
@@ -2394,24 +2400,27 @@ class TicketCog(commands.Cog):
 
 
     # ══════════════════════════════════════════
-    # ADMIN: GÁN CATEGORY CHO SELLER (.setsl)
+    # ADMIN: GÁN CATEGORY CHO SELLER (.setsellercat, alias cũ .setsl)
     # ══════════════════════════════════════════
     # ══════════════════════════════════════════
-    # ADMIN: DANH SÁCH DỊCH VỤ TICKET MUA HÀNG (.rubyoption)
+    # ADMIN: DANH SÁCH DỊCH VỤ TICKET MUA HÀNG (.ticketoptions)
     # ══════════════════════════════════════════
-    @commands.command(name="rubyoption", aliases=["rbopt"])
+    @commands.command(name="ticketoptions", aliases=["rubyoption", "rbopt"])
+    # FIX (UX): đổi tên chính từ "rubyoption" → "ticketoptions" — tên cũ đặt theo tên
+    # riêng của 1 admin (Ruby), không nói lên chức năng, staff khác không đoán được lệnh
+    # này tồn tại. Tên cũ + "rbopt" giữ lại làm alias.
     async def rubyoption_cmd(self, ctx, *, args: str = None):
         """
         Quản lý danh sách dịch vụ hiện ra cho user chọn trước khi tạo ticket
         Ticket Mua Hàng (nút 🛒 Ticket Mua Hàng trên panel).
 
-        `.rubyoption add <tên>`               — thêm 1 lựa chọn
-        `.rubyoption remove <tên>`             — xoá 1 lựa chọn
-        `.rubyoption edit <tên cũ> -> <tên mới>` — đổi tên 1 lựa chọn
-        `.rubyoption list`                     — xem danh sách hiện tại
+        `.ticketoptions add <tên>`               — thêm 1 lựa chọn
+        `.ticketoptions remove <tên>`             — xoá 1 lựa chọn
+        `.ticketoptions edit <tên cũ> -> <tên mới>` — đổi tên 1 lựa chọn
+        `.ticketoptions list`                     — xem danh sách hiện tại
 
         Gộp nhiều thao tác trong 1 lệnh, phân tách bằng dấu phẩy:
-        `.rubyoption add A, add B, remove C, edit D -> E`
+        `.ticketoptions add A, add B, remove C, edit D -> E`
         """
         if not is_staff_member(ctx.author):
             return await ctx.reply("❌ Bạn không có quyền dùng lệnh này.")
@@ -2423,7 +2432,7 @@ class TicketCog(commands.Cog):
                     title="🛒 Danh sách dịch vụ Ticket Mua Hàng", color=0xE91E8C, timestamp=datetime.now(timezone.utc)
                 )
                 embed.description = "\n".join(f"{i+1}. {o}" for i, o in enumerate(options)) if options \
-                    else "*(chưa có lựa chọn nào — dùng `.rubyoption add <tên>` để thêm)*"
+                    else "*(chưa có lựa chọn nào — dùng `.ticketoptions add <tên>` để thêm)*"
                 embed.set_footer(text=f"{len(options)}/25 lựa chọn")
                 return await ctx.reply(embed=embed)
 
@@ -2432,12 +2441,12 @@ class TicketCog(commands.Cog):
             return await ctx.reply(
                 "❌ Thiếu thao tác!\n"
                 "**Cú pháp:**\n"
-                "`.rubyoption add <tên>` — thêm lựa chọn\n"
-                "`.rubyoption remove <tên>` — xoá lựa chọn\n"
-                "`.rubyoption edit <tên cũ> -> <tên mới>` — đổi tên lựa chọn\n"
-                "`.rubyoption list` — xem danh sách\n"
+                "`.ticketoptions add <tên>` — thêm lựa chọn\n"
+                "`.ticketoptions remove <tên>` — xoá lựa chọn\n"
+                "`.ticketoptions edit <tên cũ> -> <tên mới>` — đổi tên lựa chọn\n"
+                "`.ticketoptions list` — xem danh sách\n"
                 "-# Gộp nhiều thao tác cùng lúc, cách nhau bằng dấu phẩy:\n"
-                "-# `.rubyoption add A, add B, remove C, edit D -> E`\n\n"
+                "-# `.ticketoptions add A, add B, remove C, edit D -> E`\n\n"
                 f"**Hiện có {len(options)} lựa chọn:**\n{listing}"
             )
 
@@ -2451,7 +2460,7 @@ class TicketCog(commands.Cog):
             rest   = parts[1].strip() if len(parts) > 1 else ""
 
             if action == "list":
-                results.append("ℹ️ Dùng `.rubyoption list` riêng để xem danh sách.")
+                results.append("ℹ️ Dùng `.ticketoptions list` riêng để xem danh sách.")
                 continue
 
             if action == "add":
@@ -2741,10 +2750,14 @@ class TicketCog(commands.Cog):
         )
         await ctx.reply(embed=embed)
 
-    @commands.command(name="setsl")
+    @commands.command(name="setsellercat", aliases=["setsl"])
+    # FIX (UX): đổi tên chính từ "setsl" → "setsellercat" — "sl" là viết tắt không ai
+    # đoán được nghĩa nếu không đọc code. Tên cũ giữ lại làm alias. Lưu ý: đây LÀ family
+    # riêng biệt với .sellerroles/.addsellerrole/.rmsellerrole (đó là quản lý ROLE nào
+    # được coi là seller — còn family này quản lý CATEGORY kênh riêng của từng seller).
     async def setsl_cmd(self, ctx, seller: discord.Member = None, category: discord.CategoryChannel = None):
         """
-        .setsl <@seller | seller_id> #category
+        .setsellercat <@seller | seller_id> #category
         Admin gán category riêng cho từng seller.
         """
         if ctx.author.id not in ADMIN_IDS:
@@ -2753,14 +2766,14 @@ class TicketCog(commands.Cog):
         if not seller:
             return await ctx.reply(
                 "❌ Thiếu thông tin!\n"
-                "Cú pháp: `.setsl @seller #danh-mục`\n"
-                "Ví dụ: `.setsl @TuyTam #Shop-TuyTam`"
+                "Cú pháp: `.setsellercat @seller #danh-mục`\n"
+                "Ví dụ: `.setsellercat @TuyTam #Shop-TuyTam`"
             )
 
         if not category:
             return await ctx.reply(
                 "❌ Thiếu danh mục!\n"
-                "Cú pháp: `.setsl @seller #danh-mục`"
+                "Cú pháp: `.setsellercat @seller #danh-mục`"
             )
 
         save_seller_category(seller.id, category.id)
@@ -2790,18 +2803,21 @@ class TicketCog(commands.Cog):
         embed.set_footer(text=f"Cài bởi {_uname_plain(ctx.author)}")
         await ctx.reply(embed=embed)
 
-    @commands.command(name="removesl")
+    @commands.command(name="removesellercat", aliases=["removesl"])
     async def removesl_cmd(self, ctx, seller: discord.Member = None):
         """Admin xóa category của một seller."""
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
         if not seller:
-            return await ctx.reply("❌ Thiếu seller! Ví dụ: `.removesl @seller`")
+            return await ctx.reply("❌ Thiếu seller! Ví dụ: `.removesellercat @seller`")
 
         remove_seller_category(seller.id)
         await ctx.reply(f"✅ Đã xóa category của {seller.mention}.")
 
-    @commands.command(name="listsl")
+    @commands.command(name="sellercats", aliases=["listsl"])
+    # FIX (UX): đổi tên chính từ "listsl" → "sellercats", theo đúng khuôn mẫu đặt tên
+    # của .sellerroles (danh từ số nhiều) để 2 family (role vs category) dễ liên tưởng
+    # với nhau hơn là 2 tiền tố rời rạc "sl"/"sellerroles".
     async def listsl_cmd(self, ctx):
         """Admin xem danh sách seller → category."""
         if ctx.author.id not in ADMIN_IDS:

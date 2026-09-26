@@ -12,7 +12,8 @@ thời gian, giờ mới đồng bộ lại):
   - All-time total: invite_counts_all (cộng dồn mãi mãi, không bao giờ reset)
   - .invite: hiển thị cả tháng này + tổng all-time
   - .invitetop: leaderboard tháng này, có flag alltime để xem tổng
-  - .resetinvite: chỉ reset tháng hiện tại, all-time KHÔNG bị ảnh hưởng
+  - .resetinvitemonth (alias .resetinvite): chỉ reset tháng hiện tại, all-time KHÔNG
+    bị ảnh hưởng — .resetinviteall (alias .resetinvites) mới reset all-time.
 """
 
 import asyncio
@@ -364,12 +365,16 @@ class InviteCog(commands.Cog):
         embed.set_footer(text="TuyTam Store  •  .invitetop [số] [MM/YYYY] [alltime]")
         await ctx.reply(embed=embed)
 
-    @commands.command(name="resetinvite", aliases=["resetinv"])
+    @commands.command(name="resetinvitemonth", aliases=["resetinvite", "resetinv"])
+    # FIX (UX): đổi tên chính từ "resetinvite" → "resetinvitemonth" — trước đây chỉ
+    # khác lệnh resetinvites (bên dưới, reset ALL-TIME) đúng 1 chữ "s", rất dễ gõ nhầm
+    # giữa 2 lệnh có mức độ phá hoại khác hẳn nhau. Tên cũ giữ lại làm alias, không phá
+    # ai đang dùng quen.
     async def resetinvite_cmd(self, ctx, *, arg: str = None):
         """
         Reset invite tháng hiện tại (all-time KHÔNG bị ảnh hưởng).
-        .resetinvite all    → reset cả server tháng này
-        .resetinvite @user  → reset 1 người tháng này
+        .resetinvitemonth all    → reset cả server tháng này
+        .resetinvitemonth @user  → reset 1 người tháng này
         """
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin.")
@@ -400,8 +405,8 @@ class InviteCog(commands.Cog):
             except commands.BadArgument:
                 return await ctx.reply(
                     f"❌ Không tìm thấy thành viên `{arg_clean}`.\n"
-                    "Dùng: `.resetinvite @user` hoặc `.resetinvite all`\n"
-                    "Reset all-time: `.resetinvites [@user]`"
+                    "Dùng: `.resetinvitemonth @user` hoặc `.resetinvitemonth all`\n"
+                    "Reset all-time: `.resetinviteall [@user]`"
                 )
 
         if member:
@@ -422,17 +427,19 @@ class InviteCog(commands.Cog):
         else:
             await ctx.reply(
                 "❌ Dùng:\n"
-                "`.resetinvite @user` — reset 1 người (tháng này)\n"
-                "`.resetinvite all` — reset toàn bộ (tháng này)\n\n"
-                "⚠️ Lệnh này chỉ reset tháng hiện tại. Dùng `.resetinvites` để reset all-time."
+                "`.resetinvitemonth @user` — reset 1 người (tháng này)\n"
+                "`.resetinvitemonth all` — reset toàn bộ (tháng này)\n\n"
+                "⚠️ Lệnh này chỉ reset tháng hiện tại. Dùng `.resetinviteall` để reset all-time."
             )
 
-    @commands.command(name="resetinvites")
+    @commands.command(name="resetinviteall", aliases=["resetinvites"])
+    # FIX (UX): đổi tên chính từ "resetinvites" → "resetinviteall" — xem ghi chú ở
+    # resetinvite_cmd phía trên (cặp resetinvite/resetinvites cũ chỉ khác 1 chữ "s").
     async def resetinvites_cmd(self, ctx, *, arg: str = None):
         """
         Reset invite ALL-TIME (hỏi lại trước khi thực hiện).
-        .resetinvites        → reset all-time toàn server
-        .resetinvites @user  → reset all-time 1 người
+        .resetinviteall        → reset all-time toàn server
+        .resetinviteall @user  → reset all-time 1 người
         """
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin.")
@@ -446,7 +453,7 @@ class InviteCog(commands.Cog):
             except commands.BadArgument:
                 return await ctx.reply(
                     f"❌ Không tìm thấy thành viên `{arg_clean}`.\n"
-                    "Dùng: `.resetinvites @user` hoặc `.resetinvites` (toàn server)"
+                    "Dùng: `.resetinviteall @user` hoặc `.resetinviteall` (toàn server)"
                 )
 
         if member:

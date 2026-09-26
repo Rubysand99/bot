@@ -696,7 +696,10 @@ class ModCog(commands.Cog):
     # ══════════════════════════════════════
     # .XOA — xoá hàng loạt tin nhắn
     # ══════════════════════════════════════
-    @commands.command(name="del", aliases=["xoa", "purge", "clear"])
+    @commands.command(name="del", aliases=["xoa", "purge"])
+    # FIX (UX): bỏ alias "clear" — dễ gõ nhầm với .clearcategory (xoá nguyên category
+    # kênh) và .clearwarn (xoá cảnh cáo), 2 lệnh hoàn toàn khác và nguy hiểm hơn nhiều.
+    # "xoa"/"purge" đã đủ dùng cho lệnh xoá tin nhắn này.
     async def xoa_cmd(self, ctx, amount: int = None, member: discord.Member = None):
         """
         .xoa [số] [@user]
