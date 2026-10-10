@@ -13,6 +13,7 @@ Thay đổi:
 
 import re
 import asyncio
+import time as _time
 import logging
 log = logging.getLogger(__name__)
 from datetime import datetime, timezone, timedelta
@@ -24,7 +25,7 @@ from discord.ext import commands
 from core.data import (
     ADMIN_IDS, load_data, save_data, _uname_plain,
     add_tempban, remove_tempban, get_active_tempbans,
-    set_current_guild,
+    set_current_guild, wait_data_cache_ready,
     get_cfg_category, get_cfg_stock_category, get_cfg_sold_category,
 )
 from cogs.logger import send_log
@@ -282,44 +283,126 @@ def _caps_ratio(text: str) -> float:
 class ModCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._unban_tasks: dict = {}   # (guild_id, user_id) → asyncio.Task hẹn giờ tự unban
 
     async def cog_load(self):
-        """Resume tất cả tempban còn hiệu lực từ MongoDB sau khi restart."""
-        import time as _time
-        active = get_active_tempbans()
-        now = _time.time()
+        """Resume tempban còn hiệu lực sau restart.
+        FIX (v4.59.1): cog_load chạy TRƯỚC init_data_cache() (gọi ở on_ready) nên
+        get_active_tempbans() luôn thấy cache global rỗng → tempban KHÔNG BAO GIỜ được resume
+        (người bị ban tạm ở lại bị ban vĩnh viễn sau mỗi lần restart). Giờ chờ cache sẵn sàng
+        trong 1 task nền rồi mới đọc."""
+        self._resume_task = asyncio.create_task(self._resume_tempbans())
+
+    async def cog_unload(self):
+        for t in list(self._unban_tasks.values()):
+            t.cancel()
+        task = getattr(self, "_resume_task", None)
+        if task:
+            task.cancel()
+
+    async def _resume_tempbans(self):
+        await wait_data_cache_ready()
         resumed = 0
-        for uid_str, info in active.items():
-            uid = int(uid_str)
-            unban_at = info.get("unban_at", 0)
-            guild_id = info.get("guild_id")
-            delay = max(0.0, unban_at - now)
-
-            async def _resume_unban(uid=uid, guild_id=guild_id, delay=delay):
-                await asyncio.sleep(delay)
-                guild = self.bot.get_guild(guild_id)
-                if guild is None:
-                    try:
-                        guild = await self.bot.fetch_guild(guild_id)
-                    except Exception:
-                        remove_tempban(uid)
-                        return
-                try:
-                    user = await self.bot.fetch_user(uid)
-                    await guild.unban(user, reason="TempBan hết hạn — resume sau restart")
-                    await send_log(self.bot, "INFO", f"TempBan hết hạn — {user}",
-                        fields=[("👤", f"{user} (`{uid}`)", True), ("⏱️", "Resume sau restart", True)],
-                        color=0x57F287, guild_id=guild_id)
-                except Exception:
-                    pass
-                finally:
-                    remove_tempban(uid)
-
-            asyncio.create_task(_resume_unban())
+        for info in get_active_tempbans().values():
+            uid, guild_id = info.get("user_id"), info.get("guild_id")
+            if not uid or not guild_id:
+                continue
+            self._schedule_unban(guild_id, uid, info.get("unban_at", 0))
             resumed += 1
-
         if resumed:
             log.info(f"[TEMPBAN] ▶️  Resume {resumed} tempban(s) từ MongoDB")
+
+    def _schedule_unban(self, guild_id: int, user_id: int, unban_at: float) -> None:
+        """Hẹn giờ tự unban. Hẹn lại cho cùng (guild, user) sẽ HUỶ timer cũ (gia hạn tempban
+        không bị timer cũ unban sớm)."""
+        key = (guild_id, user_id)
+        old = self._unban_tasks.pop(key, None)
+        if old:
+            old.cancel()
+
+        async def _runner():
+            try:
+                await asyncio.sleep(max(0.0, unban_at - _time.time()))
+                await self._finish_tempban(guild_id, user_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception(f"[TEMPBAN] Lỗi không mong muốn khi unban {user_id}@{guild_id}")
+
+        task = asyncio.create_task(_runner())
+        self._unban_tasks[key] = task
+        task.add_done_callback(lambda t, key=key: self._unban_tasks.pop(key, None)
+                               if self._unban_tasks.get(key) is t else None)
+
+    def _cancel_tempban(self, guild_id: int, user_id: int) -> None:
+        """Gọi khi ban vĩnh viễn / unban tay: huỷ timer + xoá bản ghi (tránh timer cũ unban
+        nhầm người vừa bị ban vĩnh viễn)."""
+        t = self._unban_tasks.pop((guild_id, user_id), None)
+        if t:
+            t.cancel()
+        remove_tempban(user_id, guild_id)
+
+    async def _finish_tempban(self, guild_id: int, user_id: int) -> None:
+        """Unban khi hết hạn. FIX: lỗi tạm thời (HTTP/mạng) → retry, và CHỈ xoá bản ghi khi đã
+        unban xong / không còn gì để gỡ — trước đây `finally: remove_tempban` xoá luôn cả khi
+        unban thất bại → ban tạm thành ban vĩnh viễn."""
+        for attempt in range(5):
+            try:
+                guild = self.bot.get_guild(guild_id) or await self.bot.fetch_guild(guild_id)
+                user = await self.bot.fetch_user(user_id)
+                await guild.unban(user, reason="TempBan hết hạn — tự động unban")
+            except discord.NotFound:
+                remove_tempban(user_id, guild_id)   # server/user không còn, hoặc đã được unban tay
+                return
+            except discord.Forbidden:
+                log.error(f"[TEMPBAN] ❌ Bot không có quyền unban {user_id}@{guild_id} — bỏ bản ghi, cần unban tay.")
+                remove_tempban(user_id, guild_id)
+                try:
+                    await send_log(self.bot, "INFO", f"TempBan hết hạn nhưng bot KHÔNG đủ quyền unban",
+                        fields=[("👤", f"`{user_id}`", True)], color=0xED4245, guild_id=guild_id)
+                except Exception:
+                    pass
+                return
+            except Exception as e:
+                log.warning(f"[TEMPBAN] ⚠️ Unban {user_id}@{guild_id} lỗi (lần {attempt + 1}/5): {e}")
+                if attempt < 4:
+                    await asyncio.sleep(30 * (attempt + 1))
+                    continue
+                log.error(f"[TEMPBAN] ❌ Bỏ cuộc unban {user_id}@{guild_id} — GIỮ bản ghi để thử lại sau restart.")
+                return
+            remove_tempban(user_id, guild_id)
+            try:
+                await send_log(self.bot, "INFO", f"TempBan hết hạn — {user}",
+                    fields=[("👤", f"{user} (`{user_id}`)", True), ("⏱️", "Hết hạn tự động", True)],
+                    color=0x57F287, guild_id=guild_id)
+            except Exception:
+                pass
+            return
+
+    # ── Phân quyền ────────────────────────────────────────────────
+    def _can_ban(self, member: discord.Member) -> bool:
+        """Ban/tempban/unban cần quyền Ban Members (hoặc admin). FIX: trước đây dùng chung
+        _is_mod (chỉ cần Kick Members) → mod cấp thấp ban được người khác."""
+        if member.id in ADMIN_IDS: return True
+        perms = member.guild_permissions
+        return perms.administrator or perms.ban_members
+
+    def _hierarchy_error(self, actor, target, guild) -> str | None:
+        """None = được phép. Kiểm tra cả role của BOT lẫn role của NGƯỜI RA LỆNH (trước đây chỉ
+        kiểm tra bot → mod ban/kick được cả người role cao hơn mình, kể cả admin bot)."""
+        if target.id == actor.id:
+            return "❌ Không thể tự thực hiện lệnh này lên chính mình."
+        if target.id in ADMIN_IDS:
+            return "❌ Không thể thực hiện lệnh này lên admin của bot."
+        if target.id == guild.owner_id:
+            return "❌ Không thể thực hiện lệnh này lên chủ server."
+        if target.top_role >= guild.me.top_role:
+            return "❌ Role của thành viên này cao hơn hoặc bằng bot."
+        if actor.id in ADMIN_IDS or actor.id == guild.owner_id:
+            return None
+        if target.top_role >= actor.top_role:
+            return "❌ Role của bạn không cao hơn thành viên này."
+        return None
 
     def _is_mod(self, member: discord.Member) -> bool:
         if member.id in ADMIN_IDS: return True
@@ -332,14 +415,16 @@ class ModCog(commands.Cog):
     # ══════════════════════════════════════
     @commands.command(name="ban")
     async def ban_cmd(self, ctx, member: discord.Member = None, *, reason: str = "Không có lý do"):
-        if not self._is_mod(ctx.author):
+        if not self._can_ban(ctx.author):
             return await ctx.reply("❌ Bạn không có quyền.")
         if not member:
             return await ctx.reply("❌ Dùng: `.ban @user [lý do]`")
-        if member.top_role >= ctx.guild.me.top_role:
-            return await ctx.reply("❌ Không thể ban thành viên có role cao hơn bot.")
+        _err = self._hierarchy_error(ctx.author, member, ctx.guild)
+        if _err:
+            return await ctx.reply(_err)
         try:
             await member.ban(reason=f"{reason} — Bởi {ctx.author}", delete_message_days=0)
+            self._cancel_tempban(ctx.guild.id, member.id)
         except discord.Forbidden:
             return await ctx.reply("❌ Bot không có quyền ban.")
         _add_mod_log("ban", member.id, str(member), str(ctx.author), reason)
@@ -362,12 +447,14 @@ class ModCog(commands.Cog):
     @app_commands.command(name="ban", description="Ban thành viên khỏi server")
     @app_commands.describe(member="Thành viên", reason="Lý do ban")
     async def slash_ban(self, interaction: discord.Interaction, member: discord.Member, reason: str = "Không có lý do"):
-        if not self._is_mod(interaction.user):
+        if not self._can_ban(interaction.user):
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
-        if member.top_role >= interaction.guild.me.top_role:
-            return await interaction.response.send_message("❌ Role thành viên này cao hơn bot.", ephemeral=True)
+        _err = self._hierarchy_error(interaction.user, member, interaction.guild)
+        if _err:
+            return await interaction.response.send_message(_err, ephemeral=True)
         try:
             await member.ban(reason=f"{reason} — Bởi {interaction.user}", delete_message_days=0)
+            self._cancel_tempban(interaction.guild.id, member.id)
         except discord.Forbidden:
             return await interaction.response.send_message("❌ Bot không có quyền ban.", ephemeral=True)
         _add_mod_log("ban", member.id, str(member), str(interaction.user), reason)
@@ -383,13 +470,14 @@ class ModCog(commands.Cog):
 
     @commands.command(name="unban")
     async def unban_cmd(self, ctx, user_id: str = None, *, reason: str = "Không có lý do"):
-        if not self._is_mod(ctx.author):
+        if not self._can_ban(ctx.author):
             return await ctx.reply("❌ Bạn không có quyền.")
         if not user_id or not user_id.isdigit():
             return await ctx.reply("❌ Dùng: `.unban <user_id> [lý do]`")
         try:
             user = await self.bot.fetch_user(int(user_id))
             await ctx.guild.unban(user, reason=f"{reason} — Bởi {ctx.author}")
+            self._cancel_tempban(ctx.guild.id, user.id)
             _add_mod_log("unban", user.id, str(user), str(ctx.author), reason)
             embed = discord.Embed(title="✅ Đã Unban", color=0x57F287, timestamp=datetime.now(timezone.utc))
             embed.add_field(name="👤 User",  value=f"{user} (`{user.id}`)", inline=True)
@@ -405,13 +493,14 @@ class ModCog(commands.Cog):
     @app_commands.command(name="unban", description="Unban thành viên")
     @app_commands.describe(user_id="ID của user cần unban", reason="Lý do")
     async def slash_unban(self, interaction: discord.Interaction, user_id: str, reason: str = "Không có lý do"):
-        if not self._is_mod(interaction.user):
+        if not self._can_ban(interaction.user):
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         if not user_id.isdigit():
             return await interaction.response.send_message("❌ ID không hợp lệ!", ephemeral=True)
         try:
             user = await self.bot.fetch_user(int(user_id))
             await interaction.guild.unban(user, reason=f"{reason} — Bởi {interaction.user}")
+            self._cancel_tempban(interaction.guild.id, user.id)
             _add_mod_log("unban", user.id, str(user), str(interaction.user), reason)
             embed = discord.Embed(title="✅ Đã Unban", color=0x57F287)
             embed.add_field(name="👤 User",  value=f"{user} (`{user.id}`)", inline=True)
@@ -425,19 +514,25 @@ class ModCog(commands.Cog):
     # ══════════════════════════════════════
     @commands.command(name="tempban", aliases=["tban"])
     async def tempban_cmd(self, ctx, member: discord.Member = None, duration: str = "1d", *, reason: str = "Không có lý do"):
-        if not self._is_mod(ctx.author):
+        if not self._can_ban(ctx.author):
             return await ctx.reply("❌ Bạn không có quyền.")
         if not member:
             return await ctx.reply("❌ Dùng: `.tempban @user <thời gian> [lý do]`\nVD: `.tempban @user 2d spam`")
         td = _parse_duration(duration)
         if not td:
             return await ctx.reply("❌ Thời gian không hợp lệ! Dùng: `10m`, `1h`, `2d`")
-        if member.top_role >= ctx.guild.me.top_role:
-            return await ctx.reply("❌ Không thể ban thành viên có role cao hơn bot.")
+        _err = self._hierarchy_error(ctx.author, member, ctx.guild)
+        if _err:
+            return await ctx.reply(_err)
         try:
             await member.ban(reason=f"[TempBan {_fmt_duration(td)}] {reason} — Bởi {ctx.author}", delete_message_days=0)
         except discord.Forbidden:
             return await ctx.reply("❌ Bot không có quyền ban.")
+        # FIX: lưu bản ghi + hẹn giờ NGAY sau khi ban (trước đây nằm cuối hàm, sau nhiều await —
+        # crash giữa chừng = ban tạm thành ban vĩnh viễn không ai biết).
+        _unban_at = _time.time() + td.total_seconds()
+        add_tempban(member.id, ctx.guild.id, _unban_at, reason)
+        self._schedule_unban(ctx.guild.id, member.id, _unban_at)
 
         _add_mod_log("tempban", member.id, str(member), str(ctx.author), reason, _fmt_duration(td))
         embed = discord.Embed(title="⏱️ Đã TempBan", color=0xE67E22, timestamp=datetime.now(timezone.utc))
@@ -457,31 +552,14 @@ class ModCog(commands.Cog):
         except Exception:
             pass
 
-        # Persist vào MongoDB để resume sau restart
-        import time as _time
-        unban_at = _time.time() + td.total_seconds()
-        add_tempban(member.id, ctx.guild.id, unban_at, reason)
-
-        # Tự động unban sau thời gian
-        async def _auto_unban(guild=ctx.guild, uid=member.id, delay=td.total_seconds()):
-            await asyncio.sleep(delay)
-            try:
-                user = await self.bot.fetch_user(uid)
-                await guild.unban(user, reason="TempBan hết hạn — tự động unban")
-                await send_log(self.bot, "INFO", f"TempBan hết hạn — {user}",
-                    fields=[("👤", f"{user} (`{uid}`)", True), ("⏱️", "Hết hạn tự động", True)],
-                    color=0x57F287)
-            except Exception:
-                pass
-            finally:
-                remove_tempban(uid)
-        asyncio.create_task(_auto_unban())
-
     @app_commands.command(name="tempban", description="Ban tạm thời, tự unban sau thời gian")
     @app_commands.describe(member="Thành viên", duration="Thời gian: 10m, 1h, 2d", reason="Lý do")
     async def slash_tempban(self, interaction: discord.Interaction, member: discord.Member, duration: str = "1d", reason: str = "Không có lý do"):
-        if not self._is_mod(interaction.user):
+        if not self._can_ban(interaction.user):
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        _err = self._hierarchy_error(interaction.user, member, interaction.guild)
+        if _err:
+            return await interaction.response.send_message(_err, ephemeral=True)
         td = _parse_duration(duration)
         if not td:
             return await interaction.response.send_message("❌ Thời gian không hợp lệ!", ephemeral=True)
@@ -489,27 +567,15 @@ class ModCog(commands.Cog):
             await member.ban(reason=f"[TempBan {_fmt_duration(td)}] {reason}", delete_message_days=0)
         except discord.Forbidden:
             return await interaction.response.send_message("❌ Bot không có quyền ban.", ephemeral=True)
+        _unban_at = _time.time() + td.total_seconds()
+        add_tempban(member.id, interaction.guild.id, _unban_at, reason)
+        self._schedule_unban(interaction.guild.id, member.id, _unban_at)
         _add_mod_log("tempban", member.id, str(member), str(interaction.user), reason, _fmt_duration(td))
         embed = discord.Embed(title="⏱️ Đã TempBan", color=0xE67E22)
         embed.add_field(name="👤 Thành viên", value=member.mention,    inline=True)
         embed.add_field(name="⏱️ Thời gian",  value=_fmt_duration(td), inline=True)
         embed.add_field(name="📝 Lý do",      value=reason,            inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
-        # Persist vào MongoDB để resume sau restart
-        import time as _time
-        unban_at = _time.time() + td.total_seconds()
-        add_tempban(member.id, interaction.guild.id, unban_at, reason)
-
-        async def _auto_unban(guild=interaction.guild, uid=member.id, delay=td.total_seconds()):
-            await asyncio.sleep(delay)
-            try:
-                user = await self.bot.fetch_user(uid)
-                await guild.unban(user, reason="TempBan hết hạn")
-            except Exception:
-                pass
-            finally:
-                remove_tempban(uid)
-        asyncio.create_task(_auto_unban())
 
     # ══════════════════════════════════════
     # KICK
@@ -520,8 +586,9 @@ class ModCog(commands.Cog):
             return await ctx.reply("❌ Bạn không có quyền.")
         if not member:
             return await ctx.reply("❌ Dùng: `.kick @user [lý do]`")
-        if member.top_role >= ctx.guild.me.top_role:
-            return await ctx.reply("❌ Không thể kick thành viên có role cao hơn bot.")
+        _err = self._hierarchy_error(ctx.author, member, ctx.guild)
+        if _err:
+            return await ctx.reply(_err)
         try:
             await member.kick(reason=f"{reason} — Bởi {ctx.author}")
         except discord.Forbidden:
@@ -547,6 +614,9 @@ class ModCog(commands.Cog):
     async def slash_kick(self, interaction: discord.Interaction, member: discord.Member, reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        _err = self._hierarchy_error(interaction.user, member, interaction.guild)
+        if _err:
+            return await interaction.response.send_message(_err, ephemeral=True)
         try:
             await member.kick(reason=f"{reason} — Bởi {interaction.user}")
         except discord.Forbidden:
@@ -571,6 +641,9 @@ class ModCog(commands.Cog):
             return await ctx.reply("❌ Thời gian không hợp lệ! Dùng: `10s`, `5m`, `1h`, `2d`")
         if td.total_seconds() > 28 * 86400:
             return await ctx.reply("❌ Discord timeout tối đa 28 ngày.")
+        _err = self._hierarchy_error(ctx.author, member, ctx.guild)
+        if _err:
+            return await ctx.reply(_err)
         try:
             until = datetime.now(timezone.utc) + td
             await member.timeout(until, reason=f"{reason} — Bởi {ctx.author}")
@@ -600,6 +673,9 @@ class ModCog(commands.Cog):
     async def slash_timeout(self, interaction: discord.Interaction, member: discord.Member, duration: str = "10m", reason: str = "Không có lý do"):
         if not self._is_mod(interaction.user):
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        _err = self._hierarchy_error(interaction.user, member, interaction.guild)
+        if _err:
+            return await interaction.response.send_message(_err, ephemeral=True)
         td = _parse_duration(duration)
         if not td:
             return await interaction.response.send_message("❌ Thời gian không hợp lệ!", ephemeral=True)

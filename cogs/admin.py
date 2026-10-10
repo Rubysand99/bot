@@ -20,7 +20,7 @@ from core.data import (
     get_guild_prefix,
     get_cfg_font, _uname_plain, is_staff_member,
     load_data,
-    is_guild_authorized, set_guild_authorized,
+    is_guild_authorized, set_guild_authorized, is_data_cache_ready,
     add_extra_admin, get_extra_admins, remove_extra_admin, is_admin,
     ensure_guild_loaded,
     can_use_dangerous_cmd,
@@ -75,26 +75,36 @@ class AdminCog(commands.Cog):
         guild_obj  = self.bot.get_guild(guild_id)
         guild_name = guild_obj.name if guild_obj else "*(bot chưa/không còn ở server này)*"
 
-        if is_guild_authorized(guild_id):
-            await set_guild_authorized(guild_id, False)
-            embed = discord.Embed(
-                title="🔒 Đã THU HỒI ủy quyền",
-                description=f"**Server:** {guild_name}\n**ID:** `{guild_id}`\n\nBot sẽ ngừng hoạt động ở server này ngay lập tức.",
-                color=0xED4245,
-            )
-        else:
-            # Đảm bảo guild đó đã có cache/document riêng ngay, không cần đợi bot restart.
-            await ensure_guild_loaded(guild_id)
-            await set_guild_authorized(guild_id, True)  # await xong (đã ghi Mongo) mới báo thành công
-            embed = discord.Embed(
-                title="🔓 Đã ỦY QUYỀN",
-                description=(
-                    f"**Server:** {guild_name}\n**ID:** `{guild_id}`\n\n"
-                    f"Bot đã có thể hoạt động ở server này. Data hoàn toàn riêng — "
-                    f"không dùng chung với bất kỳ server nào khác."
-                ),
-                color=0x57F287,
-            )
+        # FIX (v4.59.1): .as được miễn AUTH_GATE nên có thể chạy khi cache global CHƯA nạp — ghi lúc
+        # đó sẽ đè danh sách ủy quyền thật. Chặn + báo lỗi rõ ràng thay vì ghi bừa.
+        if not is_data_cache_ready():
+            await ctx.reply("⏳ Bot đang khởi động / chưa nạp xong dữ liệu — thử lại sau vài giây.", mention_author=False)
+            return
+        try:
+            if is_guild_authorized(guild_id):
+                await set_guild_authorized(guild_id, False)
+                embed = discord.Embed(
+                    title="🔒 Đã THU HỒI ủy quyền",
+                    description=f"**Server:** {guild_name}\n**ID:** `{guild_id}`\n\nBot sẽ ngừng hoạt động ở server này ngay lập tức.",
+                    color=0xED4245,
+                )
+            else:
+                # Đảm bảo guild đó đã có cache/document riêng ngay, không cần đợi bot restart.
+                if not await ensure_guild_loaded(guild_id):
+                    raise RuntimeError("không nạp được dữ liệu guild từ MongoDB")
+                await set_guild_authorized(guild_id, True)  # await xong (đã ghi Mongo) mới báo thành công
+                embed = discord.Embed(
+                    title="🔓 Đã ỦY QUYỀN",
+                    description=(
+                        f"**Server:** {guild_name}\n**ID:** `{guild_id}`\n\n"
+                        f"Bot đã có thể hoạt động ở server này. Data hoàn toàn riêng — "
+                        f"không dùng chung với bất kỳ server nào khác."
+                    ),
+                    color=0x57F287,
+                )
+        except RuntimeError as e:
+            await ctx.reply(f"❌ Không thực hiện được: {e}", mention_author=False)
+            return
         await ctx.reply(embed=embed, mention_author=False)
 
     # ── .ad — Thêm admin PHỤ. FIX (đổi kiến trúc): trước đây admin thêm qua .ad có

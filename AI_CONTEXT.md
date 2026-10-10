@@ -244,7 +244,7 @@ Xem `handle_sold()` làm mẫu, hoặc CHANGELOG v4.47.0 để biết chi tiết
   giá trị GIỮ NGUYÊN hành vi hiện tại — thường là `True`/bật (vd `cfg_sold_detection_enabled`).
   Chỉ tính năng MỚI/thử nghiệm mới default `False` (vd `cfg_shop_orders_enabled`). Default
   sai chiều = âm thầm tắt mất tính năng đang chạy, cho MỌI guild chưa từng gọi lệnh toggle đó.
-- **ADMIN_IDS:** đọc từ env `ADMIN_IDS` (comma-separated), không hardcode
+- **ADMIN_IDS:** đọc từ 2 env `ADMIN_RUBY_ID` và `ADMIN_TUYTAM_ID` (shared/data.py), không hardcode
 - Response PUBLIC (không ephemeral) cho user thường, trừ ticket panel button và MỌI thứ admin-only (xem trên)
 
 ## Log event types → nhóm kênh

@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.59.0"
+BOT_VERSION = "4.59.1"
 BOT_UPDATED = "2026-09-25"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
@@ -95,6 +95,28 @@ async def load_cogs():
 # ON READY
 # ══════════════════════════════════════════
 _on_ready_first_boot_done = False   # FIX: xem giải thích trong on_ready() bên dưới
+_init_retry_running = False
+
+async def _retry_init_data_cache():
+    """FIX (v4.59.1): init_data_cache() giờ ném lỗi nếu Mongo không đọc được (thay vì âm thầm
+    chạy bằng dữ liệu mặc định rồi ghi đè dữ liệu thật). Bot ở trạng thái CHƯA SẴN SÀNG (AUTH_GATE
+    từ chối mọi lệnh) và thử lại mỗi 30s; thành công thì chạy lại on_ready() để hoàn tất khởi động."""
+    global _init_retry_running
+    if _init_retry_running:
+        return
+    _init_retry_running = True
+    try:
+        from core.data import init_data_cache
+        while True:
+            await asyncio.sleep(30)
+            try:
+                await init_data_cache(bot)
+                break
+            except Exception as e:
+                print(f"[DATA] ⚠️ Thử lại nạp dữ liệu vẫn lỗi: {e}")
+    finally:
+        _init_retry_running = False
+    await on_ready()
 
 @bot.event
 async def on_ready():
@@ -124,7 +146,13 @@ async def on_ready():
     from cogs.giveaway import GiveawayView
     from cogs.shop_admin import resume_pending_sold_views
 
-    await init_data_cache(bot)
+    try:
+        await init_data_cache(bot)
+    except Exception as e:
+        print(f"[DATA] 🚨 Không nạp được dữ liệu từ MongoDB sau nhiều lần thử: {e}\n"
+              f"[DATA] 🚨 Bot ở trạng thái CHƯA SẴN SÀNG (từ chối mọi lệnh) — tự thử lại sau 30s.")
+        spawn_background(_retry_init_data_cache())
+        return
 
     first_boot = not _on_ready_first_boot_done
     _on_ready_first_boot_done = True

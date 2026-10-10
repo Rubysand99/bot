@@ -23,6 +23,7 @@ import discord
 from discord.ext import commands
 
 from cogs.logger import send_log
+from shared.data import is_global_loaded
 from core.data import (
     ADMIN_IDS, load_data, save_data, _uname, _uname_plain,
     get_member_inviters, save_member_inviters,
@@ -33,6 +34,18 @@ from core.data import (
 
 _invite_cache:    dict[int, dict[str, int]] = {}
 _member_inviters: dict[int, dict]           = {}   # member_id → {inviter_id, guild_id}
+_inviters_loaded = False
+
+def _ensure_inviters_loaded() -> None:
+    """Nạp _member_inviters từ Mongo đúng 1 lần, SAU khi cache global đã sẵn sàng (đồng bộ,
+    không có await — an toàn khi gọi ngay trước khi sửa/lưu dict)."""
+    global _member_inviters, _inviters_loaded
+    if _inviters_loaded or not is_global_loaded():
+        return
+    loaded = {int(k): v for k, v in get_member_inviters().items()}
+    loaded.update(_member_inviters)      # giữ entry phát sinh trước khi nạp xong
+    _member_inviters = loaded
+    _inviters_loaded = True
 
 
 # ══════════════════════════════════════════
@@ -138,8 +151,12 @@ class InviteCog(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
-        global _member_inviters
-        _member_inviters = {int(k): v for k, v in get_member_inviters().items()}
+        # FIX (v4.59.1): KHÔNG đọc get_member_inviters() ở đây — cog_load chạy TRƯỚC init_data_cache()
+        # (on_ready) nên cache global còn rỗng → _member_inviters khởi tạo rỗng, rồi lần
+        # on_member_join đầu tiên gọi save_member_inviters(_member_inviters) GHI ĐÈ toàn bộ mapping
+        # đã lưu bằng dict gần như rỗng (mất inviter của mọi member cũ → "left" không trừ được).
+        # Giờ nạp lười, 1 lần, bằng _ensure_inviters_loaded() sau khi cache global sẵn sàng.
+        pass
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
@@ -587,6 +604,7 @@ class InviteCog(commands.Cog):
 
         # Ghi nhận invite NGAY lúc join — không còn chờ verify (verify đã bỏ hoàn toàn)
         if inviter_id and inviter_id != member.id:
+            _ensure_inviters_loaded()
             _member_inviters[member.id] = {"inviter_id": inviter_id, "guild_id": member.guild.id}
             save_member_inviters(_member_inviters)
             _add_invite(inviter_id, "total", 1)
@@ -616,6 +634,7 @@ class InviteCog(commands.Cog):
 
         await cache_invites(member.guild)
 
+        _ensure_inviters_loaded()
         inv_info = _member_inviters.pop(member.id, None)
         if inv_info:
             _add_invite(inv_info["inviter_id"], "left", 1)

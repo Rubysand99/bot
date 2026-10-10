@@ -1,3 +1,63 @@
+## [v4.59.1] — 2026-10-10
+
+### 🔒 Audit code — sửa lỗi mất dữ liệu / thanh toán / phân quyền (có test tự động trong `tests/`)
+
+**🔴 `shared/data.py` — dữ liệu mặc định ghi đè dữ liệu thật trong MongoDB.**
+Chỉ cần 1 lần đọc Mongo lỗi thoáng qua lúc khởi động là `_mongo_load()` trả về dữ liệu mặc định,
+bị cache lại, rồi lệnh `save_data()` kế tiếp `$set` đè sạch `ticket`, `sellers`, `user_total_spent`...
+(đã tái hiện trên bản cũ: ticket 57 → 0, mất toàn bộ sellers/tổng chi tiêu).
+- `_mongo_load()` / `_mongo_load_global()` giờ **ném lỗi** thay vì trả default; `init_data_cache()` retry
+  (4 lần, backoff 2s/4s/8s). Guild nạp lỗi bị **khoá ghi** (`is_guild_loaded()`); document global nạp lỗi →
+  bot chưa sẵn sàng, `bot.py` tự thử lại mỗi 30s (`_retry_init_data_cache`).
+- `save_data()` / `save_global_data()` / `save_data_and_wait()` / `add|remove_extra_admin()` /
+  `add|remove_authorized_guild()` **từ chối ghi** khi dữ liệu thật chưa nạp (kể cả webhook SePay đến sớm hơn `on_ready`).
+- `_mongo_save*()` retry 3 lần, log CRITICAL nếu vẫn lỗi; task flush nền được giữ reference + log lỗi.
+- `$set` không xoá được key → thêm `$unset` cho key top-level đã bị `del data[key]` (trước đây `completed_<channel>`
+  "xoá" xong vẫn nằm trong Mongo và sống lại sau restart).
+- Migration cfg cũ của TuyTam giờ chạy **đúng 1 lần** (cờ `_legacy_cfg_migrated`) — trước đây chạy lại mỗi lần restart,
+  cấu hình admin cố ý để trống bị điền lại.
+- `core/data.py:get_ticket_number()` đọc bộ đếm từ cache của đúng `guild_id` (không qua contextvar) và từ chối khi
+  guild chưa nạp.
+- `cogs/admin.py` (`.as`): báo lỗi rõ ràng khi dữ liệu chưa sẵn sàng thay vì ghi bừa.
+
+**🟠 SePay (`verify_server.py`, `cogs/shop_orders.py`, `core/data.py`)**
+- Webhook trả **503** khi chưa có callback / cache chưa nạp xong (SePay tự retry) thay vì trả 200 rồi bỏ mất giao dịch.
+- Viết lại `_handle_sepay_webhook`: chỉ đánh dấu webhook "đã xử lý" sau khi claim đơn thành công; buyer đã rời server
+  vẫn xác nhận được (fallback `fetch_user`); **mọi tình huống bất thường** (kênh ticket bị xoá, lệch số tiền/TK, mã DH không
+  có đơn chờ, lỗi gửi queue, exception) giờ **DM cho ADMIN_IDS** thay vì chỉ `log.warning`.
+- So sánh API key bằng `hmac.compare_digest`, từ chối payload không phải object / body > 64KB, giữ reference + log lỗi task nền.
+- Đơn chờ thanh toán quá 7 ngày tự dọn (`_purge_expired_pending_orders`).
+
+**🟠 `cogs/mod.py` — phân quyền & hierarchy**
+- `.ban` / `.tempban` / `.unban` (prefix + slash) yêu cầu quyền **Ban Members** (trước đây chỉ cần Kick Members).
+- Ban/tempban/kick/timeout kiểm tra role của **người ra lệnh** so với mục tiêu (`_hierarchy_error`) — không còn
+  ban/kick được người role cao hơn mình, chủ server hay admin bot. Slash tempban/kick/timeout trước đây không check gì.
+
+**🟠 Tempban sống sót qua restart (lỗi có thật từ trước)**
+- `cog_load()` chạy trước `init_data_cache()` nên `get_active_tempbans()` luôn rỗng → tempban **chưa bao giờ** resume.
+  Giờ resume trong task chờ `wait_data_cache_ready()`.
+- Key tempban đổi thành `guild_id:user_id` (bản ghi cũ tự chuẩn hoá khi đọc); unban lỗi tạm thời → retry 5 lần và chỉ xoá bản
+  ghi khi unban xong; `.ban` / `.unban` huỷ timer tempban cũ; bản ghi lưu ngay sau khi ban.
+
+**🟠 AI (`cogs/ai_chat.py`, `core/ai_tools.py`)**
+- Cooldown 5s/user; tin xã giao ngắn không còn tạo thread forum; dedupe câu hỏi trùng; hàng đợi pending tự dọn (14 ngày / tối đa 200).
+- `DANGEROUS_TOOLS` thêm `role_add`, `role_remove`, `ticket_close`, `mod_warn`, `giveaway_reset`; `purge` giới hạn 1–100;
+  màn xác nhận hiện rõ **mục tiêu** (@mention đầu tiên).
+- `_handle_pending_reply` load lại dữ liệu sau các `await` trước khi ghi (tránh đè `ai_resolved_threads`).
+
+**🟡 Khác**
+- `cogs/invite.py`: `_member_inviters` nạp lười sau khi cache global sẵn sàng — trước đây nạp ở `cog_load()` (cache rỗng) rồi
+  lần join đầu tiên ghi đè toàn bộ mapping inviter đã lưu.
+- `cogs/ticket.py`: guard `.done`/`.undone` đúng như thông báo "gõ lại 1 lần nữa" + dọn dict; giữ tối đa 500 key
+  `completed_msg_*`; `sync_ticket_counter` load dữ liệu sau `await`.
+- Docs: README/AI_CONTEXT/verify_server docstring khớp code.
+
+**Chưa sửa (cần quyết định riêng):** `ticket_history` / `ratings` / `seller_sales` vẫn không giới hạn kích thước (giới hạn 16MB
+của document Mongo); URL ảnh đính kèm trong `site_feed` là link Discord có chữ ký, hết hạn sau ~24h; kiến trúc ghi cả document
+mỗi lần `save_data()` chưa an toàn nếu chạy nhiều process (`bot_*.py`) trên cùng database.
+
+**Test:** `python3 -m unittest discover -s tests -p "test_*.py"` (34 test, dùng Mongo giả lập — không cần mạng).
+
 ## [v4.59.0] — 2026-09-25
 
 ### ♻️ Dọn tên lệnh — dễ nhầm / khó tìm (rà theo yêu cầu, không đổi logic, chỉ đổi tên + gộp)

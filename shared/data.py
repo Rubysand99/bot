@@ -284,6 +284,48 @@ def get_ticket_lock(guild_id: int) -> asyncio.Lock:
 # ══════════════════════════════════════════
 _data_cache: dict[int, dict] = {}
 _global_cache: dict | None = None
+
+# FIX (audit v4.59.1): bảo vệ chống ghi đè Mongo bằng dữ liệu mặc định.
+#  - _persisted_keys[guild_id]: tập key CÓ THẬT trong document Mongo của guild (chỉ được set khi
+#    _mongo_load() THÀNH CÔNG). Guild không có trong dict này = chưa nạp được dữ liệu thật →
+#    mọi lệnh ghi bị từ chối (trước đây cache chứa default rồi $set đè lên dữ liệu thật).
+#  - cũng dùng để $unset các key top-level đã bị `del data[key]` (trước đây $set không xoá được).
+_persisted_keys: dict[int, set] = {}
+_persisted_keys_global: set = set()
+_global_loaded: bool = False
+_bg_tasks: set = set()   # giữ strong reference cho các task flush nền (tránh bị GC + log lỗi)
+_LOAD_RETRY_ATTEMPTS = 4
+_LOAD_RETRY_DELAY = 2.0  # giây, nhân đôi mỗi lần thử lại
+
+def is_guild_loaded(guild_id: int) -> bool:
+    """True nếu dữ liệu THẬT của guild đã nạp từ Mongo (an toàn để ghi)."""
+    return guild_id in _persisted_keys
+
+def is_global_loaded() -> bool:
+    return _global_loaded
+
+def _spawn_flush(coro_fn, *args) -> None:
+    loop = asyncio.get_running_loop()   # ném RuntimeError (caller bắt) TRƯỚC khi tạo coroutine
+    t = loop.create_task(coro_fn(*args))
+    _bg_tasks.add(t)
+    def _done(task):
+        _bg_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            log.error(f"[DATA] ❌ Task flush Mongo lỗi: {task.exception()!r}")
+    t.add_done_callback(_done)
+
+async def _with_retry(factory, what: str):
+    """Chạy coroutine factory() tối đa _LOAD_RETRY_ATTEMPTS lần (backoff nhân đôi)."""
+    last = None
+    for i in range(_LOAD_RETRY_ATTEMPTS):
+        try:
+            return await factory()
+        except Exception as e:
+            last = e
+            log.error(f"[DATA] ❌ {what} lỗi (lần {i + 1}/{_LOAD_RETRY_ATTEMPTS}): {e}")
+            if i < _LOAD_RETRY_ATTEMPTS - 1:
+                await asyncio.sleep(_LOAD_RETRY_DELAY * (2 ** i))
+    raise last
 # Cache giveaway KHÔNG tách theo guild (tự nhiên theo message_id) — thuộc domain
 # bot_growth, nhưng NẠP ở đây (init_data_cache) vì lúc khởi động cần load 1 lần cùng
 # guild+global. bot_growth's data_ext dùng get_giveaways_cache()/set_giveaways_cache()
@@ -325,29 +367,53 @@ async def _mongo_load(guild_id: int) -> dict:
             if changed:
                 await _mongo_save(guild_id, doc)
 
-        if guild_id == LEGACY_MAIN_GUILD_ID:
-            legacy_changed = False
+        # FIX: trước đây migration chạy lại MỖI lần nạp (không có cờ) → admin cố ý để trống
+        # 1 cfg qua .st sẽ bị điền lại giá trị cũ sau mỗi lần restart. Giờ chỉ chạy ĐÚNG 1 lần.
+        if guild_id == LEGACY_MAIN_GUILD_ID and not doc.get("_legacy_cfg_migrated"):
             for k, v in _TUYTAM_LEGACY_CFG_MIGRATION.items():
                 if not doc.get(k):
                     doc[k] = v
-                    legacy_changed = True
-            if legacy_changed:
-                await _mongo_save(guild_id, doc)
-                log.info("[DATA] 🔀 Đã backfill cấu hình role/kênh cũ cho TuyTam Community (1 lần)")
+            doc["_legacy_cfg_migrated"] = True
+            await _mongo_save(guild_id, doc)
+            log.info("[DATA] 🔀 Đã backfill cấu hình role/kênh cũ cho TuyTam Community (1 lần)")
 
+        _persisted_keys[guild_id] = set(doc.keys()) - {"_id"}
         return doc
     except Exception as e:
+        # FIX: KHÔNG trả _default_data() nữa — default bị cache rồi $set đè lên document thật
+        # trong Mongo ở lần save kế tiếp. Ném lỗi để caller retry / bỏ qua guild này.
         log.error(f"[DATA] ❌ Lỗi đọc MongoDB (guild {guild_id}): {e}")
-        return _default_data(guild_id)
+        raise
 
-async def _mongo_save(guild_id: int, data: dict):
+def _build_update(save: dict, removed: set) -> dict:
+    ops = {}
+    if save:
+        ops["$set"] = save
+    if removed:
+        ops["$unset"] = {k: "" for k in removed}
+    return ops
+
+async def _mongo_save(guild_id: int, data: dict) -> bool:
     col, _ = _get_mongo()
     doc_id = f"guild_{guild_id}"
-    try:
-        save = {k: v for k, v in data.items() if k != "_id"}
-        await col.update_one({"_id": doc_id}, {"$set": save}, upsert=True)
-    except Exception as e:
-        log.error(f"[DATA] ❌ Lỗi ghi MongoDB (guild {guild_id}): {e}")
+    save = {k: v for k, v in data.items() if k != "_id"}
+    # FIX: $set không bao giờ xoá key → `del data[key]` ở code gọi không có tác dụng với
+    # Mongo (key quay lại sau restart). So với tập key đã persist để $unset phần bị xoá.
+    removed = _persisted_keys.get(guild_id, set()) - set(save)
+    ops = _build_update(save, removed)
+    if not ops:
+        return True
+    for attempt in range(3):
+        try:
+            await col.update_one({"_id": doc_id}, ops, upsert=True)
+            _persisted_keys[guild_id] = set(save) | (_persisted_keys.get(guild_id, set()) - removed)
+            return True
+        except Exception as e:
+            log.error(f"[DATA] ❌ Lỗi ghi MongoDB (guild {guild_id}, lần {attempt + 1}/3): {e}")
+            if attempt < 2:
+                await asyncio.sleep(1.0 * (attempt + 1))
+    log.critical(f"[DATA] 🚨 KHÔNG ghi được guild {guild_id} sau 3 lần — thay đổi chỉ còn trong RAM!")
+    return False
 
 async def _mongo_load_global() -> dict:
     col, _ = _get_mongo()
@@ -364,20 +430,38 @@ async def _mongo_load_global() -> dict:
                     changed = True
             if changed:
                 await _mongo_save_global(doc)
+        _persisted_keys_global.clear()
+        _persisted_keys_global.update(set(doc.keys()) - {"_id"})
         return doc
     except Exception as e:
+        # FIX: không trả default (sẽ đè _tempbans/_shop_pending_orders/... thật khi save).
         log.error(f"[DATA] ❌ Lỗi đọc MongoDB (global): {e}")
-        return _default_data_global()
+        raise
 
-async def _mongo_save_global(data: dict):
+async def _mongo_save_global(data: dict) -> bool:
     col, _ = _get_mongo()
-    try:
-        save = {k: v for k, v in data.items() if k != "_id"}
-        await col.update_one({"_id": "main"}, {"$set": save}, upsert=True)
-    except Exception as e:
-        log.error(f"[DATA] ❌ Lỗi ghi MongoDB (global): {e}")
+    save = {k: v for k, v in data.items() if k != "_id"}
+    removed = _persisted_keys_global - set(save)
+    ops = _build_update(save, removed)
+    if not ops:
+        return True
+    for attempt in range(3):
+        try:
+            await col.update_one({"_id": "main"}, ops, upsert=True)
+            _persisted_keys_global.difference_update(removed)
+            _persisted_keys_global.update(save)
+            return True
+        except Exception as e:
+            log.error(f"[DATA] ❌ Lỗi ghi MongoDB (global, lần {attempt + 1}/3): {e}")
+            if attempt < 2:
+                await asyncio.sleep(1.0 * (attempt + 1))
+    log.critical("[DATA] 🚨 KHÔNG ghi được document global sau 3 lần — thay đổi chỉ còn trong RAM!")
+    return False
 
 async def _flush_to_mongo(guild_id: int):
+    if not is_guild_loaded(guild_id):
+        log.error(f"[DATA] ⛔ Bỏ qua ghi guild {guild_id}: dữ liệu thật CHƯA nạp từ Mongo (tránh đè bằng default).")
+        return
     lock = _get_save_lock(guild_id)
     async with lock:
         data = _data_cache.get(guild_id)
@@ -385,6 +469,9 @@ async def _flush_to_mongo(guild_id: int):
             await _mongo_save(guild_id, data)
 
 async def _flush_global_to_mongo():
+    if not _global_loaded:
+        log.error("[DATA] ⛔ Bỏ qua ghi global: dữ liệu thật CHƯA nạp từ Mongo (tránh đè bằng default).")
+        return
     lock = _get_global_save_lock()
     async with lock:
         if _global_cache is not None:
@@ -411,10 +498,12 @@ def save_data(data: dict):
     if guild_id is None:
         log.error("[DATA] ❌ save_data() được gọi mà KHÔNG có guild context — dữ liệu KHÔNG được lưu để tránh ghi nhầm guild.")
         return
+    if not is_guild_loaded(guild_id):
+        log.error(f"[DATA] ⛔ save_data() bị từ chối: guild {guild_id} chưa nạp dữ liệu thật từ Mongo.")
+        return
     _data_cache[guild_id] = data
     try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_flush_to_mongo(guild_id))
+        _spawn_flush(_flush_to_mongo, guild_id)
     except RuntimeError:
         pass
     except Exception as e:
@@ -427,10 +516,12 @@ def load_global_data() -> dict:
 
 def save_global_data(data: dict):
     global _global_cache
+    if not _global_loaded:
+        log.error("[DATA] ⛔ save_global_data() bị từ chối: document global chưa nạp từ Mongo.")
+        return
     _global_cache = data
     try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_flush_global_to_mongo())
+        _spawn_flush(_flush_global_to_mongo)
     except RuntimeError:
         pass
     except Exception as e:
@@ -457,6 +548,9 @@ async def save_data_and_wait(data: dict) -> None:
     guild_id = get_current_guild_id()
     if guild_id is None:
         log.error("[DATA] ❌ save_data_and_wait() được gọi mà KHÔNG có guild context.")
+        return
+    if not is_guild_loaded(guild_id):
+        log.error(f"[DATA] ⛔ save_data_and_wait() bị từ chối: guild {guild_id} chưa nạp dữ liệu thật.")
         return
     _data_cache[guild_id] = data
     await _flush_to_mongo(guild_id)
@@ -492,6 +586,8 @@ def is_guild_authorized(guild_id: int) -> bool:
 
 def add_authorized_guild(guild_id: int) -> bool:
     global _global_cache
+    if not _global_loaded:
+        raise RuntimeError("Document global chưa nạp — không thể đổi danh sách ủy quyền.")
     g = load_global_data()
     lst = g.setdefault("_authorized_guilds", [])
     if guild_id in lst:
@@ -502,6 +598,8 @@ def add_authorized_guild(guild_id: int) -> bool:
 
 def remove_authorized_guild(guild_id: int) -> bool:
     global _global_cache
+    if not _global_loaded:
+        raise RuntimeError("Document global chưa nạp — không thể đổi danh sách ủy quyền.")
     g = load_global_data()
     lst = g.get("_authorized_guilds", [])
     if guild_id not in lst:
@@ -518,7 +616,8 @@ async def set_guild_authorized(guild_id: int, authorized: bool) -> bool:
     is_guild_authorized() — không cần gọi hàm này."""
     changed = add_authorized_guild(guild_id) if authorized else remove_authorized_guild(guild_id)
     if changed:
-        await _mongo_save_global(_global_cache)
+        if not await _mongo_save_global(_global_cache):
+            raise RuntimeError("Không ghi được MongoDB — thay đổi ủy quyền CHƯA được lưu.")
     return changed
 
 
@@ -535,6 +634,9 @@ async def add_extra_admin(user_id: int) -> bool:
     if guild_id is None:
         log.error("[DATA] ❌ add_extra_admin() được gọi mà KHÔNG có guild context.")
         return False
+    if not is_guild_loaded(guild_id):
+        log.error(f"[DATA] ⛔ add_extra_admin() bị từ chối: guild {guild_id} chưa nạp dữ liệu thật.")
+        return False
     data = load_data()
     lst = data.setdefault("extra_admin_ids", [])
     if user_id in lst:
@@ -548,6 +650,9 @@ async def remove_extra_admin(user_id: int) -> bool:
     guild_id = get_current_guild_id()
     if guild_id is None:
         log.error("[DATA] ❌ remove_extra_admin() được gọi mà KHÔNG có guild context.")
+        return False
+    if not is_guild_loaded(guild_id):
+        log.error(f"[DATA] ⛔ remove_extra_admin() bị từ chối: guild {guild_id} chưa nạp dữ liệu thật.")
         return False
     data = load_data()
     lst = data.get("extra_admin_ids", [])
@@ -573,36 +678,59 @@ def is_admin(member) -> bool:
 # ══════════════════════════════════════════
 # INIT / LIFECYCLE
 # ══════════════════════════════════════════
-async def ensure_guild_loaded(guild_id: int) -> None:
-    """Gọi khi bot join guild mới giữa chừng (on_guild_join)."""
-    if guild_id not in _data_cache:
-        _data_cache[guild_id] = await _mongo_load(guild_id)
-        log.info(f"[DATA] ✅ Đã load cache cho guild mới {guild_id}")
+async def ensure_guild_loaded(guild_id: int) -> bool:
+    """Gọi khi bot join guild mới giữa chừng (on_guild_join). Trả về True nếu dữ liệu thật
+    của guild đã sẵn sàng; False nếu đọc Mongo lỗi (guild đó sẽ bị từ chối ghi cho tới khi
+    nạp lại được — on_ready refire sẽ thử lại)."""
+    if is_guild_loaded(guild_id) and guild_id in _data_cache:
+        return True
+    try:
+        _data_cache[guild_id] = await _with_retry(lambda: _mongo_load(guild_id), f"Nạp guild {guild_id}")
+    except Exception as e:
+        _data_cache.pop(guild_id, None)
+        _persisted_keys.pop(guild_id, None)
+        log.critical(f"[DATA] 🚨 Không nạp được guild {guild_id}: {e}")
+        return False
+    log.info(f"[DATA] ✅ Đã load cache cho guild mới {guild_id}")
+    return True
 
 async def init_data_cache(bot) -> None:
     """Gọi ở on_ready CỦA TỪNG BOT — mỗi bot con tự gọi hàm này với đúng client `bot` của
     mình, vì mỗi bot là process riêng, cache RAM (_data_cache/_global_cache/module-level ở
     trên) không dùng chung được. Tự guard chống on_ready() refire xoá cache — xem docstring
     gốc trong CHANGELOG v4.25.4."""
-    global _data_cache, _global_cache
+    global _data_cache, _global_cache, _global_loaded
 
     first_boot = not _data_cache_ready.is_set()
 
     if not first_boot:
-        new_guilds = [g for g in bot.guilds if g.id not in _data_cache]
+        new_guilds = [g for g in bot.guilds if g.id not in _data_cache or not is_guild_loaded(g.id)]
         for guild in new_guilds:
-            _data_cache[guild.id] = await _mongo_load(guild.id)
+            await ensure_guild_loaded(guild.id)
         if new_guilds:
             log.info(f"[DATA] 🔁 on_ready refire — nạp thêm {len(new_guilds)} guild mới, giữ nguyên cache cũ.")
         else:
             log.info("[DATA] 🔁 on_ready refire (reconnect) — giữ nguyên cache hiện có, không reload.")
         return
 
+    # FIX: nạp document global TRƯỚC và BẮT BUỘC thành công (retry) — nếu không, bot ở trạng
+    # thái "chưa sẵn sàng" (mặc định từ chối mọi guild) thay vì chạy với dữ liệu mặc định rồi
+    # ghi đè lên dữ liệu thật. Guild nào nạp lỗi sau khi retry sẽ bị bỏ qua (không cache,
+    # không cho ghi) và được thử lại ở on_ready refire kế tiếp.
     _data_cache = {}
+    _persisted_keys.clear()
+    failed = []
     for guild in bot.guilds:
-        _data_cache[guild.id] = await _mongo_load(guild.id)
+        if not await ensure_guild_loaded(guild.id):
+            failed.append(guild.id)
+    if failed:
+        log.critical(f"[DATA] 🚨 {len(failed)} guild nạp lỗi, bị khoá ghi: {failed}")
 
-    _global_cache = await _mongo_load_global()
+    # Global nạp SAU guild (như bản gốc): _global_cache còn None = mọi guild bị AUTH_GATE
+    # từ chối, nên không lệnh nào chạy khi cache guild chưa đủ. Phải THÀNH CÔNG (retry) mới
+    # tiếp tục — nếu raise, bot giữ trạng thái "chưa sẵn sàng" và bot.py sẽ thử lại.
+    _global_cache = await _with_retry(_mongo_load_global, "Nạp document global")
+    _global_loaded = True
 
     # Giveaway cache — CHỈ bot_growth thật sự cần, nhưng nạp ở đây cho đơn giản (Phase 1).
     # Nếu 1 bot con không dùng giveaway, _giveaways_cache tồn tại vô hại (không ai đọc).
@@ -617,7 +745,7 @@ async def init_data_cache(bot) -> None:
         log.warning(f"[DATA] ⚠️ Không load được giveaways: {e}")
         set_giveaways_cache({})
 
-    guild_list = ", ".join(f"{g.id}(#{_data_cache[g.id].get('ticket', 0):03d})" for g in bot.guilds)
+    guild_list = ", ".join(f"{g.id}(#{_data_cache[g.id].get('ticket', 0):03d})" for g in bot.guilds if g.id in _data_cache)
     print(f"[DATA] ✅ Đã kết nối MongoDB — {len(_data_cache)} guild(s): {guild_list}")
 
     _data_cache_ready.set()

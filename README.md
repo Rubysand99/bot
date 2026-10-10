@@ -104,4 +104,4 @@ bot-main/
 Kiến trúc multi-guild: mỗi guild có 1 document Mongo riêng (`guild_<id>`), truy cập qua `load_data()`/`save_data()` — các hàm này đọc guild hiện tại từ `contextvars.ContextVar`, xem chi tiết quy ước trong `AI_CONTEXT.md`.
 
 ## 📊 Version
-**v4.11.5** — Xem [CHANGELOG.md](CHANGELOG.md) để biết lịch sử thay đổi.
+**v4.59.1** (xem `BOT_VERSION` trong `bot.py`) — Xem [CHANGELOG.md](CHANGELOG.md) để biết lịch sử thay đổi.

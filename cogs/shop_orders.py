@@ -41,7 +41,7 @@ from discord.ui import TextInput
 
 from core.data import (
     ADMIN_IDS, fmt_amount, is_staff_member, get_or_fetch_channel, _uname_plain,
-    set_current_guild,
+    set_current_guild, is_data_cache_ready,
     get_cfg_shop_orders_enabled,
     get_shop_orders_bank, save_shop_orders_bank, get_all_shop_orders_banks, delete_shop_orders_bank,
     has_ticket_access,
@@ -88,6 +88,9 @@ PAYMENT_CODE_PREFIX = "DH"  # 2-5 ký tự CHỮ, khớp "Tiền tố" cấu hì
                              # multi-guild, guild khác dùng chung 1 SePay account (nếu có)
                              # vẫn ra mã hợp lệ. Đổi ở đây thì phải đổi Y HỆT bên SePay.
 PAYMENT_CODE_SUFFIX_LEN = 6  # khớp "Hậu tố" = 6 ký tự, loại Số nguyên, cấu hình bên SePay.
+# Dò mã CK dạng DH123456 trong nội dung giao dịch — dùng để phát hiện "tiền đã vào nhưng
+# không có đơn chờ khớp" (đơn hết hạn/đã bị xoá) và báo admin thay vì bỏ qua im lặng.
+_PAYMENT_CODE_RE = re.compile(re.escape(PAYMENT_CODE_PREFIX) + r"\d{" + str(PAYMENT_CODE_SUFFIX_LEN) + r"}", re.IGNORECASE)
 
 
 def gen_transfer_code() -> str:
@@ -394,47 +397,88 @@ class ShopOrdersCog(commands.Cog):
         # Đăng ký callback nhận webhook thanh toán SePay — xem verify_server.py
         # (route /webhook/sepay) + _handle_sepay_webhook() bên dưới.
         from verify_server import register_payment_callback
-        register_payment_callback(self._handle_sepay_webhook)
+        register_payment_callback(self._handle_sepay_webhook, ready=is_data_cache_ready)
+
+    # ── SePay: helper báo admin / resolve user ────────────────────────────
+    async def _alert_admins(self, text: str) -> None:
+        """DM cho ADMIN_IDS khi thanh toán rơi vào tình huống BẤT THƯỜNG cần người xử lý tay.
+        FIX (v4.59.1): trước đây các nhánh này chỉ log.warning trên Railway → tiền đã vào
+        nhưng không ai trong Discord biết."""
+        log.warning(f"[SEPAY][ALERT] {text}")
+        for admin_id in ADMIN_IDS:
+            try:
+                user = await self.bot.fetch_user(admin_id)
+                await user.send(text[:1900])
+            except Exception as e:
+                log.warning(f"[SEPAY] Không DM được admin {admin_id}: {e}")
+
+    async def _resolve_user(self, guild, user_id):
+        """Member (cache/fetch) → nếu đã rời server thì fetch_user. None nếu không tìm được."""
+        if not user_id:
+            return None
+        member = await _resolve_member(guild, user_id)
+        if member:
+            return member
+        try:
+            return await self.bot.fetch_user(user_id)
+        except (discord.NotFound, discord.HTTPException):
+            return None
+
+    @staticmethod
+    def _payload_brief(payload: dict) -> str:
+        content = str(payload.get("content") or payload.get("description") or "")[:150].replace("`", "'")
+        return (f"id=`{payload.get('id')}` · số tiền=`{payload.get('transferAmount')}` · "
+                f"TK nhận=`{payload.get('accountNumber')}` · nội dung=`{content}`")
 
     async def _handle_sepay_webhook(self, payload: dict) -> None:
         """Callback đăng ký với verify_server.py — nhận payload THÔ từ SePay (đã lọc sẵn
-        transferType == "in" ở route), tự lo dedup + khớp đơn đang chờ + thông báo. Chạy
-        trong event loop CHUNG với bot (cùng process, xem docstring verify_server.py)
-        nhưng KHÔNG có guild context sẵn — set_current_guild() SAU KHI tra được
-        order["guild_id"] từ pending order, cùng pattern với _pending_sold_price
-        (core/data.py) vốn cũng phải xử lý ngoài context guild bình thường."""
+        transferType == "in" ở route). Mọi lỗi đều được báo admin qua DM (không còn nuốt im lặng)."""
+        try:
+            await self._process_sepay_payload(payload)
+        except Exception as e:
+            log.exception("[SEPAY] Lỗi không mong muốn khi xử lý webhook")
+            await self._alert_admins(
+                "🚨 **SePay — lỗi xử lý 1 giao dịch, cần kiểm tra tay.**\n"
+                f"{self._payload_brief(payload)}\nLỗi: `{type(e).__name__}: {str(e)[:200]}`"
+            )
+
+    async def _process_sepay_payload(self, payload: dict) -> None:
         webhook_id = payload.get("id")
         if webhook_id is not None and is_webhook_id_processed(webhook_id):
             return  # SePay tự retry cùng 1 giao dịch — đã xử lý rồi thì bỏ qua
-        if webhook_id is not None:
-            mark_webhook_id_processed(webhook_id)
 
-        content = payload.get("content") or payload.get("description") or ""
-        # Ưu tiên field `code` SePay TỰ bóc tách sẵn (giờ đã cấu hình Cấu trúc mã thanh
-        # toán bên SePay khớp đúng format DH+6 số của gen_transfer_code() nên field này
-        # đáng tin cậy, tra thẳng bằng ref_code — nhanh + chính xác hơn dò chuỗi con).
-        # Fallback dò trong `content` thô cho các webhook cũ/trường hợp `code` rỗng.
+        content = str(payload.get("content") or payload.get("description") or "")
+        # Ưu tiên field `code` SePay TỰ bóc tách (đã cấu hình khớp DH+6 số của gen_transfer_code()),
+        # fallback dò chuỗi con trong `content` thô cho webhook cũ/trường hợp `code` rỗng.
         code = (payload.get("code") or "").strip().upper()
         order = get_pending_shop_order(code) if code else None
         if not order:
             order = find_pending_shop_order_by_content(content)
         if not order:
             log.info(f"[SEPAY] ℹ️ Không khớp đơn đang chờ nào — code: {code!r}, content: {content!r}")
+            # Có mã dạng DHxxxxxx nhưng không có đơn chờ (đơn hết hạn / đã xử lý / bị xoá) → tiền
+            # đã vào mà không ai biết: báo admin. Chuyển khoản không mã thì bỏ qua như cũ.
+            if _PAYMENT_CODE_RE.search(f"{code} {content}"):
+                await self._alert_admins(
+                    "⚠️ **SePay — nhận tiền với mã CK nhưng KHÔNG có đơn chờ khớp** "
+                    "(đơn hết hạn, đã xử lý hoặc bị xoá?). Cần đối chiếu tay.\n" + self._payload_brief(payload)
+                )
+                if webhook_id is not None:
+                    mark_webhook_id_processed(webhook_id)
             return
 
         account_number = str(payload.get("accountNumber") or "")
         if order.get("account_number") and account_number and str(order["account_number"]) != account_number:
-            log.warning(
-                f"[SEPAY] ⚠️ Khớp content nhưng LỆCH số TK nhận — bỏ qua để an toàn "
-                f"(order={order.get('account_number')} / webhook={account_number})."
+            await self._alert_admins(
+                f"⚠️ **SePay — đơn `{order['ref_code']}` khớp mã nhưng LỆCH số TK nhận** "
+                f"(đơn: `{order.get('account_number')}` / webhook: `{account_number}`). "
+                "Không tự xác nhận, đơn vẫn chờ.\n" + self._payload_brief(payload)
             )
+            if webhook_id is not None:
+                mark_webhook_id_processed(webhook_id)
             return
 
-        # FIX (v4.42.1): BẮT BUỘC so `transferAmount` (số tiền THẬT SePay báo đã nhận)
-        # với order["amount"] TRƯỚC khi confirm — bản cũ khớp code/content +
-        # accountNumber xong là tin thẳng order["amount"] gốc, nghĩa là chuyển ĐÚNG mã
-        # nhưng THIẾU/SAI số tiền (kể cả 1k) vẫn được đánh dấu "đã thanh toán đủ".
-        # SePay cũng khuyến nghị check transferAmount trước khi xử lý webhook.
+        # BẮT BUỘC so `transferAmount` (số tiền THẬT SePay báo đã nhận) với order["amount"].
         transfer_amount = payload.get("transferAmount")
         try:
             transfer_amount = int(transfer_amount)
@@ -442,44 +486,75 @@ class ShopOrdersCog(commands.Cog):
             transfer_amount = None
         expected_amount = int(order.get("amount", 0))
         if transfer_amount is None or transfer_amount < expected_amount:
-            log.warning(
-                f"[SEPAY] ⚠️ Số tiền LỆCH — order {order['ref_code']} cần "
-                f"{expected_amount}, webhook báo {transfer_amount} — KHÔNG auto-confirm, "
-                f"giữ đơn trong hàng đợi để admin đối chiếu/xử lý tay."
+            # FIX: trước đây chỉ log.warning; giờ báo admin và đánh dấu webhook đã xử lý (tránh
+            # báo lặp). Đơn vẫn nằm trong _shop_pending_orders để admin đối chiếu/xử lý tay.
+            await self._alert_admins(
+                f"⚠️ **SePay — số tiền LỆCH** cho đơn `{order['ref_code']}`: cần **{expected_amount:,}**, "
+                f"nhận **{transfer_amount}**. KHÔNG tự xác nhận — đơn vẫn chờ.\n" + self._payload_brief(payload)
             )
-            return  # KHÔNG pop — đơn vẫn nằm trong _shop_pending_orders
+            if webhook_id is not None:
+                mark_webhook_id_processed(webhook_id)
+            return
 
         ref_code = order["ref_code"]
-        # Claim ngay bằng pop — trả None nghĩa là đã có 1 lần gọi khác xử lý mất rồi
-        # (trùng lặp/race hiếm gặp), tránh gửi thông báo/hàng đợi 2 lần cho cùng 1 đơn.
+        # Claim bằng pop (đồng bộ, không có await giữa kiểm tra và xoá) — trả None nghĩa là đã có
+        # 1 lần gọi khác xử lý rồi. Đánh dấu webhook ĐÃ XỬ LÝ ngay sau khi claim thành công
+        # (không phải trước khi khớp đơn như bản cũ).
         order = pop_pending_shop_order(ref_code)
         if not order:
             return
+        if webhook_id is not None:
+            mark_webhook_id_processed(webhook_id)
 
+        try:
+            problems = await self._notify_paid_order(order, ref_code, transfer_amount, expected_amount)
+        except Exception as e:
+            log.exception(f"[SEPAY] Lỗi khi thông báo đơn {ref_code}")
+            problems = [f"lỗi không mong muốn: {type(e).__name__}: {str(e)[:150]}"]
+
+        if problems:
+            # Đơn ĐÃ được thanh toán + đã bị lấy ra khỏi hàng chờ → admin phải biết để xử lý tay.
+            await self._alert_admins(
+                f"🚨 **SePay — đơn `{ref_code}` ĐÃ THANH TOÁN ({transfer_amount:,}đ) nhưng thông báo không đầy đủ:**\n"
+                + "\n".join(f"• {x}" for x in problems)
+                + f"\nServer `{order.get('guild_id')}` · kênh ticket `{order.get('channel_id')}` · "
+                  f"buyer `{order.get('buyer_id')}` · seller `{order.get('seller_id')}`\n"
+                + self._payload_brief(payload)
+            )
+
+    async def _notify_paid_order(self, order: dict, ref_code: str, transfer_amount: int,
+                                 expected_amount: int) -> list[str]:
+        """Gửi xác nhận vào ticket + hàng đợi. Trả về danh sách vấn đề (rỗng = xong trọn vẹn)."""
+        problems: list[str] = []
         set_current_guild(order["guild_id"])
         guild = self.bot.get_guild(order["guild_id"])
         if not guild:
-            log.warning(f"[SEPAY] ⚠️ Bot không còn ở guild {order['guild_id']} — không thông báo được order {ref_code}.")
-            return
+            return ["bot không còn ở server của đơn này"]
+
         channel = await get_or_fetch_channel(self.bot, order["channel_id"])
-        seller  = guild.get_member(order["seller_id"])
-        buyer   = guild.get_member(order["buyer_id"])
+        seller = await self._resolve_user(guild, order.get("seller_id"))
+        buyer = await self._resolve_user(guild, order.get("buyer_id"))
+        if not channel:
+            problems.append("kênh ticket đã bị xoá / bot không truy cập được")
+        if not seller:
+            problems.append("không tìm thấy seller")
+        if not buyer:
+            problems.append("không tìm thấy buyer")
         if not (channel and seller and buyer):
-            log.warning(f"[SEPAY] ⚠️ Thiếu channel/seller/buyer để thông báo order {ref_code}.")
-            return
+            return problems
 
         if transfer_amount > expected_amount:
-            log.info(
-                f"[SEPAY] ℹ️ Order {ref_code} nhận THỪA ({transfer_amount} > "
-                f"{expected_amount}) — vẫn confirm bình thường, admin tự đối chiếu chênh lệch."
-            )
-
+            log.info(f"[SEPAY] ℹ️ Order {ref_code} nhận THỪA ({transfer_amount} > {expected_amount}) — "
+                     f"vẫn confirm bình thường, admin tự đối chiếu chênh lệch.")
         try:
             await channel.send(embed=build_payment_confirmed_embed(seller, buyer, order["amount"], ref_code))
         except Exception as e:
-            log.warning(f"[SEPAY] ⚠️ Không gửi được thông báo vào ticket {order['channel_id']}: {e}")
-
-        await send_to_queue(self.bot, seller, buyer, channel, order["amount"], ref_code)
+            problems.append(f"không gửi được xác nhận vào ticket: {e}")
+        try:
+            await send_to_queue(self.bot, seller, buyer, channel, order["amount"], ref_code)
+        except Exception as e:
+            problems.append(f"không gửi được vào hàng đợi: {e}")
+        return problems
 
     @commands.command(name="setqueue")
     async def setqueue_cmd(self, ctx: commands.Context, channel: discord.TextChannel = None):

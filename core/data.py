@@ -20,7 +20,7 @@ import discord
 from shared.data import (
     LEGACY_MAIN_GUILD_ID,
     set_current_guild, reset_current_guild, get_current_guild_id,
-    is_data_cache_ready, wait_data_cache_ready,
+    is_data_cache_ready, wait_data_cache_ready, is_guild_loaded, is_global_loaded,
     GuildContextView, GuildContextModal,
     ADMIN_IDS, ADMIN_RUBY_ID, ADMIN_TUYTAM_ID,
     MONGO_URI, get_db,
@@ -502,9 +502,14 @@ async def get_ticket_number(guild_id: int) -> str:
     Lock cũng tách riêng theo guild (get_ticket_lock(guild_id), shared/data.py) — 2 server tạo ticket
     cùng lúc không còn phải xếp hàng chờ nhau dù chẳng liên quan gì đến nhau."""
     async with get_ticket_lock(guild_id):
-        data = load_data()
-        data["ticket"] = data.get("ticket", 0) + 1
-        num = data["ticket"]
+        # FIX (v4.59.1): guild chưa nạp được dữ liệu thật → load_data() trả default (ticket=0) →
+        # sẽ ghi ticket=1 đè bộ đếm thật trong Mongo (trùng số ticket cũ). Từ chối thay vì ghi.
+        if not is_guild_loaded(guild_id):
+            raise RuntimeError(f"Guild {guild_id} chưa nạp dữ liệu từ MongoDB — không cấp số ticket để tránh ghi đè bộ đếm.")
+        # FIX: đọc bộ đếm THẲNG từ cache của guild_id được truyền vào (không qua load_data() vốn phụ
+        # thuộc contextvar) — nếu contextvar thiếu/lệch guild, load_data() trả default (ticket=0) và
+        # đoạn dưới sẽ ghi ticket=1 đè bộ đếm thật của guild_id.
+        num = (peek_guild_cache(guild_id) or {}).get("ticket", 0) + 1
         # FIX: update cache TRƯỚC khi await Mongo (không phải sau). `await col.update_one`
         # bên dưới là 1 điểm yield — trong lúc chờ, 1 coroutine KHÁC (vd sửa danh sách
         # seller) có thể load_data() (đọc số ticket CŨ, vì cache chưa kịp cập nhật) rồi
@@ -904,26 +909,52 @@ def get_all_ticket_multi_roles() -> dict:
 # TEMPBAN PERSISTENCE — CHUNG cho mọi guild (cố ý, xem _default_data_global)
 # Lưu {user_id: {guild_id, unban_at (unix timestamp), reason}} vào MongoDB
 # ══════════════════════════════════════════
+def _tempban_key(user_id: int, guild_id: int) -> str:
+    return f"{guild_id}:{user_id}"
+
 def get_active_tempbans() -> dict:
-    """Trả về dict {str(user_id): {guild_id, unban_at, reason}}."""
-    return dict(load_global_data().get("_tempbans", {}))
+    """Trả về {key: {user_id, guild_id, unban_at, reason}}.
+    FIX (v4.59.1): key mới = "guild_id:user_id" (trước đây chỉ user_id → tempban cùng 1 người
+    ở 2 server ghi đè nhau, mất bản ghi). Bản ghi CŨ (key = user_id) được chuẩn hoá khi đọc."""
+    out = {}
+    for key, info in dict(load_global_data().get("_tempbans", {})).items():
+        info = dict(info)
+        if "user_id" not in info:
+            try:
+                info["user_id"] = int(str(key).split(":")[-1])
+            except ValueError:
+                continue
+        out[key] = info
+    return out
 
 def add_tempban(user_id: int, guild_id: int, unban_at: float, reason: str = "") -> None:
     """Lưu tempban vào MongoDB (document global, không tách theo guild)."""
     data = load_global_data()
-    data.setdefault("_tempbans", {})
-    data["_tempbans"][str(user_id)] = {
+    bans = data.setdefault("_tempbans", {})
+    legacy = bans.get(str(user_id))
+    if legacy is not None and legacy.get("guild_id") == guild_id:
+        bans.pop(str(user_id), None)          # migrate bản ghi key cũ của đúng guild này
+    bans[_tempban_key(user_id, guild_id)] = {
+        "user_id": user_id,
         "guild_id": guild_id,
         "unban_at": unban_at,
         "reason": reason,
     }
     save_global_data(data)
 
-def remove_tempban(user_id: int) -> None:
-    """Xoá tempban khỏi MongoDB (sau khi unban xong)."""
+def remove_tempban(user_id: int, guild_id: int | None = None) -> None:
+    """Xoá tempban khỏi MongoDB. Có guild_id: chỉ xoá bản ghi của guild đó (đúng cách).
+    Không truyền guild_id: xoá MỌI bản ghi của user (hành vi cũ, chỉ để tương thích)."""
     data = load_global_data()
-    data.setdefault("_tempbans", {})
-    data["_tempbans"].pop(str(user_id), None)
+    bans = data.setdefault("_tempbans", {})
+    if guild_id is None:
+        for key in [k for k in bans if str(k).split(":")[-1] == str(user_id)]:
+            bans.pop(key, None)
+    else:
+        bans.pop(_tempban_key(user_id, guild_id), None)
+        legacy = bans.get(str(user_id))
+        if legacy is not None and legacy.get("guild_id") == guild_id:
+            bans.pop(str(user_id), None)
     save_global_data(data)
 
 # ══════════════════════════════════════════
@@ -1035,9 +1066,29 @@ def has_ticket_access(member: discord.Member) -> bool:
 # guild của đơn đó để làm tiếp (đọc cfg, gửi tin...) — cùng lý do/pattern với
 # _pending_sold_price phía trên.
 # ══════════════════════════════════════════
+SHOP_PENDING_ORDER_TTL_DAYS = 7
+
+def _purge_expired_pending_orders(orders: dict) -> int:
+    """Xoá đơn chờ thanh toán quá SHOP_PENDING_ORDER_TTL_DAYS ngày (QR không ai trả sẽ nằm
+    mãi trong document global — phình vô hạn + mã cũ vẫn khớp được). Trả về số đơn đã xoá."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=SHOP_PENDING_ORDER_TTL_DAYS)
+    removed = 0
+    for code, doc in list(orders.items()):
+        try:
+            created = datetime.fromisoformat(doc.get("created_at", ""))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if created < cutoff:
+                orders.pop(code, None)
+                removed += 1
+        except (TypeError, ValueError):
+            continue   # không có created_at hợp lệ → giữ nguyên, không đoán
+    return removed
+
 def save_pending_shop_order(ref_code: str, **fields) -> None:
     data = load_global_data()
     orders = data.setdefault("_shop_pending_orders", {})
+    _purge_expired_pending_orders(orders)
     orders[ref_code] = {**fields, "ref_code": ref_code}
     data["_shop_pending_orders"] = orders
     save_global_data(data)

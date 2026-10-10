@@ -212,9 +212,13 @@ ADMIN_TOOL_SCHEMAS = [
 
 # Tool ghi/xoá dữ liệu quan trọng hoặc ảnh hưởng thành viên -> BẮT BUỘC admin bấm
 # xác nhận qua AIConfirmView trước khi handler thật sự chạy.
+# FIX (v4.59.1): thêm các tool không hoàn tác được / cấp quyền — role_add/role_remove (LLM tự chọn
+# tên role, có thể cấp nhầm role quyền cao), ticket_close (xoá kênh), mod_warn (kích hoạt hành
+# động tự động theo mốc warn), giveaway_reset.
 DANGEROUS_TOOLS = {
     "channel_delete", "role_delete", "purge",
     "mod_ban", "mod_kick", "mod_mute",
+    "role_add", "role_remove", "ticket_close", "mod_warn", "giveaway_reset",
 }
 
 
@@ -383,6 +387,8 @@ async def _h_purge(ctx, params: dict) -> str:
         amount = int(params.get("amount", 10))
     except (TypeError, ValueError):
         amount = 10
+    # FIX: chặn amount âm/quá lớn do LLM sinh ra (tối đa 100 tin mỗi lần).
+    amount = max(1, min(amount, 100))
     try:
         deleted = await ctx.channel.purge(limit=amount)
         return f"✅ Đã xoá {len(deleted)} tin nhắn."

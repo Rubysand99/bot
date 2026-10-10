@@ -87,7 +87,7 @@ v4.46.0 — Routing theo độ phức tạp (Ruby: "hi" mà dùng model #1 thì 
 import os
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import discord
 from discord.ext import commands
@@ -236,6 +236,29 @@ GROQ_SYSTEM = AGENTS["support"]["system"]
 AI_HISTORY_LIMIT = 10
 _ai_chat_history: dict = {}   # user_id → {"messages": [...], "last_used": float timestamp}
 AI_HISTORY_TTL = 7200  # 2 giờ — dọn history không hoạt động
+
+# FIX (v4.59.1): chống spam kênh AI — mỗi tin nhắn gọi LLM (tốn quota) và có thể tạo 1 thread
+# forum + 1 entry trong document global. Cooldown theo user + giới hạn hàng đợi pending.
+AI_USER_COOLDOWN = 5.0          # giây giữa 2 tin của cùng 1 user được xử lý
+_ai_user_last: dict = {}        # user_id → timestamp tin gần nhất được xử lý
+AI_PENDING_TTL_DAYS = 14        # câu hỏi chờ admin quá hạn này sẽ bị dọn
+AI_PENDING_MAX = 200            # tối đa số câu hỏi chờ lưu trong document global
+
+def _prune_pending_questions(pending: dict) -> None:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=AI_PENDING_TTL_DAYS)
+    for tid, v in list(pending.items()):
+        try:
+            created = datetime.fromisoformat(v.get("created_at", ""))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if created < cutoff:
+                pending.pop(tid, None)
+        except (TypeError, ValueError):
+            continue
+    overflow = len(pending) - AI_PENDING_MAX
+    if overflow > 0:
+        for tid in sorted(pending, key=lambda t: str(pending[t].get("created_at", "")))[:overflow]:
+            pending.pop(tid, None)
 MAX_TOOL_ROUNDS = 4     # số vòng lặp tool-calling tối đa trước khi ép trả lời cuối
 
 
@@ -468,6 +491,17 @@ async def handle_ai_message(message: discord.Message):
         return
 
     now = datetime.now(timezone.utc).timestamp()
+    # Cooldown theo user — bỏ qua tin gửi dồn dập (không gọi LLM, không tạo thread forum).
+    if now - _ai_user_last.get(message.author.id, 0.0) < AI_USER_COOLDOWN:
+        try:
+            await message.add_reaction("⏳")
+        except Exception:
+            pass
+        return
+    _ai_user_last[message.author.id] = now
+    if len(_ai_user_last) > 2000:
+        for uid in [u for u, t in _ai_user_last.items() if now - t > AI_HISTORY_TTL]:
+            _ai_user_last.pop(uid, None)
     # Dọn TTL — xóa history cũ hơn AI_HISTORY_TTL
     stale = [uid for uid, v in _ai_chat_history.items() if now - v.get("last_used", 0) > AI_HISTORY_TTL]
     for uid in stale:
@@ -515,7 +549,9 @@ async def handle_ai_message(message: discord.Message):
 
     # RAG KHÔNG tìm được gì liên quan đủ tin cậy -> LUÔN gửi cho admin xử lý,
     # không dựa vào AI tự đánh giá "chắc/không chắc" nữa (xem CHANGELOG v4.13.1)
-    needs_admin = rag_context is None
+    # FIX: tin xã giao ngắn ("hi", "ok", "cảm ơn") không có RAG nhưng KHÔNG cần admin trả lời →
+    # trước đây mỗi tin như vậy tạo 1 thread forum + 1 entry trong document global.
+    needs_admin = rag_context is None and not _looks_simple(message.content)
 
     if len(reply) <= 2000:
         await message.reply(reply, mention_author=False)
@@ -559,6 +595,12 @@ async def create_pending_question(bot, guild_id: int, user: discord.abc.User,
         logging.getLogger("ai").warning("[AI] ⚠️ AI_ASK_ADMIN_PENDING_FORUM_ID không phải Forum Channel.")
         return
 
+    # Dedupe: cùng user hỏi y hệt câu đang chờ admin → không tạo thêm thread.
+    _qn = question.strip().lower()
+    for _v in load_global_data().get("ai_pending_questions", {}).values():
+        if _v.get("user_id") == user.id and str(_v.get("question", "")).strip().lower() == _qn:
+            return
+
     guild = bot.get_guild(guild_id)
     embed = discord.Embed(
         title="🤔 AI chưa chắc câu trả lời này",
@@ -572,16 +614,22 @@ async def create_pending_question(bot, guild_id: int, user: discord.abc.User,
     embed.set_footer(text="Reply trong post này để giải đáp — sẽ tự chuyển sang forum Đã xử lý")
 
     thread_name = question.strip()[:90] or f"Câu hỏi từ {user}"
-    result = await forum.create_thread(name=thread_name, embed=embed)
+    try:
+        result = await forum.create_thread(name=thread_name, embed=embed)
+    except discord.HTTPException as e:
+        # FIX: lỗi/rate-limit tạo thread không được làm văng handle_ai_message (bỏ qua send_log).
+        logging.getLogger("ai").warning(f"[AI] ⚠️ Không tạo được thread forum pending: {e}")
+        return
     thread = result.thread
 
     gdata = load_global_data()
     pending = gdata.setdefault("ai_pending_questions", {})
+    _prune_pending_questions(pending)
     pending[str(thread.id)] = {
         "guild_id": guild_id,
         "user_id": user.id,
-        "question": question,
-        "ai_draft": ai_draft,
+        "question": question[:1500],
+        "ai_draft": ai_draft[:1000],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     save_global_data(gdata)
@@ -659,7 +707,12 @@ async def _handle_pending_reply(bot, message: discord.Message) -> bool:
             except discord.HTTPException:
                 pass
 
-        # Xoá khỏi hàng đợi pending
+        # Xoá khỏi hàng đợi pending.
+        # FIX (v4.59.1): load LẠI sau các await ở trên (tạo post resolved, react, edit thread...) —
+        # `gdata` đầu hàm đã cũ; ghi nó lại sẽ đè mất thay đổi do create_resolved_post() (vd entry
+        # ai_resolved_threads đầu tiên) hoặc do .as/tempban xảy ra trong lúc chờ.
+        gdata = load_global_data()
+        pending = gdata.get("ai_pending_questions", {})
         pending.pop(str(message.channel.id), None)
         gdata["ai_pending_questions"] = pending
         save_global_data(gdata)
@@ -756,10 +809,17 @@ class AICog(commands.Cog):
 
         if pending:
             tool_name, params = pending["name"], pending["params"]
+            # FIX: các tool mod_*/role_* lấy MỤC TIÊU từ @mention đầu tiên trong tin nhắn (không nằm
+            # trong params) → trước đây màn xác nhận không hiện ai sẽ bị tác động.
+            _tgt = ""
+            if tool_name.startswith("mod_") or tool_name in ("role_add", "role_remove"):
+                _m = ctx.message.mentions[0] if ctx.message.mentions else None
+                _tgt = (f"**Mục tiêu:** {_m.mention} (`{_m.id}`)\n" if _m
+                        else "**Mục tiêu:** ⚠️ không có @mention trong tin nhắn\n")
             embed = discord.Embed(
                 title="⚠️ Xác nhận hành động nguy hiểm",
                 description=(
-                    f"**Yêu cầu:** {prompt}\n**Tool:** `{tool_name}`\n**Params:** `{params}`\n\n"
+                    f"**Yêu cầu:** {prompt}\n**Tool:** `{tool_name}`\n{_tgt}**Params:** `{params}`\n\n"
                     f"⏰ Tự động huỷ sau 30 giây."
                 ),
                 color=0xED4245,

@@ -5,7 +5,8 @@ create_token/check_ip_info) đã BỊ XOÁ cùng đợt với việc bỏ tính 
 cogs/invite.py — xem CHANGELOG.md.
 
 Chạy song song với bot trên Railway (cùng process qua asyncio — bot.py gọi
-start_verify_server() lúc on_ready/first_boot).
+start_verify_server() từ main(), SAU load_cogs() và TRƯỚC bot.start() — webhook có thể
+đến trước khi cache Mongo nạp xong → route trả 503 để SePay retry, xem PAYMENT_READY).
 
 ⚠️ File này BẮT BUỘC chạy CHUNG process với cogs/shop_orders.py — route
 /webhook/sepay chỉ forward payload cho PAYMENT_CALLBACK (biến RAM ở module này,
@@ -24,6 +25,7 @@ Railway cũng không sao, xoá đi cũng không ảnh hưởng gì.)
 """
 
 import asyncio
+import hmac
 import logging
 import os
 from typing import Callable, Awaitable
@@ -59,29 +61,60 @@ async def health():
 # Vì vậy route LUÔN trả success=True ngay sau khi payload hợp lệ, xử lý thật chạy nền
 # (create_task) — không chờ Mongo/Discord xong mới phản hồi, tránh timeout 30s.
 PAYMENT_CALLBACK: Callable[[dict], Awaitable[None]] | None = None
+# FIX (v4.59.1): hàm báo "dữ liệu bot đã nạp xong chưa" — webhook đến TRƯỚC khi cache Mongo
+# sẵn sàng (vài giây đầu sau mỗi lần deploy/restart) sẽ trả 503 để SePay tự retry, thay vì
+# trả 200 rồi xử lý với dữ liệu rỗng (đơn không khớp + id bị đánh dấu "đã xử lý" → mất tiền).
+PAYMENT_READY: Callable[[], bool] | None = None
+MAX_WEBHOOK_BODY = 64 * 1024
 
-def register_payment_callback(fn: Callable[[dict], Awaitable[None]]) -> None:
-    global PAYMENT_CALLBACK
+# Giữ strong reference tới task xử lý nền + log lỗi (create_task trần: lỗi bị nuốt im lặng).
+_bg_tasks: set = set()
+
+def _on_task_done(task: "asyncio.Task") -> None:
+    _bg_tasks.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        log.error(f"[SEPAY] ❌ Callback xử lý thanh toán lỗi: {task.exception()!r}")
+
+def register_payment_callback(fn: Callable[[dict], Awaitable[None]],
+                              ready: Callable[[], bool] | None = None) -> None:
+    global PAYMENT_CALLBACK, PAYMENT_READY
     PAYMENT_CALLBACK = fn
+    PAYMENT_READY = ready
 
 
 @app.post("/webhook/sepay")
 async def sepay_webhook(request: Request):
     auth = request.headers.get("authorization", "")
-    if not SEPAY_WEBHOOK_API_KEY or auth != f"Apikey {SEPAY_WEBHOOK_API_KEY}":
+    expected = f"Apikey {SEPAY_WEBHOOK_API_KEY}"
+    # So sánh hằng-thời-gian (tránh timing attack dò API key từng ký tự).
+    if not SEPAY_WEBHOOK_API_KEY or not hmac.compare_digest(auth.encode("utf-8"), expected.encode("utf-8")):
         log.warning("[SEPAY] ❌ Webhook auth sai hoặc chưa cấu hình SEPAY_WEBHOOK_API_KEY.")
         return JSONResponse({"success": False}, status_code=401)
+
+    try:
+        if int(request.headers.get("content-length") or 0) > MAX_WEBHOOK_BODY:
+            return JSONResponse({"success": False}, status_code=413)
+    except ValueError:
+        return JSONResponse({"success": False}, status_code=400)
 
     try:
         payload = await request.json()
     except Exception:
         return JSONResponse({"success": False}, status_code=400)
+    if not isinstance(payload, dict):      # JSON hợp lệ nhưng không phải object → payload.get() sẽ nổ
+        return JSONResponse({"success": False}, status_code=400)
 
-    if PAYMENT_CALLBACK and payload.get("transferType") == "in":
-        asyncio.create_task(PAYMENT_CALLBACK(payload))
-    elif not PAYMENT_CALLBACK:
-        log.warning("[SEPAY] ⚠️ Nhận được webhook nhưng chưa có PAYMENT_CALLBACK đăng ký "
-                    "(cogs/shop_orders.py chưa load xong?).")
+    # FIX: chưa có callback (cog shop_orders load lỗi) hoặc dữ liệu chưa nạp xong → 503 để
+    # SePay RETRY (Fibonacci backoff, tối đa 7 lần/5 tiếng). Trước đây trả {"success": true}
+    # rồi bỏ mặc → giao dịch mất vĩnh viễn, SePay không bao giờ gửi lại.
+    if PAYMENT_CALLBACK is None or (PAYMENT_READY is not None and not PAYMENT_READY()):
+        log.warning("[SEPAY] ⚠️ Webhook đến khi bot CHƯA sẵn sàng (cog chưa load / cache chưa nạp) — trả 503 để SePay retry.")
+        return JSONResponse({"success": False}, status_code=503)
+
+    if payload.get("transferType") == "in":
+        task = asyncio.create_task(PAYMENT_CALLBACK(payload))
+        _bg_tasks.add(task)
+        task.add_done_callback(_on_task_done)
 
     return {"success": True}
 

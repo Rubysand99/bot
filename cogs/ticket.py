@@ -52,23 +52,44 @@ import time
 _recent_done_guard: dict[tuple, float] = {}
 _DONE_DUPLICATE_WINDOW = 15  # giây
 
-def _is_duplicate_done(channel_id: int, buyer_id: int, amount: int) -> bool:
-    key = (channel_id, buyer_id, amount)
+def _dup_check(guard: dict, key: tuple) -> bool:
+    """True = trùng (chặn lần này). FIX (v4.59.1): trước đây MỖI lần gọi đều cập nhật mốc thời
+    gian kể cả khi bị chặn → gõ lại trong 15s vẫn bị chặn tiếp và còn kéo dài cửa sổ, trái với
+    thông báo "gõ lại lệnh 1 lần nữa". Giờ: bị chặn thì XOÁ mốc, nên lần gõ lại kế tiếp được
+    chạy. Đồng thời dọn mốc cũ để dict không phình vô hạn."""
     now = time.monotonic()
-    last = _recent_done_guard.get(key)
-    _recent_done_guard[key] = now
-    return last is not None and (now - last) < _DONE_DUPLICATE_WINDOW
+    for k in [k for k, t in guard.items() if now - t > _DONE_DUPLICATE_WINDOW * 4]:
+        guard.pop(k, None)
+    last = guard.get(key)
+    if last is not None and (now - last) < _DONE_DUPLICATE_WINDOW:
+        guard.pop(key, None)
+        return True
+    guard[key] = now
+    return False
+
+def _is_duplicate_done(channel_id: int, buyer_id: int, amount: int) -> bool:
+    return _dup_check(_recent_done_guard, (channel_id, buyer_id, amount))
+
+# Giữ tối đa N marker `completed_msg_<id>` trong document guild (mỗi `.done @user` tạo 1 key
+# vĩnh viễn → document phình dần). Snowflake tăng dần theo thời gian nên bỏ key nhỏ nhất = cũ nhất.
+_COMPLETED_MSG_KEEP = 500
+
+def _prune_completed_msg_keys(data: dict) -> None:
+    keys = [k for k in data if isinstance(k, str) and k.startswith("completed_msg_")]
+    if len(keys) <= _COMPLETED_MSG_KEEP:
+        return
+    def _num(k):
+        tail = k.rsplit("_", 1)[-1]
+        return int(tail) if tail.isdigit() else 0
+    for k in sorted(keys, key=_num)[:-_COMPLETED_MSG_KEEP]:
+        data.pop(k, None)
 
 # Guard RIÊNG cho .undone — không dùng chung dict với .done, nếu không 1 chuỗi
 # ".done @user 50k" rồi sửa nhầm bằng ".undone @user 50k" ngay sau sẽ bị chặn oan.
 _recent_undone_guard: dict[tuple, float] = {}
 
 def _is_duplicate_undone(channel_id: int, buyer_id: int, amount: int) -> bool:
-    key = (channel_id, buyer_id, amount)
-    now = time.monotonic()
-    last = _recent_undone_guard.get(key)
-    _recent_undone_guard[key] = now
-    return last is not None and (now - last) < _DONE_DUPLICATE_WINDOW
+    return _dup_check(_recent_undone_guard, (channel_id, buyer_id, amount))
 
 def _is_bot_ticket_topic(topic: str | None) -> bool:
     """Nhận diện topic ticket THẬT do bot tự gắn (định dạng '{user_id}||...'), thay vì
@@ -207,9 +228,12 @@ async def get_next_ticket_number(bot) -> str:
         return f"{next_num:03d}"
 
 async def sync_ticket_counter(bot, guild: discord.Guild):
+    ch_num = await read_counter_from_channel(bot)
+    # FIX (v4.59.1): load_data() SAU await (trước đây trước await → save_data(data) bên dưới ghi đè
+    # cache bằng bản cũ nếu có thay đổi cfg/ticket xảy ra trong lúc chờ Discord; hàm này còn chạy
+    # lại mỗi lần gateway reconnect).
     data = load_data()
     max_num = data.get("ticket", 0)
-    ch_num = await read_counter_from_channel(bot)
     if ch_num > max_num: max_num = ch_num
     for channel in guild.text_channels:
         if channel.name.startswith("ticket-"):
@@ -1852,6 +1876,7 @@ class TicketCog(commands.Cog):
             return await ctx.reply(f"⚠️ Đơn này đã hoàn thành rồi!\nBuyer: {buyer.mention} — tổng: **{fmt_amount(total)}**")
 
         data[completed_key] = True
+        _prune_completed_msg_keys(data)
         save_data(data)
 
         # Cộng tiền theo server (nếu có server_key) VÀ vào tổng chung
@@ -2204,6 +2229,7 @@ class TicketCog(commands.Cog):
                 f"⚠️ Đơn này đã hoàn thành rồi!\nTổng: **{fmt_amount(total)}**", ephemeral=True
             )
         data[completed_key] = True
+        _prune_completed_msg_keys(data)
         save_data(data)
 
         if server_key:
