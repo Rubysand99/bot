@@ -568,36 +568,8 @@ class ShopOrdersCog(commands.Cog):
         save_cfg_queue_channel(channel.id)
         await ctx.reply(f"✅ Đã đặt kênh hàng đợi: {channel.mention}")
 
-    @commands.command(name="bxh", aliases=["leaderboard", "top"])
-    async def leaderboard_cmd(self, ctx: commands.Context):
-        """Dùng: .bxh — Bảng xếp hạng top 10 chi tiêu nhiều nhất trong server."""
-        spent = load_data().get("user_total_spent", {})
-        ranking = sorted(
-            ((uid, amt) for uid, amt in spent.items() if amt > 0),
-            key=lambda kv: kv[1], reverse=True,
-        )[:10]
-
-        if not ranking:
-            return await ctx.reply("📭 Chưa có ai chi tiêu gì trong server này cả.")
-
-        medals = ["🥇", "🥈", "🥉"]
-        lines = []
-        for i, (uid, amount) in enumerate(ranking):
-            icon = medals[i] if i < 3 else "✨"
-            member = ctx.guild.get_member(int(uid))
-            name = member.mention if member else f"<@{uid}>"
-            lines.append(f"{icon} **Top {i + 1}:** {name} — Đã chi: **{fmt_amount(amount)}**")
-
-        embed = discord.Embed(
-            title="🏆 BẢNG XẾP HẠNG CHI TIÊU",
-            description="\n".join(lines),
-            color=0xF1C40F,
-            timestamp=datetime.now(timezone.utc),
-        )
-        if ctx.guild.icon:
-            embed.set_thumbnail(url=ctx.guild.icon.url)
-        embed.set_footer(text=f"{ctx.guild.name} • Cập nhật lúc")
-        await ctx.reply(embed=embed)
+    # NOTE (v4.60.0): lệnh `.bxh` (bảng xếp hạng chi tiêu) đã chuyển sang cogs/leaderboard.py —
+    # có nút "Thứ Hạng Của Tôi" / "Làm Mới" và bảng tự cập nhật. Đừng thêm lại ở đây (trùng tên lệnh).
 
     @commands.command(name="shoporderno")
     async def shoporderno_cmd(self, ctx: commands.Context, number: int = None):

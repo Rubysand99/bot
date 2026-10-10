@@ -1,3 +1,21 @@
+## [v4.60.0] — 2026-10-10
+
+### ✨ Bảng xếp hạng chi tiêu mới — `cogs/leaderboard.py` (thay `.bxh` cũ trong `shop_orders.py`)
+Lấy ý tưởng từ mẫu bảng xếp hạng của bot khác (chỉ lấy tính năng/nút, giao diện tự thiết kế):
+- **Embed Top 10:** dòng 👑 Top 1 nổi bật, danh sách `#01`–`#10` (🥇🥈🥉 cho 3 hạng đầu), số tiền đầy đủ
+  (`21.120.000đ`), tổng người mua + tổng chi tiêu, giờ cập nhật dạng "x giờ trước", gợi ý bấm nút.
+- **Nút 🔍 Thứ Hạng Của Tôi** — trả lời *riêng* cho người bấm: hạng `#N / tổng`, số tiền đã chi, cần chi thêm bao
+  nhiêu để lên hạng trên / vào Top 10. Chỉ nêu tên người ngay trên khi người đó đã nằm trong Top 10 (không lộ chi tiêu
+  của người ngoài bảng).
+- **Nút 🔄 Làm Mới** — cập nhật bảng ngay, cooldown 20s/message chống spam.
+- **Bảng tự cập nhật mỗi 5 giờ:** `.bxhpanel [#kênh]` (admin) đăng bảng + tự edit; `.bxhpanel off` tắt. Lưu
+  `leaderboard_panel` ({channel_id, message_id}) trong dữ liệu guild nên sống qua restart; message bị xoá thì tự ngừng theo dõi.
+- Hiển thị **tên** thay vì `<@id>` — không còn lỗi hiện mã thô cho người chưa có trong cache và không ping ai khi cập nhật.
+- Đồng hạng dùng chung số hạng (1, 2, 2, 4). View persistent (`custom_id` cố định) nên nút còn dùng được sau restart.
+- File tự chứa (chỉ đọc `user_total_spent`, chỉ phụ thuộc `core.data`) — dễ tách sang bot khác. Đăng ký trong `COGS` của
+  `bot.py` và `bot_shop.py`; cập nhật `.help shoporders` + `AI_CONTEXT.md`.
+- Test: `tests/test_leaderboard.py` (15 test: xếp hạng/đồng hạng, thứ hạng của tôi, embed, nút, cooldown, panel).
+
 ## [v4.59.1] — 2026-10-10
 
 ### 🔒 Audit code — sửa lỗi mất dữ liệu / thanh toán / phân quyền (có test tự động trong `tests/`)

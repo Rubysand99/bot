@@ -55,6 +55,8 @@
 │   │                     # (guild_id, user_id) — KHÔNG chỉ user_id (xem mục cache đa-guild)
 │   ├── seller.py         # Seller subscription: add/remove/list/panel, auto check hết hạn (mỗi giờ,
 │   │                     # lặp từng guild, có before_loop chờ wait_data_cache_ready())
+│   ├── leaderboard.py    # 🏆 Bảng xếp hạng Top 10 chi tiêu: .bxh + nút Thứ Hạng Của Tôi/Làm Mới,
+│   │                     # .bxhpanel (tự cập nhật mỗi 5h). CHỈ ĐỌC user_total_spent; tự chứa, dễ tách sang bot khác
 │   ├── shop_orders.py    # 🧪 QR VietQR + hàng đợi đơn hàng (thử nghiệm, toggle qua .st) — PHẢI có
 │   │                     # trong COGS ở bot.py mới hoạt động
 │   └── ticket.py         # Panel (nút bật/tắt theo guild), buttons, modal, .done/.undone (trừ tiền

@@ -666,7 +666,9 @@ class AdminCog(commands.Cog):
                      "bot tự gửi hóa đơn (số hóa đơn tăng dần, nội dung CK tự sinh) vào kênh Proof", False),
                     ("🏆 Bảng xếp hạng",
                      "`.bxh` (alias `.leaderboard`/`.top`) — Top 10 chi tiêu nhiều nhất trong server\n"
-                     "(cộng dồn tự động mỗi khi `.done`)", False),
+                     "(cộng dồn tự động mỗi khi `.done`). Có nút 🔍 **Thứ Hạng Của Tôi** (xem hạng + khoảng cách\n"
+                     "lên hạng, chỉ mình bạn thấy) và 🔄 **Làm Mới**.\n"
+                     "`.bxhpanel [#kênh]` — Đăng bảng **tự cập nhật mỗi 5 giờ** (admin) · `.bxhpanel off` — tắt", False),
                 ]
             },
             "admin": {
@@ -744,7 +746,7 @@ class AdminCog(commands.Cog):
             "admin": "admin", "adm": "admin",
             "seller": "seller",
             "shoporders": "shoporders", "shop": "shoporders", "qr": "shoporders",
-            "vietqr": "shoporders", "donhang": "shoporders", "order": "shoporders", "bxh": "shoporders",
+            "vietqr": "shoporders", "donhang": "shoporders", "order": "shoporders", "bxh": "shoporders", "bxhpanel": "shoporders", "leaderboard": "shoporders",
             "listings": "listings", "listing": "listings", "sanpham": "listings", "forum": "listings",
         }
 
@@ -780,7 +782,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="📋 Log",       value="`.setlog` `.setuplog` `.loginfo` `.baocao`", inline=True)
         embed.add_field(name="⚙️ Admin",     value="`.st` `.setup` `.clearcategory` `.addrole` `.emoji`\n`.rename` `.mkchannel`", inline=True)
         embed.add_field(name="🏪 Seller",    value="`.seller add/remove/list/panel` `.myseller`\n`.setsellercat` `.addsellerrole` *(xem `.help ticket`)*", inline=True)
-        embed.add_field(name="🧾 Shop Orders", value="`.shopbank` `.setqueue` `.shoporderno`\n`.bxh` — bảng xếp hạng\n*(dùng chung `.done` ở Ticket)*", inline=True)
+        embed.add_field(name="🧾 Shop Orders", value="`.shopbank` `.setqueue` `.shoporderno`\n`.bxh` `.bxhpanel` — bảng xếp hạng\n*(dùng chung `.done` ở Ticket)*", inline=True)
         embed.add_field(name="🛒 Sản phẩm",    value="`.addlisting #forum \"IGN\" \"Giá\" \"Cape\"`\n*(xem `.help listings`)*", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
