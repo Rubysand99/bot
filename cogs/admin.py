@@ -469,6 +469,7 @@ class AdminCog(commands.Cog):
                      "`.panel` — Đăng panel mua/bán NGAY vào kênh hiện tại\n"
                      "`.mmpanel` — Đăng panel Giao Dịch Trung Gian (AutoMM)\n"
                      "`.panelbuttons` (alias `.panelbtn`) — Bật/tắt từng nút của panel (riêng theo server)\n"
+                     "`.paneltext` (alias `.paneledit`, `.editpanel`) — Sửa chữ trong panel: tiêu đề, mô tả, footer, màu, các mục (riêng theo server)\n"
                      "`.setpanelchannel #kênh` (alias `.setpanel`) — CHỈ lưu kênh để bot tự gửi panel về sau, không gửi ngay (khác `.panel`)\n"
                      "`.close` — Đóng ticket hiện tại\n"
                      "`.done <tiền>` — Hoàn thành đơn, tạo QR (chỉ admin)\n"
@@ -773,7 +774,7 @@ class AdminCog(commands.Cog):
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.add_field(name="🎫 Ticket",    value="`.panel` `.mmpanel` `.panelbuttons` `.close` `.done` `.donecash` `.undone`\n`.ticketinfo` `.thongke` `.setrole`", inline=True)
+        embed.add_field(name="🎫 Ticket",    value="`.panel` `.mmpanel` `.panelbuttons` `.paneltext` `.close` `.done` `.donecash` `.undone`\n`.ticketinfo` `.thongke` `.setrole`", inline=True)
         embed.add_field(name="📨 Invite",    value="`.invite` `.invitetop` `.resetinvitemonth`\n`/invite` `/invitetop`", inline=True)
         embed.add_field(name="🏪 Dịch vụ",  value="`.sv` `.giaset`\n`/sv` `/giaset`", inline=True)
         embed.add_field(name="🎉 Giveaway",  value="`/giveaway` `/gend`\n`/greroll` `/gwlist`\n`.gwstatus` `.gwpick` `.gwreset`", inline=True)

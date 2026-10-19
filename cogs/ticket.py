@@ -350,51 +350,106 @@ def _build_ticket_overwrites_multi(guild, user, role_ids: list, seller_id: int |
 # ══════════════════════════════════════════
 # PANEL EMBED
 # ══════════════════════════════════════════
-def build_panel_embed(guild: discord.Guild) -> discord.Embed:
-    embed = discord.Embed(
-        title="🏪  TuyTam Store",
-        description="Chào mừng đến với **TuyTam Store**!\nNhấn nút bên dưới để tạo ticket giao dịch.",
-        color=0x5865F2, timestamp=datetime.now(timezone.utc)
-    )
-    embed.add_field(name="🛒  Dịch vụ", value="› Mua / Bán Money, Skeleton, Elytra\n› 🎭 Acc Pre\n› 🎁 Nhận Giveaway\n› 🆘 Hỗ Trợ", inline=True)
-    embed.add_field(name="📋  Ticket bao gồm", value="› Tạo kênh riêng tư\n› Staff hỗ trợ 24/7\n› Transcript sau giao dịch", inline=True)
-    embed.add_field(name="⚠️  Lưu ý", value="› Không spam ticket\n› Ghi rõ số lượng & item\n› Thanh toán đúng giá niêm yết", inline=False)
-    embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
-    if guild.icon: embed.set_thumbnail(url=guild.icon.url)
-    return embed
-
-def build_middleman_panel_embed(guild: discord.Guild) -> discord.Embed:
-    """Panel riêng cho ticket Giao Dịch Trung Gian — embed mẫu theo #🤝・middleman."""
-    embed = discord.Embed(
-        title="🤝  AutoMM  •  Giao Dịch Trung Gian",
-        description=(
+# Nội dung MẶC ĐỊNH của 2 panel — nguồn duy nhất. Admin chỉnh bằng `.paneltext`, phần đã chỉnh lưu
+# ở `cfg_panel_text` (theo guild); mục nào chưa chỉnh thì dùng mặc định bên dưới.
+PANEL_TEXT_DEFAULTS = {
+    "main": {
+        "label": "Panel chính (.panel)",
+        "title": "🏪  TuyTam Store",
+        "description": "Chào mừng đến với **TuyTam Store**!\nNhấn nút bên dưới để tạo ticket giao dịch.",
+        "footer": "TuyTam Store  •  Ticket System",
+        "color": "5865F2",
+        "fields": [
+            {"name": "🛒  Dịch vụ", "value": "› Mua / Bán Money, Skeleton, Elytra\n› 🎭 Acc Pre\n› 🎁 Nhận Giveaway\n› 🆘 Hỗ Trợ", "inline": True},
+            {"name": "📋  Ticket bao gồm", "value": "› Tạo kênh riêng tư\n› Staff hỗ trợ 24/7\n› Transcript sau giao dịch", "inline": True},
+            {"name": "⚠️  Lưu ý", "value": "› Không spam ticket\n› Ghi rõ số lượng & item\n› Thanh toán đúng giá niêm yết", "inline": False},
+        ],
+    },
+    "mm": {
+        "label": "Panel Trung Gian (.mmpanel)",
+        "title": "🤝  AutoMM  •  Giao Dịch Trung Gian",
+        "description": (
             "Bot trung gian tự động — tiền/tài sản chỉ được xem là an toàn khi giao dịch "
             "được thực hiện dưới sự giám sát của staff.\n"
         ),
-        color=0x57F287, timestamp=datetime.now(timezone.utc),
-    )
-    embed.add_field(
-        name="📋  Cách sử dụng",
-        value=(
-            "**1.** Nhấn **Tạo giao dịch** bên dưới\n"
-            "**2.** Nhập ID (hoặc tên) tài khoản bạn muốn giao dịch cùng\n"
-            "**3.** Ticket riêng tư được tạo, admin sẽ được thông báo hỗ trợ\n"
-            "**4.** Hai bên thực hiện giao dịch dưới sự giám sát của staff\n"
-            "**5.** Giao dịch xong → staff xác nhận & đóng ticket"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="⚠️  Lưu ý",
-        value=(
-            "-# Phí dịch vụ (nếu có) được áp dụng theo bảng phí hiện hành.\n"
-            "-# Chỉ tạo giao dịch khi bạn thực sự muốn hoàn tất."
-        ),
-        inline=False,
-    )
-    embed.set_footer(text="TuyTam Store  •  Giao Dịch Trung Gian", icon_url=guild.icon.url if guild.icon else None)
+        "footer": "TuyTam Store  •  Giao Dịch Trung Gian",
+        "color": "57F287",
+        "fields": [
+            {"name": "📋  Cách sử dụng", "value": (
+                "**1.** Nhấn **Tạo giao dịch** bên dưới\n"
+                "**2.** Nhập ID (hoặc tên) tài khoản bạn muốn giao dịch cùng\n"
+                "**3.** Ticket riêng tư được tạo, admin sẽ được thông báo hỗ trợ\n"
+                "**4.** Hai bên thực hiện giao dịch dưới sự giám sát của staff\n"
+                "**5.** Giao dịch xong → staff xác nhận & đóng ticket"
+            ), "inline": False},
+            {"name": "⚠️  Lưu ý", "value": (
+                "-# Phí dịch vụ (nếu có) được áp dụng theo bảng phí hiện hành.\n"
+                "-# Chỉ tạo giao dịch khi bạn thực sự muốn hoàn tất."
+            ), "inline": False},
+        ],
+    },
+}
+
+def get_panel_text_overrides() -> dict:
+    """Phần đã chỉnh của guild hiện tại (context do caller set). {} nếu chưa chỉnh gì."""
+    return load_data().get("cfg_panel_text", {})
+
+def get_panel_text(kind: str) -> dict:
+    """Nội dung panel đã gộp (mặc định + phần admin chỉnh) — luôn đầy đủ key, an toàn để build embed."""
+    base = PANEL_TEXT_DEFAULTS[kind]
+    ov = get_panel_text_overrides().get(kind, {})
+    out = {k: ov.get(k, base[k]) for k in ("title", "description", "footer", "color")}
+    ov_fields = ov.get("fields", {})
+    out["fields"] = []
+    for i, f in enumerate(base["fields"]):
+        o = ov_fields.get(str(i), {})
+        out["fields"].append({
+            "name": o.get("name", f["name"]),
+            "value": o.get("value", f["value"]),
+            "inline": f["inline"],
+        })
+    return out
+
+def set_panel_text(kind: str, *, base: dict | None = None, field_idx: int | None = None, field: dict | None = None) -> None:
+    data = load_data()
+    ov = data.setdefault("cfg_panel_text", {}).setdefault(kind, {})
+    if base is not None:
+        ov.update(base)
+    if field_idx is not None and field is not None:
+        ov.setdefault("fields", {})[str(field_idx)] = field
+    save_data(data)
+
+def reset_panel_text(kind: str) -> None:
+    data = load_data()
+    data.get("cfg_panel_text", {}).pop(kind, None)
+    save_data(data)
+
+def _parse_color(raw: str, fallback: str) -> str | None:
+    """'#5865F2' / '5865f2' / '0x5865F2' → '5865F2'; sai định dạng → None."""
+    c = (raw or "").strip().lstrip("#")
+    if c.lower().startswith("0x"): c = c[2:]
+    if not c: return fallback
+    if len(c) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in c): return None
+    return c.upper()
+
+def _build_panel_embed_from(kind: str, guild: discord.Guild) -> discord.Embed:
+    t = get_panel_text(kind)
+    try: color = int(t["color"], 16)
+    except (ValueError, TypeError): color = int(PANEL_TEXT_DEFAULTS[kind]["color"], 16)
+    embed = discord.Embed(title=t["title"], description=t["description"], color=color, timestamp=datetime.now(timezone.utc))
+    for f in t["fields"]:
+        if f["name"].strip() and f["value"].strip():  # bỏ trống cả tên/nội dung → ẩn mục đó
+            embed.add_field(name=f["name"], value=f["value"], inline=f["inline"])
+    embed.set_footer(text=t["footer"], icon_url=guild.icon.url if guild.icon else None)
     if guild.icon: embed.set_thumbnail(url=guild.icon.url)
     return embed
+
+def build_panel_embed(guild: discord.Guild) -> discord.Embed:
+    return _build_panel_embed_from("main", guild)
+
+def build_middleman_panel_embed(guild: discord.Guild) -> discord.Embed:
+    """Panel riêng cho ticket Giao Dịch Trung Gian — embed mẫu theo #🤝・middleman."""
+    return _build_panel_embed_from("mm", guild)
 
 # ══════════════════════════════════════════
 # TRANSCRIPT HTML
@@ -1529,6 +1584,123 @@ class PanelButtonToggleView(View):
 
 
 # ══════════════════════════════════════════
+# PANEL TEXT — `.paneltext`: sửa chữ trong panel (riêng theo guild)
+# ══════════════════════════════════════════
+class PanelTextBaseModal(Modal):
+    def __init__(self, view: "PanelTextView"):
+        super().__init__(title=f"Sửa {PANEL_TEXT_DEFAULTS[view.kind]['label']}"[:45])
+        self.pview = view
+        t = get_panel_text(view.kind)
+        self.title_in = TextInput(label="Tiêu đề", default=t["title"], max_length=256, required=True)
+        self.desc_in = TextInput(label="Mô tả", default=t["description"], style=discord.TextStyle.paragraph, max_length=4000, required=False)
+        self.footer_in = TextInput(label="Footer", default=t["footer"], max_length=2048, required=False)
+        self.color_in = TextInput(label="Màu (hex, vd 5865F2)", default=t["color"], max_length=8, required=False)
+        for i in (self.title_in, self.desc_in, self.footer_in, self.color_in): self.add_item(i)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        kind = self.pview.kind
+        color = _parse_color(self.color_in.value, PANEL_TEXT_DEFAULTS[kind]["color"])
+        if color is None:
+            return await interaction.response.send_message("❌ Màu không hợp lệ — dùng 6 ký tự hex, vd `5865F2`.", ephemeral=True)
+        set_panel_text(kind, base={
+            "title": self.title_in.value.strip() or PANEL_TEXT_DEFAULTS[kind]["title"],
+            "description": self.desc_in.value,
+            "footer": self.footer_in.value,
+            "color": color,
+        })
+        await self.pview.refresh(interaction)
+
+
+class PanelTextFieldModal(Modal):
+    def __init__(self, view: "PanelTextView", idx: int):
+        super().__init__(title=f"Sửa mục {idx + 1}"[:45])
+        self.pview, self.idx = view, idx
+        f = get_panel_text(view.kind)["fields"][idx]
+        self.name_in = TextInput(label="Tên mục (bỏ trống cả 2 ô = ẩn mục)", default=f["name"], max_length=256, required=False)
+        self.value_in = TextInput(label="Nội dung", default=f["value"], style=discord.TextStyle.paragraph, max_length=1024, required=False)
+        self.add_item(self.name_in); self.add_item(self.value_in)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+        set_panel_text(self.pview.kind, field_idx=self.idx, field={"name": self.name_in.value, "value": self.value_in.value})
+        await self.pview.refresh(interaction)
+
+
+class PanelTextView(View):
+    """UI cho `.paneltext`: chọn panel → chọn phần cần sửa → modal. Có xem trước / reset / gửi panel."""
+    def __init__(self, ctx, kind: str = "main"):
+        super().__init__(timeout=300)
+        self.ctx, self.kind = ctx, kind
+        self._build()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not await super().interaction_check(interaction): return False
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
+            return False
+        return True
+
+    def _build(self):
+        self.clear_items()
+        sel_kind = Select(placeholder="Chọn panel cần sửa", row=0, options=[
+            discord.SelectOption(label=v["label"], value=k, default=(k == self.kind)) for k, v in PANEL_TEXT_DEFAULTS.items()
+        ])
+        sel_kind.callback = self._on_kind
+        self.add_item(sel_kind)
+
+        t = get_panel_text(self.kind)
+        opts = [discord.SelectOption(label="Tiêu đề / Mô tả / Footer / Màu", value="base", emoji="📝")]
+        for i, f in enumerate(t["fields"]):
+            opts.append(discord.SelectOption(label=f"Mục {i + 1}: {f['name'].strip()[:80] or '(đang ẩn)'}", value=f"f{i}", emoji="🔹"))
+        sel_part = Select(placeholder="Chọn phần cần sửa chữ", row=1, options=opts)
+        sel_part.callback = self._on_part
+        self.add_item(sel_part)
+
+        send_btn = Button(label="Gửi panel vào kênh này", emoji="📤", style=discord.ButtonStyle.green, row=2)
+        send_btn.callback = self._on_send
+        reset_btn = Button(label="Khôi phục mặc định", emoji="♻️", style=discord.ButtonStyle.red, row=2)
+        reset_btn.callback = self._on_reset
+        self.add_item(send_btn); self.add_item(reset_btn)
+
+    def _preview(self, guild) -> list[discord.Embed]:
+        info = discord.Embed(
+            title="⚙️ Sửa Chữ Panel",
+            description=(f"Đang sửa: **{PANEL_TEXT_DEFAULTS[self.kind]['label']}**\n"
+                         "Chọn phần cần sửa ở menu bên dưới. Bên dưới là **bản xem trước**.\n"
+                         "Panel đã gửi từ trước **không tự đổi** — bấm 📤 hoặc chạy lại lệnh gửi panel."),
+            color=0x5865F2,
+        )
+        return [info, _build_panel_embed_from(self.kind, guild)]
+
+    async def refresh(self, interaction: discord.Interaction):
+        self._build()
+        await interaction.response.edit_message(embeds=self._preview(interaction.guild), view=self)
+
+    async def _on_kind(self, interaction: discord.Interaction):
+        self.kind = interaction.data["values"][0]
+        await self.refresh(interaction)
+
+    async def _on_part(self, interaction: discord.Interaction):
+        v = interaction.data["values"][0]
+        if v == "base": await interaction.response.send_modal(PanelTextBaseModal(self))
+        else: await interaction.response.send_modal(PanelTextFieldModal(self, int(v[1:])))
+
+    async def _on_reset(self, interaction: discord.Interaction):
+        reset_panel_text(self.kind)
+        await self.refresh(interaction)
+
+    async def _on_send(self, interaction: discord.Interaction):
+        if self.kind == "main":
+            await interaction.channel.send(embed=build_panel_embed(interaction.guild), view=TicketPanel(interaction.guild_id))
+        else:
+            await interaction.channel.send(embed=build_middleman_panel_embed(interaction.guild), view=MiddlemanPanelView())
+        await interaction.response.send_message("✅ Đã gửi panel vào kênh này.", ephemeral=True)
+
+
+# ══════════════════════════════════════════
 # TICKET BUTTONS
 # ══════════════════════════════════════════
 class TicketButtons(View):
@@ -1700,6 +1872,13 @@ class TicketCog(commands.Cog):
             color=0x5865F2,
         )
         await ctx.send(embed=embed, view=PanelButtonToggleView(ctx))
+
+    @commands.command(name="paneltext", aliases=["paneledit", "editpanel"])
+    async def paneltext_cmd(self, ctx):
+        """Sửa chữ trong panel ticket (tiêu đề, mô tả, footer, màu, các mục) — lưu riêng theo server."""
+        if ctx.author.id not in ADMIN_IDS: return
+        view = PanelTextView(ctx, "main")
+        await ctx.send(embeds=view._preview(ctx.guild), view=view)
 
     @commands.command(name="setpanelchannel", aliases=["setpanel"])
     # FIX (UX): đổi tên chính từ "setpanel" → "setpanelchannel" — dễ nhầm với lệnh

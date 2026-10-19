@@ -59,7 +59,7 @@
 │   │                     # .bxhpanel (tự cập nhật mỗi 5h). CHỈ ĐỌC user_total_spent; tự chứa, dễ tách sang bot khác
 │   ├── shop_orders.py    # 🧪 QR VietQR + hàng đợi đơn hàng (thử nghiệm, toggle qua .st) — PHẢI có
 │   │                     # trong COGS ở bot.py mới hoạt động
-│   └── ticket.py         # Panel (nút bật/tắt theo guild), buttons, modal, .done/.undone (trừ tiền
+│   └── ticket.py         # Panel (nút bật/tắt theo guild, chữ sửa được qua .paneltext → cfg_panel_text), buttons, modal, .done/.undone (trừ tiền
 │                          # khi lỡ .done nhầm), close logic. `_open_tickets` cache key theo
 │                          # (guild_id, user_id)
 └── core/

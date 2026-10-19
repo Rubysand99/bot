@@ -1,3 +1,16 @@
+## [v4.61.0] — 2026-10-19
+
+### ✨ Lệnh `.paneltext` — tự sửa chữ trong panel ticket (`cogs/ticket.py`)
+- `.paneltext` (alias `.paneledit`, `.editpanel`, admin-only) mở bảng chỉnh có **xem trước trực tiếp**:
+  chọn panel (🏪 chính `.panel` / 🤝 Trung Gian `.mmpanel`) → chọn phần cần sửa → nhập trong modal.
+  - 📝 Tiêu đề / Mô tả / Footer / Màu (hex, vd `5865F2`).
+  - 🔹 Từng mục (field) — sửa tên + nội dung; bỏ trống cả 2 ô để **ẩn** mục đó.
+  - ♻️ Khôi phục mặc định · 📤 Gửi panel vào kênh hiện tại.
+- Lưu ở `cfg_panel_text` (theo guild); mục chưa chỉnh dùng mặc định `PANEL_TEXT_DEFAULTS` nên panel cũ không đổi.
+- `build_panel_embed` / `build_middleman_panel_embed` giờ đọc cấu hình này. Panel đã gửi trước đó không tự đổi.
+- View/Modal dùng `GuildContextView/Modal`, gọi `super().interaction_check()` rồi mới check `ADMIN_IDS`.
+- Cập nhật `.help` + test `PanelText` trong `tests/test_misc.py`.
+
 ## [v4.60.0] — 2026-10-10
 
 ### ✨ Bảng xếp hạng chi tiêu mới — `cogs/leaderboard.py` (thay `.bxh` cũ trong `shop_orders.py`)

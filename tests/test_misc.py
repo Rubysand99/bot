@@ -103,3 +103,34 @@ class AiGuards(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class PanelText(unittest.TestCase):
+    """`.paneltext` — sửa chữ panel theo guild, mặc định giữ nguyên khi chưa chỉnh."""
+    def setUp(self):
+        async def go():
+            col = boot(); col.docs["main"] = {"_id": "main"}
+            C.get_db = lambda: {"bot_data": col}
+            await D.init_data_cache(B())
+        asyncio.run(go()); D.set_current_guild(1)
+
+    def test_default_unchanged(self):
+        t = T.get_panel_text("main")
+        self.assertEqual(t["title"], T.PANEL_TEXT_DEFAULTS["main"]["title"])
+        self.assertEqual(len(t["fields"]), 3)
+
+    def test_override_and_reset(self):
+        T.set_panel_text("main", base={"title": "Shop Mới", "color": "FF0000"})
+        T.set_panel_text("main", field_idx=1, field={"name": "A", "value": "B"})
+        t = T.get_panel_text("main")
+        self.assertEqual((t["title"], t["color"]), ("Shop Mới", "FF0000"))
+        self.assertEqual(t["fields"][1]["name"], "A")
+        self.assertEqual(t["fields"][0]["name"], T.PANEL_TEXT_DEFAULTS["main"]["fields"][0]["name"])
+        self.assertEqual(T.get_panel_text("mm")["title"], T.PANEL_TEXT_DEFAULTS["mm"]["title"])
+        T.reset_panel_text("main")
+        self.assertEqual(T.get_panel_text("main")["title"], T.PANEL_TEXT_DEFAULTS["main"]["title"])
+
+    def test_color_parse(self):
+        self.assertEqual(T._parse_color("#ff00aa", "000000"), "FF00AA")
+        self.assertEqual(T._parse_color("", "123456"), "123456")
+        self.assertIsNone(T._parse_color("zzz", "123456"))
