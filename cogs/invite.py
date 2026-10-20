@@ -23,6 +23,7 @@ import discord
 from discord.ext import commands
 
 from cogs.logger import send_log
+from core.data import is_admin
 from shared.data import is_global_loaded
 from core.data import (
     ADMIN_IDS, load_data, save_data, _uname, _uname_plain,
@@ -173,7 +174,7 @@ class InviteCog(commands.Cog):
     @commands.command(name="serverlist", aliases=["servers", "guildlist"])
     async def serverlist_cmd(self, ctx):
         """Admin xem danh sách server bot đang hoạt động."""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin.")
 
         guilds = self.bot.guilds
@@ -212,7 +213,7 @@ class InviteCog(commands.Cog):
     @commands.command(name="leaveguild", aliases=["leaveserver"])
     async def leaveguild_cmd(self, ctx, guild_id: str = None):
         """Admin kick bot ra khỏi server. Dùng: .leaveguild <guild_id>"""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin.")
 
         if not guild_id:
@@ -296,7 +297,7 @@ class InviteCog(commands.Cog):
           .invitetop alltime      → top 10 all-time
           .invitetop 20 alltime   → top 20 all-time
         """
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin.")
 
         import re as _re
@@ -393,7 +394,7 @@ class InviteCog(commands.Cog):
         .resetinvitemonth all    → reset cả server tháng này
         .resetinvitemonth @user  → reset 1 người tháng này
         """
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin.")
 
         now         = datetime.now(timezone.utc)
@@ -458,7 +459,7 @@ class InviteCog(commands.Cog):
         .resetinviteall        → reset all-time toàn server
         .resetinviteall @user  → reset all-time 1 người
         """
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin.")
 
         member = ctx.message.mentions[0] if ctx.message.mentions else None
@@ -682,7 +683,7 @@ class InviteCog(commands.Cog):
     @discord.app_commands.command(name="invitetop", description="Bảng xếp hạng invite tháng này (admin)")
     @discord.app_commands.describe(top="Số người top (mặc định 10)")
     async def slash_invitetop(self, interaction: discord.Interaction, top: int = 10):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         top    = max(1, min(top, 25))
         now    = datetime.now(timezone.utc)
@@ -712,7 +713,7 @@ class InviteCog(commands.Cog):
     @discord.app_commands.command(name="resetinvite", description="Reset invite tháng này của thành viên (admin)")
     @discord.app_commands.describe(member="Thành viên cần reset (để trống = reset tất cả tháng này)")
     async def slash_resetinvite(self, interaction: discord.Interaction, member: discord.Member = None):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         now = datetime.now(timezone.utc)
         month_label = f"Tháng {now.month}/{now.year}"

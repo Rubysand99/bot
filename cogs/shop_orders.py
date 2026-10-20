@@ -39,6 +39,7 @@ import discord
 from discord.ext import commands
 from discord.ui import TextInput
 
+from core.data import is_admin
 from core.data import (
     ADMIN_IDS, fmt_amount, is_staff_member, get_or_fetch_channel, _uname_plain,
     set_current_guild, is_data_cache_ready,
@@ -559,7 +560,7 @@ class ShopOrdersCog(commands.Cog):
     @commands.command(name="setqueue")
     async def setqueue_cmd(self, ctx: commands.Context, channel: discord.TextChannel = None):
         """Dùng: .setqueue #kênh — đặt kênh hàng đợi đơn hàng."""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
         if not channel:
             current_id = get_cfg_queue_channel()
@@ -574,7 +575,7 @@ class ShopOrdersCog(commands.Cog):
     @commands.command(name="shoporderno")
     async def shoporderno_cmd(self, ctx: commands.Context, number: int = None):
         """Dùng: .shoporderno <số> — chỉnh số hóa đơn kế tiếp (vd để khớp hệ thống cũ)."""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
         if number is None:
             current = load_data().get("shop_order_counter", 0)
@@ -596,7 +597,7 @@ class ShopOrdersCog(commands.Cog):
         bank_code_vietqr: mã ngân hàng theo VietQR, vd vietinbank, mbbank, vietcombank, tpbank...
         Danh sách mã: https://api.vietqr.io/v2/banks
         """
-        if not (ctx.author.id in ADMIN_IDS or has_ticket_access(ctx.author)):
+        if not (is_admin(ctx.author) or has_ticket_access(ctx.author)):
             return await ctx.reply("❌ Chỉ admin hoặc seller mới dùng được lệnh này.")
 
         if not args:
@@ -647,7 +648,7 @@ class ShopOrdersCog(commands.Cog):
     @commands.command(name="listbank")
     async def listbank_cmd(self, ctx: commands.Context):
         """Dùng: .listbank — liệt kê toàn bộ bank các seller đã đăng ký qua .shopbank."""
-        if not (ctx.author.id in ADMIN_IDS or has_ticket_access(ctx.author)):
+        if not (is_admin(ctx.author) or has_ticket_access(ctx.author)):
             return await ctx.reply("❌ Chỉ admin hoặc seller mới dùng được lệnh này.")
 
         banks = get_all_shop_orders_banks()
@@ -678,11 +679,11 @@ class ShopOrdersCog(commands.Cog):
         """Dùng: .delbank [@seller] — xoá bank đã đăng ký (thêm nhầm/sai thông tin).
         Không truyền @seller = tự xoá bank CỦA BẠN. Truyền @seller = chỉ admin xoá được
         bank của NGƯỜI KHÁC (seller thường không được xoá bank của seller khác)."""
-        if not (ctx.author.id in ADMIN_IDS or has_ticket_access(ctx.author)):
+        if not (is_admin(ctx.author) or has_ticket_access(ctx.author)):
             return await ctx.reply("❌ Chỉ admin hoặc seller mới dùng được lệnh này.")
 
         target = member or ctx.author
-        if target.id != ctx.author.id and ctx.author.id not in ADMIN_IDS:
+        if target.id != ctx.author.id and not is_admin(ctx.author):
             return await ctx.reply("❌ Bạn chỉ xoá được bank CỦA CHÍNH BẠN — cần admin để xoá bank người khác.")
 
         bank = get_shop_orders_bank(target.id)

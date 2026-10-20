@@ -13,6 +13,7 @@ from discord import app_commands
 from discord.ext import commands
 from discord.ui import Button, Select
 
+from core.data import is_admin
 from core.data import (
     ADMIN_IDS, load_giveaways_data, save_giveaways_data,
     _uname, _uname_plain, get_or_fetch_channel,
@@ -362,14 +363,14 @@ class GiveawayCog(commands.Cog):
     # ── Slash commands ──
     @app_commands.command(name="giveaway", description="Tạo giveaway mới")
     async def slash_giveaway(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
+        if not is_admin(interaction.user) and not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Chỉ admin mới được tạo giveaway.", ephemeral=True)
         await interaction.response.send_modal(GiveawayModal())
 
     @app_commands.command(name="gend", description="Kết thúc giveaway sớm")
     @app_commands.describe(gw_id="ID giveaway (GW #?)")
     async def slash_gend(self, interaction: discord.Interaction, gw_id: str):
-        if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
+        if not is_admin(interaction.user) and not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try:
             ref = int(gw_id)
@@ -401,7 +402,7 @@ class GiveawayCog(commands.Cog):
     @app_commands.command(name="greroll", description="Quay số lại giveaway")
     @app_commands.describe(gw_id="ID giveaway (GW #?)")
     async def slash_greroll(self, interaction: discord.Interaction, gw_id: str):
-        if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
+        if not is_admin(interaction.user) and not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try:
             ref = int(gw_id)
@@ -433,7 +434,7 @@ class GiveawayCog(commands.Cog):
     @app_commands.command(name="gwlist", description="Xem danh sách người tham gia giveaway")
     @app_commands.describe(gw_id="ID giveaway (GW #?)")
     async def slash_gwlist(self, interaction: discord.Interaction, gw_id: str):
-        if interaction.user.id not in ADMIN_IDS and not interaction.user.guild_permissions.administrator:
+        if not is_admin(interaction.user) and not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try:
             ref = int(gw_id)
@@ -460,7 +461,7 @@ class GiveawayCog(commands.Cog):
     @commands.command(name="gwstatus")
     async def gwstatus(self, ctx):
         """Xem toàn bộ giveaway đang chạy và đã kết thúc trong data."""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         if not active_giveaways:
             return await ctx.reply("📭 Không có giveaway nào trong data.")
@@ -470,7 +471,7 @@ class GiveawayCog(commands.Cog):
     @commands.command(name="gwpick")
     async def gwpick(self, ctx, gw_id: str = None, user_id: str = None):
         """Chọn winner trước, bot công bố khi hết giờ. Dùng: .gwpick <gw_id> <user_id>"""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         if not gw_id or not user_id:
             return await ctx.reply("❌ Dùng: `.gwpick <gw_id> <user_id>`")
@@ -508,7 +509,7 @@ class GiveawayCog(commands.Cog):
     @commands.command(name="gwreset")
     async def gwreset(self, ctx, gw_id: str = None):
         """Khôi phục giveaway bị kết thúc nhầm. Dùng: .gwreset <gw_id>"""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         if not gw_id:
             return await ctx.reply("❌ Dùng: `.gwreset <gw_id>`")
@@ -771,19 +772,19 @@ class GwStatusView(View):
     # ── Callbacks ─────────────────────────────
 
     async def _prev(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         self._rebuild(self.page - 1)
         await interaction.response.edit_message(embed=self._build_embed(self.page), view=self)
 
     async def _next(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         self._rebuild(self.page + 1)
         await interaction.response.edit_message(embed=self._build_embed(self.page), view=self)
 
     async def _end_early_callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try:
             mid = int(interaction.data["values"][0])
@@ -816,7 +817,7 @@ class GwStatusView(View):
         )
 
     async def _delete_callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         try:
             mid = int(interaction.data["values"][0])

@@ -1567,7 +1567,7 @@ class PanelButtonToggleView(View):
 
     def _make_toggle_callback(self, key: str):
         async def callback(interaction: discord.Interaction):
-            if interaction.user.id not in ADMIN_IDS:
+            if not is_admin(interaction.user):
                 return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
             cfg = get_panel_buttons_cfg()
             new_state = not cfg.get(key, True)
@@ -1598,7 +1598,7 @@ class PanelTextBaseModal(Modal):
         for i in (self.title_in, self.desc_in, self.footer_in, self.color_in): self.add_item(i)
 
     async def on_submit(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         kind = self.pview.kind
         color = _parse_color(self.color_in.value, PANEL_TEXT_DEFAULTS[kind]["color"])
@@ -1623,7 +1623,7 @@ class PanelTextFieldModal(Modal):
         self.add_item(self.name_in); self.add_item(self.value_in)
 
     async def on_submit(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
         set_panel_text(self.pview.kind, field_idx=self.idx, field={"name": self.name_in.value, "value": self.value_in.value})
         await self.pview.refresh(interaction)
@@ -1638,7 +1638,7 @@ class PanelTextView(View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not await super().interaction_check(interaction): return False
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
             return False
         return True
@@ -1716,7 +1716,7 @@ class TicketButtons(View):
 
     @discord.ui.button(label="Hoàn thành đơn", emoji="✅", style=discord.ButtonStyle.green, custom_id="complete_order")
     async def complete_order(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin mới có quyền hoàn thành đơn.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         await interaction.channel.send(
@@ -1845,7 +1845,7 @@ class TicketCog(commands.Cog):
 
     @commands.command()
     async def panel(self, ctx):
-        if ctx.author.id not in ADMIN_IDS: return
+        if not is_admin(ctx.author): return
         await ctx.send(embed=build_panel_embed(ctx.guild), view=TicketPanel(ctx.guild.id))
         await ctx.message.delete()
 
@@ -1854,14 +1854,14 @@ class TicketCog(commands.Cog):
     @commands.command(name="mmpanel", aliases=["middlemanpanel"])
     async def mmpanel_cmd(self, ctx):
         """Gửi panel Giao Dịch Trung Gian (AutoMM) vào kênh hiện tại."""
-        if ctx.author.id not in ADMIN_IDS: return
+        if not is_admin(ctx.author): return
         await ctx.send(embed=build_middleman_panel_embed(ctx.guild), view=MiddlemanPanelView())
         await ctx.message.delete()
 
     @commands.command(name="panelbuttons", aliases=["panelbtn", "ticketbuttons"])
     async def panelbuttons_cmd(self, ctx):
         """Bật/tắt từng nút của panel ticket — lưu riêng theo server (guild)."""
-        if ctx.author.id not in ADMIN_IDS: return
+        if not is_admin(ctx.author): return
         embed = discord.Embed(
             title="⚙️ Bật/Tắt Nút Panel Ticket",
             description=(
@@ -1876,7 +1876,7 @@ class TicketCog(commands.Cog):
     @commands.command(name="paneltext", aliases=["paneledit", "editpanel"])
     async def paneltext_cmd(self, ctx):
         """Sửa chữ trong panel ticket (tiêu đề, mô tả, footer, màu, các mục) — lưu riêng theo server."""
-        if ctx.author.id not in ADMIN_IDS: return
+        if not is_admin(ctx.author): return
         view = PanelTextView(ctx, "main")
         await ctx.send(embeds=view._preview(ctx.guild), view=view)
 
@@ -1885,7 +1885,7 @@ class TicketCog(commands.Cog):
     # `.panel` (gửi panel NGAY vào kênh hiện tại). Lệnh này chỉ LƯU kênh để bot tự gửi
     # panel về sau, không gửi gì ngay lập tức. Tên cũ giữ lại làm alias.
     async def setpanel(self, ctx, channel: discord.TextChannel = None):
-        if ctx.author.id not in ADMIN_IDS: return
+        if not is_admin(ctx.author): return
         if channel is None: return await ctx.reply("❌ Thiếu kênh! Ví dụ: `.setpanelchannel #shop`")
         save_panel_channel_id(channel.id)
         embed = discord.Embed(title="⚙️  Đã Cài Đặt Panel Channel", description=f"Bot sẽ gửi panel ticket vào {channel.mention}.", color=0x57F287, timestamp=datetime.now(timezone.utc))
@@ -1969,7 +1969,7 @@ class TicketCog(commands.Cog):
         await self._complete_order_impl(ctx, args, use_qr=False, cmd_prefix=".donecash")
 
     async def _complete_order_impl(self, ctx, args: str, *, use_qr: bool, cmd_prefix: str):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin mới có quyền hoàn thành đơn.")
         if not args:
             return await ctx.reply(
@@ -2207,7 +2207,7 @@ class TicketCog(commands.Cog):
         """Trừ tiền đã tiêu của user — dùng khi lỡ `.done` nhầm (nhầm người, nhầm số tiền).
         Trong ticket: `.undone 50k` (đọc buyer từ topic, tự mở lại được `.done` trong kênh này).
         Ngoài ticket: `.undone @user 50k`"""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin mới có quyền chỉnh sửa đơn.")
         if not args:
             return await ctx.reply(
@@ -2352,7 +2352,7 @@ class TicketCog(commands.Cog):
         user="Buyer (bỏ trống nếu dùng trong ticket — tự đọc từ topic)",
     )
     async def slash_done(self, interaction: discord.Interaction, amount: str, user: discord.Member = None):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin mới có quyền hoàn thành đơn.", ephemeral=True)
 
         parsed = parse_amount(amount)
@@ -2795,7 +2795,7 @@ class TicketCog(commands.Cog):
           .setrole support builder
           .setrole acc_pre reset
         """
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
 
         VALID_KEYS = ["order_donut", "order_kingmc", "order_ff", "order_build", "acc_pre", "rubyshop", "middleman", "giveaway", "support"]
@@ -2965,7 +2965,7 @@ class TicketCog(commands.Cog):
         .setsellercat <@seller | seller_id> #category
         Admin gán category riêng cho từng seller.
         """
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
 
         if not seller:
@@ -3011,7 +3011,7 @@ class TicketCog(commands.Cog):
     @commands.command(name="removesellercat", aliases=["removesl"])
     async def removesl_cmd(self, ctx, seller: discord.Member = None):
         """Admin xóa category của một seller."""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
         if not seller:
             return await ctx.reply("❌ Thiếu seller! Ví dụ: `.removesellercat @seller`")
@@ -3025,7 +3025,7 @@ class TicketCog(commands.Cog):
     # với nhau hơn là 2 tiền tố rời rạc "sl"/"sellerroles".
     async def listsl_cmd(self, ctx):
         """Admin xem danh sách seller → category."""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
 
         all_cats = get_all_seller_categories()

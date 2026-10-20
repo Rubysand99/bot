@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands
 
+from core.data import is_admin
 from core.data import ADMIN_IDS, load_data, save_cfg, set_current_guild
 from core.message_search import is_indexable, save_message, save_messages_batch, search_messages
 
@@ -38,7 +39,7 @@ class MessageSearchCog(commands.Cog):
     # ─────────────────────────────────────
     @commands.command(name="aiindex")
     async def aiindex(self, ctx: commands.Context, limit: int = BACKFILL_DEFAULT_LIMIT):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         limit = max(1, min(limit, BACKFILL_MAX_LIMIT))
 
@@ -81,7 +82,7 @@ class MessageSearchCog(commands.Cog):
     @commands.command(name="aisearchch")
     async def aisearchch(self, ctx: commands.Context, action: str = "list",
                           channel: discord.TextChannel = None):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         data = load_data()
         channels = data.get("cfg_ai_search_channels", [])
@@ -147,7 +148,7 @@ class MessageSearchCog(commands.Cog):
     # ─────────────────────────────────────
     @commands.command(name="aisearch")
     async def aisearch(self, ctx: commands.Context, *, query: str = None):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         if not query:
             return await ctx.send("❌ Dùng: `.aisearch <nội dung cần tìm>`")

@@ -19,6 +19,7 @@ class FakeEmbed:
 dc.Embed = FakeEmbed
 import cogs.leaderboard as L
 L.ADMIN_IDS = [1]
+L.is_admin = lambda m: m.id in L.ADMIN_IDS   # code giờ gọi is_admin() (gồm admin phụ .ad); test giả lập admin cố định id=1
 
 def boot(spent=None):
     col = conftest_stubs.FakeCol(); gw = conftest_stubs.FakeCol()

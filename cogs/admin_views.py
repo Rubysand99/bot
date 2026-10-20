@@ -11,6 +11,7 @@ import discord
 from discord.ui import Button, TextInput, Select
 
 from cogs.logger import send_log
+from core.data import is_admin
 from core.data import (
     ADMIN_IDS,
     get_cfg_font, set_cfg_font,
@@ -207,17 +208,17 @@ class PriceManagerView(View):
 
     @discord.ui.button(label="➕ Thêm mục mới", style=discord.ButtonStyle.success, row=1)
     async def add_section(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        if not is_admin(interaction.user): return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_modal(AddPriceSectionModal())
 
     @discord.ui.button(label="🗑️ Xoá mục", style=discord.ButtonStyle.danger, row=1)
     async def del_section(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        if not is_admin(interaction.user): return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_message("Chọn mục muốn xoá:", view=DeletePriceSectionView(), ephemeral=True)
 
     @discord.ui.button(label="🔄 Reset về mặc định", style=discord.ButtonStyle.grey, row=1)
     async def reset_sections(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        if not is_admin(interaction.user): return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         save_price_sections(_DEFAULT_PRICE_SECTIONS)
         await interaction.response.send_message("✅ Đã reset bảng giá về mặc định!")
 
@@ -240,7 +241,7 @@ class EmojiConfigModal(Modal):
         self.add_item(self.emoji_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         value = self.emoji_input.value.strip()
         if not value:
@@ -278,7 +279,7 @@ class SettingsView(View):
                 self_inner.cfg_key = cfg_key
                 self_inner.title   = title
             async def callback(self_inner, inter: discord.Interaction):
-                if inter.user.id not in ADMIN_IDS:
+                if not is_admin(inter.user):
                     return await inter.response.send_message("❌ Chỉ admin.", ephemeral=True)
                 ch_id = int(self_inner.values[0])
                 save_cfg(self_inner.cfg_key, ch_id)
@@ -319,7 +320,7 @@ class SettingsView(View):
                 ]
                 super().__init__(placeholder=f"Chọn category cho {title}…", options=opts)
             async def callback(self_inner, inter: discord.Interaction):
-                if inter.user.id not in ADMIN_IDS:
+                if not is_admin(inter.user):
                     return await inter.response.send_message("❌ Chỉ admin.", ephemeral=True)
                 cat_id = int(self_inner.values[0])
                 save_cfg(cfg_key, cat_id)
@@ -355,7 +356,7 @@ class SettingsView(View):
     async def ai(self,       i, b): await self._send_channel_select(i, "cfg_ai_channel",      "AI Channel",       "Kênh AI tự động trả lời mọi tin nhắn")
     @discord.ui.button(label="🎫 Ticket Roles",     style=discord.ButtonStyle.primary,   row=3)
     async def ticket_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_message(
             embed=_build_ticket_roles_embed(),
@@ -369,7 +370,7 @@ class SettingsView(View):
 
     @discord.ui.button(label="🪄 Relay Tin Admin (Ticket)", style=discord.ButtonStyle.secondary, row=4)
     async def ticket_relay_toggle(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         data = load_data()
         new_val = not data.get("cfg_ticket_relay", True)
@@ -399,7 +400,7 @@ class SettingsView(View):
 
     @discord.ui.button(label="😀 Legit Emoji",     style=discord.ButtonStyle.secondary, row=4)
     async def legit_emoji(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_modal(
             EmojiConfigModal("cfg_legit_emoji", "Legit Emoji", get_cfg_legit_emoji())
@@ -407,7 +408,7 @@ class SettingsView(View):
 
     @discord.ui.button(label="📸 Vouch Emoji",     style=discord.ButtonStyle.secondary, row=4)
     async def vouch_emoji(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_modal(
             EmojiConfigModal("cfg_vouch_emoji", "Vouch Emoji", get_cfg_vouch_emoji())
@@ -528,7 +529,7 @@ class _TicketTypeSelect(Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         ticket_key  = self.values[0]
         ticket_label = _TICKET_KEY_LABEL.get(ticket_key, ticket_key)
@@ -703,7 +704,7 @@ class _RolePickerView(View):
         )
 
     async def _on_save(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         unique_ids = list(dict.fromkeys(self.pending_ids))  # dedup, giữ thứ tự
         set_ticket_role_ids(self.ticket_key, unique_ids)
@@ -724,7 +725,7 @@ class _RolePickerView(View):
         )
 
     async def _on_clear(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         self.pending_ids = []
         set_ticket_role_ids(self.ticket_key, [])
@@ -740,7 +741,7 @@ class ChannelConfigSelect(Select):
         self.cfg_key = cfg_key; self.title = title
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        if not is_admin(interaction.user): return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         ch_id = int(self.values[0])
         save_cfg(self.cfg_key, ch_id)
         await interaction.response.send_message(f"✅ Đã cài **{self.title}** → <#{ch_id}>")
@@ -751,7 +752,7 @@ class RoleConfigSelect(Select):
         self.cfg_key = cfg_key; self.title = title
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        if not is_admin(interaction.user): return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         role_id = int(self.values[0])
         save_cfg(self.cfg_key, role_id)
         await interaction.response.send_message(f"✅ Đã cài **{self.title}** → <@&{role_id}>")
@@ -773,7 +774,7 @@ class MultiRoleConfigSelect(Select):
                 opt.default = True
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS: return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
+        if not is_admin(interaction.user): return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         role_ids = [int(v) for v in self.values]
         save_cfg(self.cfg_key, role_ids)
         mentions = " ".join(f"<@&{r}>" for r in role_ids) if role_ids else "*(không role nào)*"
@@ -795,7 +796,7 @@ class SetupMainView(View):
         # trước (bug đã gặp thực tế — xem CHANGELOG v4.25.3).
         if not await super().interaction_check(interaction):
             return False
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
             return False
         return True
@@ -900,7 +901,7 @@ class SetupChannelView(View):
         # không phải admin. Xem CHANGELOG cho toàn bộ 4 view Setup*View bị lỗi tương tự.
         if not await super().interaction_check(interaction):
             return False
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
             return False
         return True
@@ -1250,7 +1251,7 @@ class SetupCategoryView(View):
         # FIX (bảo vệ thêm — xem ghi chú đầy đủ ở SetupChannelView.interaction_check())
         if not await super().interaction_check(interaction):
             return False
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
             return False
         return True
@@ -1394,7 +1395,7 @@ class SetupRoleView(View):
         # xem/sửa nhầm cấu hình.
         if not await super().interaction_check(interaction):
             return False
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
             return False
         return True
@@ -1419,7 +1420,7 @@ class SetupRoleView(View):
 
     @discord.ui.button(label="🛒 Buy Roles", style=discord.ButtonStyle.primary, row=1)
     async def buy_roles_btn(self, interaction: discord.Interaction, _):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_message(
             embed=_buy_roles_embed(),
@@ -1427,7 +1428,7 @@ class SetupRoleView(View):
 
     @discord.ui.button(label="🔐 Quyền Role", style=discord.ButtonStyle.secondary, row=2)
     async def set_perm_btn(self, interaction: discord.Interaction, _):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await RolePermFlow.start(interaction)
 
@@ -1548,7 +1549,7 @@ class RoleAssignSelectView(View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not await super().interaction_check(interaction):
             return False
-        if interaction.user.id not in ADMIN_IDS or interaction.user.id != self.invoker_id:
+        if not is_admin(interaction.user) or interaction.user.id != self.invoker_id:
             await interaction.response.send_message("❌ Chỉ người dùng lệnh mới thao tác được.", ephemeral=True)
             return False
         return True
@@ -1607,13 +1608,13 @@ class BuyRolesView(View):
 
     @discord.ui.button(label="➕ Thêm tier", style=discord.ButtonStyle.success, row=0)
     async def add(self, interaction: discord.Interaction, _):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         await interaction.response.send_modal(AddBuyRoleModal())
 
     @discord.ui.button(label="🗑️ Xóa tier", style=discord.ButtonStyle.danger, row=0)
     async def delete(self, interaction: discord.Interaction, _):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         buy_roles = get_buy_roles()
         if not buy_roles:
@@ -1636,7 +1637,7 @@ class BuyRolesView(View):
 
     @discord.ui.button(label="🔍 Auto Detect", style=discord.ButtonStyle.primary, row=1)
     async def auto_detect(self, interaction: discord.Interaction, _):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         import re
         # Format: "Buyer Xk-Yk", "Buyer Xtr-Ytr", "Buyer Xm-Ym", max có thể bỏ trống (∞)
@@ -1726,7 +1727,7 @@ class _DeleteBuyRoleSelect(Select):
         super().__init__(placeholder="Chọn tier cần xóa…", options=opts)
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         idx = int(self.values[0])
         buy_roles = get_buy_roles()
@@ -1753,7 +1754,7 @@ class SetupServerView(View):
         # FIX (bảo vệ thêm — xem ghi chú đầy đủ ở SetupChannelView.interaction_check())
         if not await super().interaction_check(interaction):
             return False
-        if interaction.user.id not in ADMIN_IDS:
+        if not is_admin(interaction.user):
             await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
             return False
         return True

@@ -16,6 +16,7 @@ import datetime
 import discord
 from discord.ext import commands, tasks
 
+from core.data import is_admin
 from core.data import (
     ADMIN_IDS, load_data, save_data, set_current_guild,
     wait_data_cache_ready,
@@ -185,13 +186,13 @@ class SellerCog(commands.Cog, name="Seller"):
 
     @commands.group(name="seller", invoke_without_command=True)
     async def seller_group(self, ctx):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         await ctx.send("❓ Dùng: `.seller add/remove/list/panel`", delete_after=10)
 
     @seller_group.command(name="add")
     async def seller_add(self, ctx, member: discord.Member, days: int = 30):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
 
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -239,7 +240,7 @@ class SellerCog(commands.Cog, name="Seller"):
 
     @seller_group.command(name="remove")
     async def seller_remove(self, ctx, member: discord.Member):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         if not _get_one(ctx.guild.id, member.id):
             return await ctx.send(f"❌ {member.mention} không phải seller.", delete_after=8)
@@ -253,7 +254,7 @@ class SellerCog(commands.Cog, name="Seller"):
 
     @seller_group.command(name="list")
     async def seller_list(self, ctx):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
 
         subs = _get_all(ctx.guild.id)
@@ -297,7 +298,7 @@ class SellerCog(commands.Cog, name="Seller"):
 
     @seller_group.command(name="panel")
     async def seller_panel(self, ctx, member: discord.Member = None):
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         await self._send_panel(ctx, member or ctx.author)
 

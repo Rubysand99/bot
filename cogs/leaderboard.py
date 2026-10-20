@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands, tasks
 
+from core.data import is_admin
 from core.data import (
     ADMIN_IDS,
     GuildContextView,
@@ -298,7 +299,7 @@ class LeaderboardCog(commands.Cog):
         await self._do_panel(ctx, target)
 
     async def _do_panel(self, ctx, target: str) -> None:
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin mới có quyền.")
         arg = target.strip()
 

@@ -18,6 +18,7 @@ from discord.ext import commands, tasks
 from shared.logger import (
     LOG_ICONS, LOG_ROUTES, LOG_GROUP_LABELS, send_log, get_log_channel,
 )
+from core.data import is_admin
 from core.data import (
     ADMIN_IDS, get_cfg_log_rudy, get_log_channels, get_log_channel_by_group,
     set_log_channel_db, get_or_fetch_channel,
@@ -193,7 +194,7 @@ class LoggerCog(commands.Cog):
     @commands.command(name="baocao", aliases=["report"])
     async def manual_report(self, ctx):
         """Admin gọi thủ công báo cáo ngay lập tức."""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         await self._send_daily_report(ctx.guild)
         await ctx.message.add_reaction("✅")
@@ -202,7 +203,7 @@ class LoggerCog(commands.Cog):
     @commands.command(name="setlog")
     async def set_log(self, ctx, group: str = None, channel: discord.TextChannel = None):
         """Cài kênh log cho từng nhóm. Dùng: .setlog <nhóm> #kênh"""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         if not group or not channel:
             # Hiện danh sách nhóm + kênh hiện tại
@@ -245,7 +246,7 @@ class LoggerCog(commands.Cog):
     @commands.command(name="setuplog")
     async def setup_log(self, ctx, category_id: int = None):
         """Tự động tạo toàn bộ kênh log và bỏ vào danh mục cố định.\nDùng: .setuplog [category_id]"""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
 
         DEFAULT_CATEGORY_ID = 1486967303802191912
@@ -317,7 +318,7 @@ class LoggerCog(commands.Cog):
         Dùng: .testlog          → test tất cả nhóm
               .testlog <nhóm>   → test 1 nhóm cụ thể
         """
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
 
         # Map nhóm → event đại diện để test
@@ -409,7 +410,7 @@ class LoggerCog(commands.Cog):
     @commands.command(name="loginfo")
     async def log_info(self, ctx):
         """Xem toàn bộ kênh log đang được cài."""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):
             return
         embed = discord.Embed(
             title="📋 Kênh Log Hiện Tại",

@@ -1,3 +1,16 @@
+## [v4.61.1] — 2026-10-20
+
+### 🐛 Fix: admin phụ (`.ad`) bị báo không đủ quyền — rà toàn bộ cổng kiểm tra quyền
+- Nguyên nhân: nhiều lệnh/nút/modal kiểm tra quyền bằng `ADMIN_IDS` (chỉ 2 admin cố định) nên bỏ qua admin phụ
+  thêm qua `.ad` (lưu theo guild). Đổi sang `is_admin()` (admin cố định HOẶC admin phụ của ĐÚNG server) ở:
+  `ticket` (`.panel` `.mmpanel` `.panelbuttons` `.paneltext` `.done` `.undone` `.setrole` `.setsellercat`... + nút/modal),
+  `admin_views` (`.st`/setup menu), `giveaway`, `invite`, `seller`, `shop_orders`, `logger`, `message_search`, `leaderboard`.
+- **Cố ý giữ nguyên chỉ cho admin cố định** (nhạy cảm / liên server): `.as` `.ad` `.rmad` (cogs/admin.py), lệnh nguy hiểm &
+  phân cấp trong `cogs/mod.py`, `.ai` + AI tools (`ai_chat.py`, `core/ai_tools.py`), AUTH_GATE (`shared/auth_gate.py`),
+  listener `on_message` ở ticket/ai_chat, và các chỗ dùng `ADMIN_IDS` để gắn ping / quyền kênh / DM cảnh báo.
+- Quy ước: kiểm tra quyền admin dùng `is_admin(member)`, không check thẳng `member.id in ADMIN_IDS`.
+- Test: `tests/test_leaderboard.py` stub `is_admin` cho khớp.
+
 ## [v4.61.0] — 2026-10-19
 
 ### ✨ Lệnh `.paneltext` — tự sửa chữ trong panel ticket (`cogs/ticket.py`)
