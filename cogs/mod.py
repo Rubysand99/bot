@@ -393,7 +393,7 @@ class ModCog(commands.Cog):
         kiểm tra bot → mod ban/kick được cả người role cao hơn mình, kể cả admin bot)."""
         if target.id == actor.id:
             return "❌ Không thể tự thực hiện lệnh này lên chính mình."
-        if target.id in ADMIN_IDS:
+        if is_admin(target, quiet=True):   # admin cố định + admin phụ của server này đều được bảo vệ
             return "❌ Không thể thực hiện lệnh này lên admin của bot."
         if target.id == guild.owner_id:
             return "❌ Không thể thực hiện lệnh này lên chủ server."
@@ -1056,12 +1056,12 @@ class ModCog(commands.Cog):
 
     # ══════════════════════════════════════
     # CLEAR CATEGORY — xoá toàn bộ kênh trong 1 category
-    # Riêng lệnh này CHỈ admin bot (ADMIN_IDS) mới dùng được — không dùng _is_mod() như
-    # các lệnh mod khác, vì đây là thao tác xoá HÀNG LOẠT/không thể hoàn tác, khác mức độ
-    # rủi ro so với ban/kick/warn từng người một.
+    # Riêng lệnh này CHỈ admin bot mới dùng được — không dùng _is_mod() như các lệnh mod khác, vì đây là
+    # thao tác xoá HÀNG LOẠT/không thể hoàn tác, khác mức độ rủi ro so với ban/kick/warn từng người một.
+    # "Admin bot" = admin cố định + admin phụ (.ad) của server này (kênh chỉ bị xoá trong server đang gõ lệnh).
     # ══════════════════════════════════════
     def _is_admin(self, member: discord.Member) -> bool:
-        return member.id in ADMIN_IDS
+        return is_admin(member)
 
     def _system_category_warning(self, category_id: int) -> str | None:
         """Nếu category trùng với cfg_ticket_category/stock/sold — trả về tên để cảnh báo

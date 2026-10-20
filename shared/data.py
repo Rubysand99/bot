@@ -81,41 +81,16 @@ class GuildContextView(discord.ui.View):
     Bắt buộc: mọi View có nút bấm/select đọc-ghi data theo guild PHẢI dùng class này
     (không phải discord.ui.View trực tiếp).
     Dùng: from shared.data import GuildContextView as View
+    Mọi lượt bấm đều được log `[UI]`; lượt bị AUTH_GATE chặn log `[AUTH-GATE]` (xem guild_ui_gate).
     """
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.guild_id:
-            set_current_guild(interaction.guild_id)
-            if interaction.guild_id not in get_authorized_guilds():
-                if interaction.user.id in ADMIN_IDS:
-                    try:
-                        await interaction.response.send_message(
-                            f"🔒 Server này (`{interaction.guild_id}`) chưa được ủy quyền.\n"
-                            f"Dùng `.as {interaction.guild_id}` để bật.",
-                            ephemeral=True,
-                        )
-                    except Exception:
-                        pass
-                return False
-        return True
+        return await guild_ui_gate(interaction, "view", self)
 
 
 class GuildContextModal(discord.ui.Modal):
     """Tương tự GuildContextView nhưng cho Modal — cùng áp dụng AUTH_GATE, xem docstring trên."""
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.guild_id:
-            set_current_guild(interaction.guild_id)
-            if interaction.guild_id not in get_authorized_guilds():
-                if interaction.user.id in ADMIN_IDS:
-                    try:
-                        await interaction.response.send_message(
-                            f"🔒 Server này (`{interaction.guild_id}`) chưa được ủy quyền.\n"
-                            f"Dùng `.as {interaction.guild_id}` để bật.",
-                            ephemeral=True,
-                        )
-                    except Exception:
-                        pass
-                return False
-        return True
+        return await guild_ui_gate(interaction, "modal", self)
 
 
 # ══════════════════════════════════════════
@@ -671,32 +646,50 @@ async def remove_extra_admin(user_id: int) -> bool:
     log.info(f"[ADMIN] ➖ Đã xoá admin phụ {user_id} khỏi guild={guild_id}. Danh sách guild này giờ: {lst}")
     return True
 
+# ── CONTEXT "ĐANG CHẠY LỆNH / UI NÀO" ──
+# Set ở before_invoke (lệnh prefix), CommandTree.interaction_check (slash), guild_ui_gate (nút/select/modal).
+# Dùng để: (1) log kiểm tra quyền ghi rõ lệnh nào đang bị chặn, (2) phân biệt kiểm tra quyền CHỦ ĐỘNG
+# (user vừa gõ lệnh → log INFO) với kiểm tra THỤ ĐỘNG (listener on_message... → chỉ DEBUG, tránh spam log).
+_command_ctx: contextvars.ContextVar = contextvars.ContextVar("command_ctx", default=None)
+
+def set_command_context(label: str | None) -> None:
+    _command_ctx.set(label)
+
+def get_command_context() -> str | None:
+    return _command_ctx.get()
+
+
 # ── LOG KIỂM TRA QUYỀN ADMIN — phục vụ debug "sao user X báo không đủ quyền" ──
-# Mọi lần is_admin() TỪ CHỐI đều được log (INFO, chống spam: cùng user+guild+lý do chỉ log 1 lần/60s)
-# kèm: user, guild, lý do cụ thể, danh sách admin phụ của guild, user có phải admin phụ của SERVER KHÁC
-# không (lỗi hay gặp: gõ `.ad` nhầm server), và DÒNG CODE đã gọi is_admin (file:dòng hàm()) → biết ngay
-# lệnh/nút nào chặn. Cho phép qua admin phụ cũng log. Admin cố định chỉ log khi bật env ADMIN_DEBUG=1
-# (vì rất thường xuyên). Bật ADMIN_DEBUG=1 trên Railway để log MỌI lần kiểm tra không chống spam.
+# Khi đang trong 1 lệnh/UI (get_command_context() != None): MỌI lần is_admin() từ chối / cho phép qua admin phụ
+# đều log INFO (chống spam: cùng user+guild+lệnh+lý do chỉ 1 lần/60s) kèm: user, guild, lệnh, lý do, danh sách
+# admin phụ của guild, hint "là admin phụ server khác", và DÒNG CODE gọi is_admin (file:dòng hàm()).
+# Ngoài lệnh/UI (listener, task nền) chỉ log DEBUG. Thiếu guild context luôn log WARNING.
+# Admin cố định chỉ log khi đặt env ADMIN_DEBUG=1 (bật luôn chế độ KHÔNG chống spam, mọi mức → INFO).
+# Truyền quiet=True cho kiểm tra thụ động ở đường nóng (vd on_message) để khỏi tốn/ồn log.
 _ADMIN_DEBUG = os.getenv("ADMIN_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
 _ADMIN_LOG_THROTTLE = 60.0
 _admin_log_last: dict[tuple, float] = {}
 
-def _admin_check_log(level: int, member, guild_id, allowed: bool, reason: str) -> None:
-    key = (getattr(member, "id", None), guild_id, allowed, reason)
-    now = time.monotonic()
+def _admin_check_log(level: int, uid, name, guild_id, allowed: bool, reason: str) -> None:
+    if _ADMIN_DEBUG and level < logging.INFO:
+        level = logging.INFO
+    if not log.isEnabledFor(level):
+        return
+    cmd = get_command_context()
     if not _ADMIN_DEBUG:
+        key = (uid, guild_id, allowed, cmd, reason[:80])
+        now = time.monotonic()
         if now - _admin_log_last.get(key, -1e9) < _ADMIN_LOG_THROTTLE:
             return
         if len(_admin_log_last) > 2000:
             _admin_log_last.clear()
-    _admin_log_last[key] = now
+        _admin_log_last[key] = now
     try:
-        f = sys._getframe(2)  # 0=hàm này, 1=is_admin, 2=nơi gọi is_admin
+        f = sys._getframe(3)  # 0=hàm này, 1=_admin_decision, 2=is_admin/is_admin_id, 3=nơi gọi
         where = f"{os.path.basename(f.f_code.co_filename)}:{f.f_lineno} {f.f_code.co_name}()"
     except Exception:
         where = "?"
-    name = getattr(member, "name", None) or getattr(member, "display_name", None) or "?"
-    log.log(level, f"[ADMIN-CHECK] user={getattr(member, 'id', '?')} ({name}) guild={guild_id} → "
+    log.log(level, f"[ADMIN-CHECK] user={uid} ({name}) guild={guild_id} lệnh={cmd or '—'} → "
                    f"{'✅ CHO PHÉP' if allowed else '⛔ TỪ CHỐI'} · {reason} · gọi từ {where}")
 
 def get_all_extra_admins() -> dict[int, list[int]]:
@@ -709,33 +702,80 @@ def get_all_extra_admins() -> dict[int, list[int]]:
             out[gid] = ids
     return out
 
-def is_admin(member) -> bool:
-    """True nếu member là admin CỐ ĐỊNH (ADMIN_IDS, quyền mọi guild) HOẶC admin PHỤ
-    (.ad) của ĐÚNG guild hiện tại (contextvar). Dùng hàm này thay vì check thẳng
-    member.id in ADMIN_IDS ở bất kỳ đâu cần phân quyền admin theo guild.
-    Mọi kết quả đáng chú ý đều được log — xem chú thích `_admin_check_log` ở trên."""
-    uid = member.id
+def _admin_decision(uid: int, name: str, quiet: bool) -> bool:
     if uid in ADMIN_IDS:
-        if _ADMIN_DEBUG:
-            _admin_check_log(logging.INFO, member, get_current_guild_id(), True, "admin cố định (ADMIN_IDS)")
+        if _ADMIN_DEBUG and not quiet:
+            _admin_check_log(logging.INFO, uid, name, get_current_guild_id(), True, "admin cố định (ADMIN_IDS)")
         return True
     gid = get_current_guild_id()
+    in_cmd = get_command_context() is not None
     if gid is None:
-        _admin_check_log(logging.WARNING, member, None, False,
-                         "KHÔNG có guild context nên không tra được admin phụ — nếu user là admin phụ thì đây là "
-                         "LỖI context (thiếu set_current_guild / DM / event không qua before_invoke)")
+        if not quiet:
+            _admin_check_log(logging.WARNING, uid, name, None, False,
+                             "KHÔNG có guild context nên không tra được admin phụ — nếu user là admin phụ thì đây là "
+                             "LỖI context (thiếu set_current_guild / DM / event không qua before_invoke)")
         return False
     extra = get_extra_admins()
     if uid in extra:
-        _admin_check_log(logging.INFO, member, gid, True, "admin phụ của server này (.ad)")
+        if not quiet:
+            _admin_check_log(logging.INFO if in_cmd else logging.DEBUG, uid, name, gid, True,
+                             "admin phụ của server này (.ad)")
         return True
-    elsewhere = sorted(g for g, ids in get_all_extra_admins().items() if uid in ids and g != gid)
-    hint = (f" · ⚠️ user LÀ admin phụ của server khác {elsewhere} nhưng KHÔNG phải server này — "
-            f"cần gõ `.ad {uid}` trong đúng server này") if elsewhere else ""
-    _admin_check_log(logging.INFO, member, gid, False,
-                     f"không nằm trong ADMIN_IDS {list(ADMIN_IDS)} và không có trong admin phụ của guild "
-                     f"(guild có {len(extra)} admin phụ: {extra}){hint}")
+    if not quiet:
+        elsewhere = sorted(g for g, ids in get_all_extra_admins().items() if uid in ids and g != gid)
+        hint = (f" · ⚠️ user LÀ admin phụ của server khác {elsewhere} nhưng KHÔNG phải server này — "
+                f"cần gõ `.ad {uid}` trong đúng server này") if elsewhere else ""
+        _admin_check_log(logging.INFO if (in_cmd or elsewhere) else logging.DEBUG, uid, name, gid, False,
+                         f"không nằm trong ADMIN_IDS {list(ADMIN_IDS)} và không có trong admin phụ của guild "
+                         f"(guild có {len(extra)} admin phụ: {extra}){hint}")
     return False
+
+def is_admin(member, *, quiet: bool = False) -> bool:
+    """True nếu member là admin CỐ ĐỊNH (ADMIN_IDS, quyền mọi guild) HOẶC admin PHỤ
+    (.ad) của ĐÚNG guild hiện tại (contextvar). Dùng hàm này thay vì check thẳng
+    member.id in ADMIN_IDS ở bất kỳ đâu cần phân quyền admin theo guild.
+    ⚠️ Admin phụ chỉ có quyền TRONG server được cấp. Lệnh có phạm vi LIÊN SERVER / toàn bot
+    (`.as` `.serverlist` `.leaveguild` `.aireset`, nhận guild_id của server khác, dữ liệu dùng chung
+    như giveaway...) KHÔNG được dùng is_admin() trần — dùng `member.id in ADMIN_IDS` hoặc tự kiểm tra
+    đối tượng thuộc đúng server. Mọi kết quả đáng chú ý đều được log — xem chú thích ở trên."""
+    return _admin_decision(member.id, getattr(member, "name", None) or getattr(member, "display_name", None) or "?", quiet)
+
+def is_admin_id(user_id: int, *, quiet: bool = False, name: str = "?") -> bool:
+    """Như is_admin() nhưng chỉ có user_id (không có object member)."""
+    return _admin_decision(user_id, name, quiet)
+
+
+async def guild_ui_gate(interaction: discord.Interaction, kind: str, obj) -> bool:
+    """interaction_check dùng chung cho GuildContextView/Modal: set guild context + command context,
+    áp dụng AUTH_GATE (chặn server chưa ủy quyền), và LOG mọi lượt bấm.
+    ⚠️ Server chưa ủy quyền: mọi người bị chặn — admin cố định VÀ admin phụ được báo lý do, người khác im lặng
+    (nhưng luôn có log `[AUTH-GATE]`)."""
+    gid = interaction.guild_id
+    cid = (interaction.data or {}).get("custom_id") if isinstance(interaction.data, dict) else None
+    label = f"ui:{type(obj).__name__}" + (f":{str(cid)[:40]}" if cid else "")
+    set_command_context(label)
+    u = interaction.user
+    uname = getattr(u, "name", "?")
+    if not gid:
+        return True
+    set_current_guild(gid)
+    if gid not in get_authorized_guilds():
+        fixed = u.id in ADMIN_IDS
+        extra = u.id in get_extra_admins()
+        log.warning(f"[AUTH-GATE] ⛔ chặn {kind} {label} · user={u.id} ({uname}) · guild={gid}: server CHƯA ủy quyền "
+                    f"(admin cố định={fixed}, admin phụ={extra}) → dùng `.as {gid}` để bật")
+        if fixed or extra:
+            try:
+                await interaction.response.send_message(
+                    f"🔒 Server này (`{gid}`) chưa được ủy quyền.\n"
+                    + (f"Dùng `.as {gid}` để bật." if fixed else f"Nhờ Ruby/TuyTam dùng `.as {gid}` để bật."),
+                    ephemeral=True,
+                )
+            except Exception:
+                pass
+        return False
+    log.info(f"[UI] {kind} {label} · user={u.id} ({uname}) · guild={gid} · kênh={interaction.channel_id}")
+    return True
 
 
 # ══════════════════════════════════════════

@@ -299,6 +299,16 @@ class GiveawayModal(Modal, title="🎉 Tạo Giveaway"):
         await interaction.response.send_message(content="## ⚙️ Xác nhận trước khi đăng giveaway", embed=confirm_view.build_preview_embed(), view=confirm_view, ephemeral=True)
 
 
+def _gw_in_scope(bot, user, guild_id, gw: dict) -> bool:
+    """`active_giveaways` là dict TOÀN BOT, tra theo gw_id → PHẢI tự chặn chéo server.
+    Admin cố định: thao tác được mọi giveaway. Admin phụ (.ad) / Discord Administrator: CHỈ giveaway
+    nằm trong server đang dùng lệnh (suy ra từ channel_id). Không tìm ra kênh → coi như ngoài phạm vi."""
+    if user.id in ADMIN_IDS:
+        return True
+    ch = bot.get_channel(gw.get("channel_id") or 0)
+    return bool(ch and getattr(getattr(ch, "guild", None), "id", None) == guild_id)
+
+
 async def _giveaway_timer_task(bot, channel_id: int, message_id: int, winners_count: int, seconds: int):
     await asyncio.sleep(seconds)
     gw = active_giveaways.get(message_id)
@@ -383,7 +393,7 @@ class GiveawayCog(commands.Cog):
                 found_mid, gw = mid, g
                 break
 
-        if not gw:
+        if not gw or not _gw_in_scope(self.bot, interaction.user, interaction.guild_id, gw):
             return await interaction.response.send_message(f"❌ Không tìm thấy GW #{ref}.", ephemeral=True)
         if gw.get("ended"):
             return await interaction.response.send_message("❌ Giveaway đã kết thúc rồi.", ephemeral=True)
@@ -415,7 +425,7 @@ class GiveawayCog(commands.Cog):
                 gw = g
                 break
 
-        if not gw:
+        if not gw or not _gw_in_scope(self.bot, interaction.user, interaction.guild_id, gw):
             return await interaction.response.send_message(f"❌ Không tìm thấy GW #{ref}.", ephemeral=True)
         entries = list(gw.get("entries", set()))
         if not entries:
@@ -447,7 +457,7 @@ class GiveawayCog(commands.Cog):
                 gw = g
                 break
 
-        if not gw:
+        if not gw or not _gw_in_scope(self.bot, interaction.user, interaction.guild_id, gw):
             return await interaction.response.send_message(f"❌ Không tìm thấy GW #{ref}.", ephemeral=True)
         entries = list(gw.get("entries", set()))
         if not entries:
@@ -465,7 +475,8 @@ class GiveawayCog(commands.Cog):
             return
         if not active_giveaways:
             return await ctx.reply("📭 Không có giveaway nào trong data.")
-        view  = GwStatusView(bot=self.bot, guild=ctx.guild, page=0)
+        # Admin cố định xem giveaway của MỌI server; admin phụ chỉ thấy giveaway của server này.
+        view  = GwStatusView(bot=self.bot, guild=ctx.guild, page=0, all_guilds=(ctx.author.id in ADMIN_IDS))
         await ctx.reply(embed=view._build_embed(0), view=view)
 
     @commands.command(name="gwpick")
@@ -490,7 +501,7 @@ class GiveawayCog(commands.Cog):
                 found_gw = gw
                 break
 
-        if not found_gw:
+        if not found_gw or not _gw_in_scope(self.bot, ctx.author, ctx.guild.id, found_gw):
             return await ctx.reply(f"❌ Không tìm thấy giveaway **#{ref}**.")
         if found_gw.get("ended"):
             return await ctx.reply("❌ Giveaway này đã kết thúc rồi.")
@@ -524,7 +535,7 @@ class GiveawayCog(commands.Cog):
                 found_mid, found_gw = mid, gw
                 break
 
-        if not found_gw:
+        if not found_gw or not _gw_in_scope(self.bot, ctx.author, ctx.guild.id, found_gw):
             return await ctx.reply(f"❌ Không tìm thấy giveaway **#{ref}**.")
 
         end_time  = found_gw.get("end_time", 0)
@@ -595,22 +606,25 @@ class GwStatusView(View):
 
     PAGE_SIZE = 5
 
-    def __init__(self, bot, guild, page: int = 0):
+    def __init__(self, bot, guild, page: int = 0, all_guilds: bool = False):
         super().__init__(timeout=180)
         self.bot   = bot
         self.guild = guild
         self.page  = page
+        self.all_guilds = all_guilds
         self._rebuild(page)
 
     # ── Helpers ──────────────────────────────
 
     @staticmethod
-    def _build_pages(guild) -> tuple[list, list, list]:
+    def _build_pages(guild, all_guilds: bool = False) -> tuple[list, list, list]:
         """Trả về (running_lines, ended_items, all_items_flat)."""
         now = datetime.now(timezone.utc).timestamp()
         running, ended = [], []
 
         for mid, gw in active_giveaways.items():
+            if not all_guilds and not (guild and guild.get_channel_or_thread(gw.get("channel_id") or 0)):
+                continue  # giveaway của server khác — admin phụ không được thấy/thao tác
             gw_id   = gw.get("gw_id", "?")
             prize   = gw.get("prize", "?")
             ch_id   = gw.get("channel_id", 0)
@@ -655,7 +669,7 @@ class GwStatusView(View):
         return running, ended, all_flat
 
     def _build_embed(self, page: int) -> discord.Embed:
-        running, ended, all_flat = self._build_pages(self.guild)
+        running, ended, all_flat = self._build_pages(self.guild, self.all_guilds)
         total_pages = max(1, -(-len(all_flat) // self.PAGE_SIZE))  # ceil div
         page = max(0, min(page, total_pages - 1))
         self.page = page
@@ -712,7 +726,7 @@ class GwStatusView(View):
 
     def _rebuild(self, page: int):
         self.clear_items()
-        running, ended, all_flat = self._build_pages(self.guild)
+        running, ended, all_flat = self._build_pages(self.guild, self.all_guilds)
         total_pages = max(1, -(-len(all_flat) // self.PAGE_SIZE))
         page = max(0, min(page, total_pages - 1))
         self.page = page

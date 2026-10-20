@@ -92,6 +92,7 @@ from datetime import datetime, timezone, timedelta
 import discord
 from discord.ext import commands
 
+from core.data import is_admin
 from core.data import (
     ADMIN_IDS, get_cfg_ai_channel, _uname_plain,
     load_global_data, save_global_data,
@@ -787,7 +788,7 @@ class AICog(commands.Cog):
     async def ai_command(self, ctx, *, prompt: str = None):
         """Admin điều khiển bot bằng ngôn ngữ tự nhiên qua tool calling.
         VD: .ai tạo kênh test riêng tư | .ai ban @user spam | .ai đóng ticket này"""
-        if ctx.author.id not in ADMIN_IDS:
+        if not is_admin(ctx.author):   # admin cố định + admin phụ (.ad) của server này; tool AI chỉ tác động server hiện tại
             return await ctx.reply("❌ Chỉ admin dùng được lệnh này.")
         if not prompt:
             return await ctx.reply("❓ Dùng: `.ai <yêu cầu>` — vd `.ai tạo kênh test riêng tư`")
@@ -834,6 +835,7 @@ class AICog(commands.Cog):
 
     @commands.command(name="aireset", aliases=["airst"])
     async def ai_reset(self, ctx):
+        # ⚠️ Xoá lịch sử AI của TOÀN BOT (mọi server) → chỉ admin cố định, không dùng is_admin().
         if ctx.author.id not in ADMIN_IDS:
             return await ctx.reply("❌ Chỉ admin.")
         _ai_chat_history.clear()
@@ -875,6 +877,7 @@ class AICog(commands.Cog):
     # ── SLASH COMMANDS ──
     @discord.app_commands.command(name="aireset", description="Xoá toàn bộ lịch sử AI (admin)")
     async def slash_aireset(self, interaction: discord.Interaction):
+        # ⚠️ Xoá lịch sử AI của TOÀN BOT (mọi server) → chỉ admin cố định, không dùng is_admin().
         if interaction.user.id not in ADMIN_IDS:
             return await interaction.response.send_message("❌ Chỉ admin.", ephemeral=True)
         _ai_chat_history.clear()

@@ -104,15 +104,21 @@ class AdminCheckLogs(unittest.TestCase):
     def setUp(self):
         self._ids = list(D.ADMIN_IDS); D.ADMIN_IDS[:] = [111]
         D._data_cache = {1: {"extra_admin_ids": [500]}, 2: {"extra_admin_ids": [600]}}
-        D._admin_log_last.clear(); D.set_current_guild(1)
-    def tearDown(self): D.ADMIN_IDS[:] = self._ids
+        D._admin_log_last.clear(); D.set_current_guild(1); D.set_command_context(".paneltext")
+    def tearDown(self): D.ADMIN_IDS[:] = self._ids; D.set_command_context(None)
 
-    def test_denied_logs_reason_hint_and_caller(self):
+    def test_denied_logs_reason_hint_command_and_caller(self):
         with self.assertLogs("shared.data", level="INFO") as cm:
             self.assertFalse(D.is_admin(U(600, "bob")))
         msg = cm.output[0]
         self.assertIn("TỪ CHỐI", msg); self.assertIn("server khác [2]", msg)
+        self.assertIn("lệnh=.paneltext", msg)                 # biết lệnh nào bị chặn
         self.assertIn("test_admin_list.py", msg)              # dòng code đã gọi is_admin
+
+    def test_denied_in_command_is_logged_at_info(self):
+        with self.assertLogs("shared.data", level="INFO") as cm:
+            self.assertFalse(D.is_admin(U(999)))
+        self.assertIn("TỪ CHỐI", cm.output[0]); self.assertIn("guild có 1 admin phụ", cm.output[0])
 
     def test_extra_admin_allowed_is_logged(self):
         with self.assertLogs("shared.data", level="INFO") as cm:
@@ -133,6 +139,136 @@ class AdminCheckLogs(unittest.TestCase):
     def test_fixed_admin_silent_unless_debug(self):
         with self.assertNoLogs("shared.data", level="INFO"):
             self.assertTrue(D.is_admin(U(111)))
+
+    def test_passive_check_outside_command_is_not_info(self):
+        D.set_command_context(None)                            # vd listener on_message — không phải user vừa gõ lệnh
+        with self.assertNoLogs("shared.data", level="INFO"):
+            self.assertFalse(D.is_admin(U(999)))
+
+    def test_quiet_never_logs(self):
+        with self.assertNoLogs("shared.data", level="DEBUG"):
+            self.assertFalse(D.is_admin(U(600), quiet=True)); self.assertTrue(D.is_admin(U(500), quiet=True))
+
+    def test_is_admin_id_and_dangerous_cmd_include_extra_admins(self):
+        import core.data as CD
+        self.assertTrue(CD.can_use_dangerous_cmd(111, "emoji"))     # admin cố định
+        self.assertTrue(CD.can_use_dangerous_cmd(500, "emoji"))     # admin phụ của guild 1  ← lỗi .emoji/.rename/.setperm trước đây
+        self.assertFalse(CD.can_use_dangerous_cmd(600, "emoji"))    # admin phụ của guild 2 — KHÔNG có quyền ở guild 1
+        self.assertFalse(CD.can_use_dangerous_cmd(999, "emoji"))
+
+
+import ast
+class CrossServerCommandsStayFixedOnly(unittest.TestCase):
+    """Chốt chặn bảo mật: lệnh LIÊN SERVER / toàn bot KHÔNG được dùng is_admin() (admin phụ chỉ có quyền
+    trong server được cấp). Nếu ai đó lỡ đổi sang is_admin() → test này fail."""
+    FIXED_ONLY = {"cogs/invite.py": ["serverlist_cmd", "leaveguild_cmd"],
+                  "cogs/ai_chat.py": ["ai_reset", "slash_aireset"],
+                  "cogs/admin.py": ["authorize_server_cmd"]}
+    def test_no_is_admin_in_cross_server_commands(self):
+        for rel, names in self.FIXED_ONLY.items():
+            t = ast.parse(open(os.path.join(ROOT, rel), encoding="utf-8").read())
+            found = {n.name: ast.unparse(n) for n in ast.walk(t) if isinstance(n, ast.AsyncFunctionDef) and n.name in names}
+            self.assertEqual(sorted(found), sorted(names), f"{rel}: thiếu hàm")
+            for name, src in found.items():
+                self.assertNotIn("is_admin(", src, f"{rel}:{name} KHÔNG được dùng is_admin() — lệnh liên server")
+                self.assertIn("ADMIN_IDS", src, f"{rel}:{name} phải kiểm tra ADMIN_IDS")
+
+
+class GiveawayScope(unittest.TestCase):
+    def test_gw_in_scope(self):
+        import cogs.giveaway as G
+        class Ch:  # kênh thuộc server 1
+            class guild: id = 1
+        class B:
+            def get_channel(self, cid): return Ch if cid == 10 else None
+        gw = {"channel_id": 10}
+        self.assertTrue(G._gw_in_scope(B(), U(111), 999, gw) if 111 in G.ADMIN_IDS else True)
+        G.ADMIN_IDS[:] = [111]
+        try:
+            self.assertTrue(G._gw_in_scope(B(), U(111), 2, gw))          # admin cố định: mọi server
+            self.assertTrue(G._gw_in_scope(B(), U(500), 1, gw))          # admin phụ: đúng server của giveaway
+            self.assertFalse(G._gw_in_scope(B(), U(500), 2, gw))         # admin phụ: giveaway của server khác
+            self.assertFalse(G._gw_in_scope(B(), U(500), 1, {"channel_id": 77}))  # kênh không tìm ra
+        finally:
+            G.ADMIN_IDS[:] = []
+
+
+class FakeResp:
+    def __init__(self): self.sent = []
+    async def send_message(self, *a, **k): self.sent.append(a[0] if a else k.get("content"))
+
+class FakeInter:
+    def __init__(self, gid, user, data=None):
+        self.guild_id = gid; self.user = user; self.data = data or {}; self.channel_id = 5; self.response = FakeResp()
+
+class UiGateAndAuthGate(unittest.TestCase):
+    def setUp(self):
+        self._ids = list(D.ADMIN_IDS); D.ADMIN_IDS[:] = [111]
+        D._data_cache = {1: {"extra_admin_ids": [500]}, 2: {"extra_admin_ids": [600]}}
+        D._global_cache = {"_authorized_guilds": [1]}; D._global_loaded = True      # guild 2 CHƯA ủy quyền
+        D._admin_log_last.clear(); D.set_command_context(None)
+    def tearDown(self): D.ADMIN_IDS[:] = self._ids; D.set_command_context(None)
+
+    def test_ui_gate_authorized_logs_and_sets_context(self):
+        it = FakeInter(1, U(500, "ad"), {"custom_id": "panel:btn"})
+        async def go():   # contextvar chỉ sống trong cùng task → đọc ngay trong coroutine (giống before_invoke → lệnh)
+            ok = await D.guild_ui_gate(it, "view", object())
+            return ok, D.get_command_context()
+        with self.assertLogs("shared.data", level="INFO") as cm:
+            ok, ctxlabel = asyncio.run(go())
+        self.assertTrue(ok); self.assertIn("[UI]", cm.output[0]); self.assertIn("panel:btn", cm.output[0])
+        self.assertIn("panel:btn", ctxlabel)
+
+    def test_ui_gate_unauthorized_extra_admin_is_told_and_logged(self):
+        it = FakeInter(2, U(600, "ad"))
+        with self.assertLogs("shared.data", level="WARNING") as cm:
+            self.assertFalse(asyncio.run(D.guild_ui_gate(it, "view", object())))
+        self.assertIn("CHƯA ủy quyền", cm.output[0]); self.assertIn("admin phụ=True", cm.output[0])
+        self.assertTrue(it.response.sent and "Nhờ Ruby/TuyTam" in it.response.sent[0])   # admin phụ được báo lý do
+
+    def test_ui_gate_unauthorized_stranger_silent_but_logged(self):
+        it = FakeInter(2, U(999))
+        with self.assertLogs("shared.data", level="WARNING"):
+            self.assertFalse(asyncio.run(D.guild_ui_gate(it, "view", object())))
+        self.assertEqual(it.response.sent, [])
+
+    def test_global_check_unauthorized_guild_replies_to_extra_admin(self):
+        import shared.auth_gate as AG
+        class Cmd: qualified_name = "emoji"
+        class Ctx:
+            def __init__(s, uid): s.guild = Guild(2, "B"); s.author = U(uid); s.command = Cmd; s.replies = []
+            async def reply(s, *a, **k): s.replies.append(a[0])
+        c = Ctx(600)
+        with self.assertLogs("auth_gate", level="WARNING") as cm:
+            self.assertFalse(asyncio.run(AG.global_guild_authorization_check(c)))
+        self.assertIn("CHƯA ủy quyền", cm.output[0]); self.assertTrue(c.replies)
+        c2 = Ctx(999)
+        with self.assertLogs("auth_gate", level="WARNING"):
+            self.assertFalse(asyncio.run(AG.global_guild_authorization_check(c2)))
+        self.assertEqual(c2.replies, [])                                               # người lạ: im lặng nhưng có log
+        c3 = Ctx(500); c3.guild = Guild(1, "A")
+        self.assertTrue(asyncio.run(AG.global_guild_authorization_check(c3)))           # server đã ủy quyền
+
+    def test_before_invoke_logs_and_redacts_sensitive(self):
+        import shared.auth_gate as AG
+        class Cmd: qualified_name = "shopbank"
+        class Msg: content = ".shopbank 0123456789 VCB"
+        class Ctx: guild = Guild(1, "A"); author = U(500, "ad"); command = Cmd; message = Msg; channel = types.SimpleNamespace(id=9)
+        async def go():
+            await AG.set_guild_context_prefix(Ctx())
+            return D.get_command_context()
+        with self.assertLogs("auth_gate", level="INFO") as cm:
+            label = asyncio.run(go())
+        self.assertIn("[CMD] .shopbank", cm.output[0]); self.assertNotIn("0123456789", cm.output[0])
+        self.assertEqual(label, ".shopbank")
+
+    def test_command_crash_is_logged_with_traceback(self):
+        import shared.auth_gate as AG
+        class Cmd: qualified_name = "emoji"
+        class Ctx: guild = Guild(1, "A"); author = U(500, "ad"); command = Cmd
+        with self.assertLogs("auth_gate", level="ERROR") as cm:
+            asyncio.run(AG.log_command_error(Ctx(), ValueError("boom")))
+        self.assertIn("LỖI", cm.output[0]); self.assertIn("boom", cm.output[0])
 
 if __name__ == "__main__":
     unittest.main()

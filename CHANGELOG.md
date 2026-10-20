@@ -1,3 +1,28 @@
+## [v4.62.1] — 2026-10-20
+
+### 🐛 Sửa lỗi: log không hiện + admin phụ vẫn bị chặn ở nhiều lệnh + 2 lỗ hổng leo thang quyền
+- **Log INFO không bao giờ hiện trên Railway** (nguyên nhân gốc "admin phụ dùng lệnh nhưng không thấy log"): bot chạy bằng `bot.start()`
+  nên không ai cấu hình logging → Python chỉ in WARNING+, nuốt hết `[ADMIN-CHECK]`/`[ADMIN]` của v4.62.0. Thêm `setup_logging()` ở bot.py
+  (INFO→stdout, WARNING+→stderr, thư viện ồn bị hạ xuống WARNING; env `LOG_LEVEL`).
+- **Lệnh crash im lặng hoàn toàn:** `AdminCog.on_command_error` làm discord.py tắt traceback mặc định. Thêm `log_command_error` /
+  `log_command_completion` / `log_app_command_completion` (shared/auth_gate.py, đăng ký ở bot.py) → log lỗi kèm traceback.
+- **Log mới:** `[CMD]` mỗi lần gọi lệnh prefix (user/guild/kênh/nội dung; lệnh nhạy cảm như bank bị ẩn tham số) + `[CMD] ✅/⛔/❌` kết quả,
+  `[SLASH]`, `[UI]` mỗi lượt bấm nút/select/modal, `[AUTH-GATE]` khi server chưa ủy quyền chặn người dùng.
+  `[ADMIN-CHECK]` giờ ghi rõ `lệnh=` đang bị chặn; kiểm tra thụ động (listener) chỉ DEBUG; thêm `is_admin(x, quiet=True)`.
+- **`.emoji` `.rename` `.setperm` từ chối admin phụ** ("Bạn không có quyền"): `can_use_dangerous_cmd()` chỉ xét `ADMIN_IDS`. Giờ gồm admin phụ
+  của server hiện tại (qua `is_admin_id()` mới). Lần rà v4.61.1 bỏ sót vì chỉ tìm chữ `ADMIN_IDS`, không dò cổng đi qua hàm trung gian.
+- Admin phụ giờ cũng dùng được: `.clearcategory` `/clearcategory` (xoá kênh chỉ trong server đang gõ), `.ai` (tool AI chỉ tác động server hiện tại),
+  tin nhắn trong ticket được relay "Ruby bot" như admin cố định; admin phụ cũng được bảo vệ khỏi bị mod ban/kick (`_hierarchy_error`).
+- **Server chưa ủy quyền (`.as`):** trước đây chặn im lặng cả admin phụ → giờ báo lý do cho admin phụ (nhờ Ruby/TuyTam `.as`), luôn có log.
+- 🔒 **Vá lỗ hổng leo thang quyền do v4.61.1 gây ra:** `.leaveguild <guild_id>` và `.serverlist` bị mở nhầm cho admin phụ (admin phụ ở server A
+  bắt bot rời server B / xem mọi server). Trả về CHỈ admin cố định. `.aireset` `/aireset` (xoá lịch sử AI toàn bot) giữ admin cố định.
+- 🔒 **Vá giveaway chéo server:** `active_giveaways` là dict toàn bot tra theo `gw_id` nên admin phụ (và cả Discord Administrator ở slash) có thể
+  `/gend` `/greroll` `/gwlist` `.gwpick` `.gwreset` giveaway của server khác, `.gwstatus` thấy giveaway mọi server. Thêm `_gw_in_scope()`:
+  admin cố định thao tác mọi giveaway, người khác chỉ giveaway của server đang dùng lệnh.
+- Giữ nguyên chỉ admin cố định (cố ý): `.as` `.serverlist` `.leaveguild` `.aireset`, listener forum AI, `.ad` `.rmad` (chỉ Ruby).
+- Test: +12 (log theo lệnh/quiet/throttle, `can_use_dangerous_cmd`, UI/AUTH gate, before_invoke ẩn tham số nhạy cảm, log crash,
+  `_gw_in_scope`, chốt chặn "lệnh liên server không được dùng is_admin()"). Cập nhật AI_CONTEXT.md (quy ước phân quyền & log).
+
 ## [v4.62.0] — 2026-10-20
 
 ### ✨ `.admin` xem admin phụ của MỌI server + chẩn đoán quyền + log chi tiết (`cogs/admin.py`, `shared/data.py`)

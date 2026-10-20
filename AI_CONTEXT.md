@@ -37,7 +37,7 @@
 │   │                     # tin) trong kênh stock — PHẢI loại trừ tin bắt đầu bằng prefix guild trước
 │   │                     # khi so khớp (xem mục riêng bên dưới, thêm từ v4.47.0)
 │   ├── admin_views.py   # Tất cả Views/Modals cho admin (2500+ dòng) — KHÔNG phải Cog, không có
-│   │                     # on_ready/cog_load. MỌI View/Modal admin-only PHẢI tự check ADMIN_IDS
+│   │                     # on_ready/cog_load. MỌI View/Modal admin-only PHẢI tự check is_admin()
 │   │                     # (xem mục "interaction_check phải gọi super()" — lỗ hổng bảo mật đã gặp)
 │   ├── ai_chat.py        # AI chat đa provider (Groq + Gemini) — AI_MODELS_STRONG/AI_MODELS_FAST +
 │   │                     # _looks_simple() routing theo độ phức tạp (chỉ áp dụng kênh public, xem
@@ -233,13 +233,13 @@ Xem `handle_sold()` làm mẫu, hoặc CHANGELOG v4.47.0 để biết chi tiết
 ---
 
 ## Conventions quan trọng
-- **Admin gate:** `if ctx.author.id not in ADMIN_IDS: return` — import từ `core.data`
+- **Admin gate:** `if not is_admin(ctx.author): return` — import từ `core.data` (admin cố định + admin phụ `.ad` của server này). **KHÔNG** check thẳng `ADMIN_IDS` cho lệnh theo-server; chỉ lệnh LIÊN SERVER/toàn bot mới dùng `ADMIN_IDS` — xem mục "Phân quyền admin & log" bên dưới
 - **Staff check:** `is_staff_member()` — ADMIN_IDS + support role + seller role + builder role (tất cả đều `cfg_*`, không hardcode)
 - **Log:** `await send_log(bot, "EVENT_TYPE", "title", fields=[...], guild_id=guild.id)` — xem mục Multi-guild ở trên, **guild_id bắt buộc**
 - **Channel fetch:** dùng `get_or_fetch_channel(bot, id)` — KHÔNG dùng `bot.get_channel()`
 - **Data load/save (theo guild):** `load_data()` / `save_data(data)` qua `core/data.py`
 - **Data load/save (chung mọi guild):** `load_global_data()` / `save_global_data(data)` qua `core/data.py`
-- **View/Modal có nút bấm đọc/ghi data:** dùng `GuildContextView`/`GuildContextModal` (alias `View`/`Modal`) thay vì `discord.ui.View`/`discord.ui.Modal` trực tiếp. Nếu View đó CHỈ dành cho admin, PHẢI tự override `interaction_check()` gọi `super()` trước rồi check `ADMIN_IDS` — xem mục AUTH_GATE.
+- **View/Modal có nút bấm đọc/ghi data:** dùng `GuildContextView`/`GuildContextModal` (alias `View`/`Modal`) thay vì `discord.ui.View`/`discord.ui.Modal` trực tiếp. Nếu View đó CHỈ dành cho admin, PHẢI tự override `interaction_check()` gọi `super()` trước rồi check `is_admin(interaction.user)` — xem mục AUTH_GATE.
 - **View/Modal admin-only gửi qua `interaction.response.send_message`:** LUÔN kèm `ephemeral=True` nếu có `view=` — thiếu cái này từng khiến member thường click được nút admin trong panel `.setup` (lỗ hổng bảo mật thật, xem CHANGELOG v4.29.0).
 - **Không hardcode ID role/kênh/category:** xem mục riêng ở trên — luôn qua `cfg_*` + `.st`.
 - **Toggle bật/tắt cho tính năng ĐÃ CÓ SẴN (không phải tính năng mới):** default PHẢI là
@@ -248,6 +248,18 @@ Xem `handle_sold()` làm mẫu, hoặc CHANGELOG v4.47.0 để biết chi tiết
   sai chiều = âm thầm tắt mất tính năng đang chạy, cho MỌI guild chưa từng gọi lệnh toggle đó.
 - **ADMIN_IDS:** đọc từ 2 env `ADMIN_RUBY_ID` và `ADMIN_TUYTAM_ID` (shared/data.py), không hardcode
 - Response PUBLIC (không ephemeral) cho user thường, trừ ticket panel button và MỌI thứ admin-only (xem trên)
+
+## 🛂 Phân quyền admin & log (thêm từ v4.62.1) — ĐỌC trước khi thêm/sửa lệnh admin
+
+- **2 loại admin:** admin CỐ ĐỊNH (`ADMIN_IDS` từ env Ruby/TuyTam, quyền mọi server) và admin PHỤ (`.ad`, lưu `extra_admin_ids` theo guild, quyền CHỈ ở server được cấp). `is_admin(member)` = cố định HOẶC phụ của guild hiện tại (cần guild context). `.ad`/`.rmad` chỉ Ruby; `.as` chỉ admin cố định.
+- **Lệnh theo-server → `is_admin()`**. **Lệnh LIÊN SERVER / toàn bot → `member.id in ADMIN_IDS`** (admin phụ không được): `.as` `.serverlist` `.leaveguild` `.aireset` `/aireset`, listener forum AI (dữ liệu toàn bot), mọi lệnh nhận `guild_id` của server khác. Có test chốt chặn `CrossServerCommandsStayFixedOnly` (tests/test_admin_list.py) — thêm lệnh liên server mới thì thêm vào danh sách đó.
+- **Dữ liệu dùng chung nhiều server** (vd `active_giveaways` tra theo `gw_id`) PHẢI tự kiểm tra đối tượng thuộc đúng server trước khi cho admin phụ thao tác (xem `_gw_in_scope` ở giveaway.py). `is_admin()` chỉ chứng minh "là admin ở server này", không chứng minh dữ liệu thuộc server này.
+- **`can_use_dangerous_cmd()` / `is_admin_id(uid)`**: bản không có object member — cũng gồm admin phụ.
+- **Kiểm tra thụ động** (listener `on_message`, vòng lặp nền) gọi `is_admin(x, quiet=True)` và lọc rẻ trước (loại kênh/topic không liên quan) để khỏi spam log.
+- **LOGGING** (bot.py `setup_logging()`; bot chạy bằng `bot.start()` nên PHẢI tự cấu hình — thiếu thì mọi log INFO bị nuốt): INFO→stdout, WARNING+→stderr. Env `LOG_LEVEL`, `ADMIN_DEBUG=1`. Tiền tố log để tìm trên Railway: `[CMD]` (mỗi lệnh prefix + kết quả/lỗi kèm traceback) · `[SLASH]` · `[UI]` (nút/select/modal) · `[AUTH-GATE]` (chặn server chưa ủy quyền) · `[ADMIN-CHECK]` (mỗi lần is_admin từ chối/cho phép qua admin phụ, có `lệnh=` và file:dòng gọi) · `[ADMIN]` (thêm/xoá admin phụ + tóm tắt lúc khởi động) · `[ADMIN-CMD]` (`.ad` `.rmad` `.admin`).
+- **Lỗi lệnh crash KHÔNG còn im lặng:** `AdminCog.on_command_error` làm discord.py tắt in traceback mặc định → `log_command_error` (shared/auth_gate.py, đăng ký ở bot.py) log đầy đủ. Đừng bỏ 3 dòng `bot.add_listener(...)` ở bot.py.
+- **Server chưa ủy quyền (`.as`) chặn MỌI lệnh/nút của MỌI người** — admin cố định và admin phụ được báo lý do, người khác im lặng (luôn có log `[AUTH-GATE]`). `.admin` đánh dấu server chưa ủy quyền.
+- Debug nhanh: `.admin` (danh sách), `.admin <id>` (vì sao user báo thiếu quyền), rồi tìm `[ADMIN-CHECK]`/`[CMD]` trong Railway logs.
 
 ## Log event types → nhóm kênh
 ```

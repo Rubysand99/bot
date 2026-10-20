@@ -6,7 +6,9 @@ Mọi logic đều nằm trong cogs/ và core/.
 
 import os
 import re as _re
+import sys
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 import discord
@@ -16,13 +18,43 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.62.0"
+BOT_VERSION = "4.62.1"
 BOT_UPDATED = "2026-10-20"
 CHANGELOG_CHANNEL_ID = 1486967511839801414
 
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
     raise RuntimeError("❌ Thiếu biến môi trường TOKEN!")
+
+
+# ══════════════════════════════════════════
+# LOGGING — PHẢI cấu hình ở đây vì bot chạy bằng `bot.start()` (KHÔNG phải `bot.run()`), nên discord.py
+# không tự setup logging: nếu thiếu đoạn này Python chỉ in log mức WARNING trở lên, TOÀN BỘ log INFO
+# (`[CMD]` `[ADMIN-CHECK]` `[ADMIN]` `[UI]` `[AUTH-GATE]` ...) bị nuốt im lặng — đây chính là lý do trước đây
+# "admin phụ dùng lệnh mà không thấy log". INFO → stdout, WARNING+ → stderr (Railway tô đỏ).
+# Env: LOG_LEVEL=DEBUG|INFO|WARNING (mặc định INFO) · ADMIN_DEBUG=1 (log mọi lần kiểm tra quyền admin).
+# ══════════════════════════════════════════
+class _MaxLevel(logging.Filter):
+    def __init__(self, level): super().__init__(); self.level = level
+    def filter(self, record): return record.levelno < self.level
+
+def setup_logging():
+    root = logging.getLogger()
+    if any(getattr(h, "_rudeus", False) for h in root.handlers):
+        return  # chống setup trùng
+    level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").strip().upper(), logging.INFO)
+    fmt = logging.Formatter("%(asctime)s %(levelname)-7s [%(name)s] %(message)s", "%H:%M:%S")
+    out = logging.StreamHandler(sys.stdout); out.setLevel(logging.DEBUG); out.addFilter(_MaxLevel(logging.WARNING))
+    err = logging.StreamHandler(sys.stderr); err.setLevel(logging.WARNING)
+    for h in (out, err):
+        h.setFormatter(fmt); h._rudeus = True; root.addHandler(h)
+    root.setLevel(level)
+    # thư viện ồn → chỉ WARNING+
+    for noisy in ("discord.http", "discord.gateway", "discord.client", "discord.state", "pymongo", "motor",
+                  "asyncio", "aiohttp", "httpx", "httpcore", "urllib3", "openai", "groq"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+setup_logging()
 
 intents = discord.Intents.all()
 
@@ -47,12 +79,18 @@ def spawn_background(coro) -> asyncio.Task:
 from shared.auth_gate import (
     GuildContextTree, get_prefix, set_guild_context_prefix,
     global_guild_authorization_check, notify_admins_unauthorized_guild,
+    log_command_completion, log_command_error, log_app_command_completion,
 )
 from shared.data import ensure_guild_loaded, set_current_guild
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None, tree_cls=GuildContextTree)
 bot.before_invoke(set_guild_context_prefix)
 bot.check(global_guild_authorization_check)
+# Log kết quả lệnh (hoàn thành / bị chặn / LỖI kèm traceback). Bắt buộc có vì AdminCog.on_command_error làm
+# discord.py tắt in traceback mặc định — thiếu 3 dòng này, lệnh crash sẽ im lặng hoàn toàn trên Railway.
+bot.add_listener(log_command_completion, "on_command_completion")
+bot.add_listener(log_command_error, "on_command_error")
+bot.add_listener(log_app_command_completion, "on_app_command_completion")
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):

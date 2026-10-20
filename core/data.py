@@ -27,7 +27,8 @@ from shared.data import (
     load_data, save_data, load_global_data, save_global_data, save_cfg,
     get_authorized_guilds, is_guild_authorized, add_authorized_guild,
     remove_authorized_guild, set_guild_authorized,
-    get_extra_admins, get_all_extra_admins, add_extra_admin, remove_extra_admin, is_admin,
+    get_extra_admins, get_all_extra_admins, add_extra_admin, remove_extra_admin, is_admin, is_admin_id,
+    set_command_context, get_command_context, guild_ui_gate,
     ensure_guild_loaded, init_data_cache,
     get_giveaways_cache, set_giveaways_cache,
     get_ticket_lock, flush_to_mongo, flush_global_to_mongo, save_data_and_wait,
@@ -746,7 +747,9 @@ def save_giveaways_data(active_giveaways: dict):
 # DANGEROUS COMMANDS
 # ══════════════════════════════════════════
 def can_use_dangerous_cmd(user_id: int, cmd_name: str) -> bool:
-    return user_id in ADMIN_IDS
+    # FIX: trước đây chỉ `user_id in ADMIN_IDS` nên admin phụ (.ad) bị từ chối .emoji/.rename/.setperm
+    # ("❌ Bạn không có quyền") dù họ có toàn quyền admin ở server mình. Giờ gồm cả admin phụ của guild hiện tại.
+    return is_admin_id(user_id, name=f"dangerous:{cmd_name}")
 
 def get_dangerous_overrides() -> dict:
     return load_data().get("dangerous_cmd_overrides", {})

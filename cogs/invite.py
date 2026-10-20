@@ -174,8 +174,10 @@ class InviteCog(commands.Cog):
     @commands.command(name="serverlist", aliases=["servers", "guildlist"])
     async def serverlist_cmd(self, ctx):
         """Admin xem danh sách server bot đang hoạt động."""
-        if not is_admin(ctx.author):
-            return await ctx.reply("❌ Chỉ admin.")
+        # ⚠️ Lệnh LIÊN SERVER (liệt kê mọi server của bot) → CHỈ admin cố định. KHÔNG dùng is_admin():
+        # admin phụ (.ad) chỉ có quyền trong server được cấp.
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin cố định (Ruby/TuyTam) dùng được lệnh này.")
 
         guilds = self.bot.guilds
         if not guilds:
@@ -213,8 +215,10 @@ class InviteCog(commands.Cog):
     @commands.command(name="leaveguild", aliases=["leaveserver"])
     async def leaveguild_cmd(self, ctx, guild_id: str = None):
         """Admin kick bot ra khỏi server. Dùng: .leaveguild <guild_id>"""
-        if not is_admin(ctx.author):
-            return await ctx.reply("❌ Chỉ admin.")
+        # ⚠️ Lệnh LIÊN SERVER (nhận guild_id bất kỳ) → CHỈ admin cố định. KHÔNG dùng is_admin(): nếu không,
+        # admin phụ ở server A có thể bắt bot rời server B.
+        if ctx.author.id not in ADMIN_IDS:
+            return await ctx.reply("❌ Chỉ admin cố định (Ruby/TuyTam) dùng được lệnh này.")
 
         if not guild_id:
             return await ctx.reply(

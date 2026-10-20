@@ -1785,8 +1785,6 @@ class TicketCog(commands.Cog):
         # Bỏ qua tin của bot / webhook (kể cả webhook relay của chính bot)
         if message.author.bot or message.webhook_id:
             return
-        if message.author.id not in ADMIN_IDS:
-            return
         if not isinstance(message.channel, discord.TextChannel):
             return
         # Chỉ áp dụng trong kênh ticket (topic có dạng user_id||...)
@@ -1797,6 +1795,10 @@ class TicketCog(commands.Cog):
         # load_data() bên dưới luôn đọc default (True) thay vì cấu hình thật của guild.
         if message.guild:
             set_current_guild(message.guild.id)
+        # Admin cố định + admin phụ (.ad) của server này (trước đây chỉ ADMIN_IDS nên tin của admin phụ KHÔNG
+        # được relay như admin cố định). quiet=True vì đây là kiểm tra thụ động trên mọi tin trong kênh ticket.
+        if not is_admin(message.author, quiet=True):
+            return
         # AUTH_GATE — server chưa được admin ủy quyền qua .as → bỏ qua (xem bot.py + AI_CONTEXT.md)
         if message.guild:
             from core.data import is_guild_authorized
