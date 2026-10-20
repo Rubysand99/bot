@@ -13,6 +13,7 @@ import discord
 from discord.ext import commands
 from discord.ui import Button, Select, TextInput
 
+from core.data import get_extra_admins
 from core.data import (
     ADMIN_IDS, ADMIN_TUYTAM_ID,
     get_cfg_transcript_channel,
@@ -266,7 +267,7 @@ def _build_ticket_overwrites(guild, user, seller_id=None, role_group: str | None
     }
 
     # Admin luôn full quyền
-    for admin_id in ADMIN_IDS:
+    for admin_id in {*ADMIN_IDS, *get_extra_admins()}:  # admin cố định + admin phụ (.ad) của server này
         m = guild.get_member(admin_id)
         if m:
             overwrites[m] = _staff_perm
@@ -312,7 +313,7 @@ def _build_ticket_overwrites_multi(guild, user, role_ids: list, seller_id: int |
         user: _member_perm,
     }
     # Admin luôn full quyền
-    for aid in ADMIN_IDS:
+    for aid in {*ADMIN_IDS, *get_extra_admins()}:  # admin cố định + admin phụ (.ad) của server này
         m = guild.get_member(aid)
         if m:
             overwrites[m] = _staff_perm

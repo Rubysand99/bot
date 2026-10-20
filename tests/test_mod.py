@@ -13,6 +13,7 @@ import cogs.mod as M
 dc = sys.modules["discord"]
 
 M.ADMIN_IDS = [900]
+M.is_admin = lambda m: m.id in M.ADMIN_IDS   # code giờ gọi is_admin() (gồm admin phụ .ad); test giả lập admin cố định id=900
 
 class Role:
     def __init__(self, pos): self.pos = pos

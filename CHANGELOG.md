@@ -8,6 +8,8 @@
 - **Cố ý giữ nguyên chỉ cho admin cố định** (nhạy cảm / liên server): `.as` `.ad` `.rmad` (cogs/admin.py), lệnh nguy hiểm &
   phân cấp trong `cogs/mod.py`, `.ai` + AI tools (`ai_chat.py`, `core/ai_tools.py`), AUTH_GATE (`shared/auth_gate.py`),
   listener `on_message` ở ticket/ai_chat, và các chỗ dùng `ADMIN_IDS` để gắn ping / quyền kênh / DM cảnh báo.
+- `mod.py`: `_is_mod` / `_can_ban` / `_hierarchy_error` (người ra lệnh) giờ tính cả admin phụ — trước đó admin phụ không có quyền Discord Kick/Ban bị từ chối lệnh mod.
+- `ticket.py`: kênh ticket mới cấp quyền xem/chat cho cả admin phụ (trước chỉ 2 admin cố định nên admin phụ không thấy ticket).
 - Quy ước: kiểm tra quyền admin dùng `is_admin(member)`, không check thẳng `member.id in ADMIN_IDS`.
 - Test: `tests/test_leaderboard.py` stub `is_admin` cho khớp.
 

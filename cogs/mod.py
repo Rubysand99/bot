@@ -22,6 +22,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from core.data import is_admin
 from core.data import (
     ADMIN_IDS, load_data, save_data, _uname_plain,
     add_tempban, remove_tempban, get_active_tempbans,
@@ -383,7 +384,7 @@ class ModCog(commands.Cog):
     def _can_ban(self, member: discord.Member) -> bool:
         """Ban/tempban/unban cần quyền Ban Members (hoặc admin). FIX: trước đây dùng chung
         _is_mod (chỉ cần Kick Members) → mod cấp thấp ban được người khác."""
-        if member.id in ADMIN_IDS: return True
+        if is_admin(member): return True
         perms = member.guild_permissions
         return perms.administrator or perms.ban_members
 
@@ -398,14 +399,14 @@ class ModCog(commands.Cog):
             return "❌ Không thể thực hiện lệnh này lên chủ server."
         if target.top_role >= guild.me.top_role:
             return "❌ Role của thành viên này cao hơn hoặc bằng bot."
-        if actor.id in ADMIN_IDS or actor.id == guild.owner_id:
+        if is_admin(actor) or actor.id == guild.owner_id:
             return None
         if target.top_role >= actor.top_role:
             return "❌ Role của bạn không cao hơn thành viên này."
         return None
 
     def _is_mod(self, member: discord.Member) -> bool:
-        if member.id in ADMIN_IDS: return True
+        if is_admin(member): return True
         if member.guild_permissions.administrator: return True
         if member.guild_permissions.kick_members: return True
         return False
