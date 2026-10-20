@@ -1,3 +1,20 @@
+## [v4.62.0] — 2026-10-20
+
+### ✨ `.admin` xem admin phụ của MỌI server + chẩn đoán quyền + log chi tiết (`cogs/admin.py`, `shared/data.py`)
+- `.admin`: admin **cố định** thấy 2 admin cố định (gắn nhãn Ruby/TuyTam, cảnh báo nếu thiếu env) + admin phụ của **TẤT CẢ server**
+  (server hiện tại xếp đầu). Mỗi server có cảnh báo: user không còn trong server, trùng admin cố định, server chưa ủy quyền,
+  bot đã rời server; cuối embed liệt kê server chưa có admin phụ. Admin **phụ** chỉ thấy server của mình (không lộ server khác).
+  Tự chia nhiều embed khi nhiều server (≤24 field & ≤4500 ký tự / embed).
+- `.admin <id|@user>`: chẩn đoán từng lớp (admin cố định → admin phụ server này → admin phụ server khác → quyền Discord/có mặt trong server)
+  kèm gợi ý, vd "user là admin phụ server B nhưng chưa được `.ad` ở server này".
+- **Log chi tiết** (Railway logs): `[ADMIN-CHECK]` mỗi lần `is_admin()` TỪ CHỐI / cho phép qua admin phụ — có user, guild, lý do, danh sách admin phụ
+  của guild, hint "là admin phụ server khác", và **file:dòng hàm đã gọi** (biết ngay lệnh/nút nào chặn). Cùng user+guild+lý do chỉ log 1 lần/60s.
+  Thiếu guild context log WARNING. Admin cố định chỉ log khi đặt env `ADMIN_DEBUG=1` (bật luôn chế độ không chống spam).
+  `[ADMIN]` khi thêm/xoá admin phụ (kể cả khi bỏ qua vì trùng/không có) + tóm tắt admin cố định & admin phụ từng guild lúc khởi động.
+  `[ADMIN-CMD]` khi `.ad`/`.rmad` bị từ chối kèm giá trị thực của `ADMIN_RUBY_ID`, và mỗi lần gọi `.admin`.
+- Sửa `.help`: mô tả `.ad` đúng (quyền chỉ ở server gõ lệnh), thêm `.rmad`, `.admin`.
+- Test: `tests/test_admin_list.py` (13 test); `tests/stubs_discord.py` cho phép `Choice[str]` để import được `cogs/admin.py`.
+
 ## [v4.61.1] — 2026-10-20
 
 ### 🐛 Fix: admin phụ (`.ad`) bị báo không đủ quyền — rà toàn bộ cổng kiểm tra quyền

@@ -25,6 +25,8 @@ mỗi bot là 1 process riêng, RAM không dùng chung.
 """
 
 import os
+import sys
+import time
 import asyncio
 import logging
 import contextvars
@@ -629,6 +631,7 @@ def get_extra_admins() -> list[int]:
 
 async def add_extra_admin(user_id: int) -> bool:
     if user_id in ADMIN_IDS:
+        log.info(f"[ADMIN] add_extra_admin({user_id}) bỏ qua: đã là admin CỐ ĐỊNH (không cần thêm).")
         return False
     guild_id = get_current_guild_id()
     if guild_id is None:
@@ -640,10 +643,12 @@ async def add_extra_admin(user_id: int) -> bool:
     data = load_data()
     lst = data.setdefault("extra_admin_ids", [])
     if user_id in lst:
+        log.info(f"[ADMIN] add_extra_admin({user_id}) guild={guild_id} bỏ qua: đã là admin phụ của guild này (hiện có {lst}).")
         return False
     lst.append(user_id)
     _data_cache[guild_id] = data
     await _flush_to_mongo(guild_id)
+    log.info(f"[ADMIN] ➕ Đã thêm admin phụ {user_id} cho guild={guild_id}. Danh sách guild này giờ: {lst}")
     return True
 
 async def remove_extra_admin(user_id: int) -> bool:
@@ -657,22 +662,80 @@ async def remove_extra_admin(user_id: int) -> bool:
     data = load_data()
     lst = data.get("extra_admin_ids", [])
     if user_id not in lst:
+        log.info(f"[ADMIN] remove_extra_admin({user_id}) guild={guild_id} bỏ qua: không có trong danh sách admin phụ guild này ({lst}).")
         return False
     lst.remove(user_id)
     data["extra_admin_ids"] = lst
     _data_cache[guild_id] = data
     await _flush_to_mongo(guild_id)
+    log.info(f"[ADMIN] ➖ Đã xoá admin phụ {user_id} khỏi guild={guild_id}. Danh sách guild này giờ: {lst}")
     return True
+
+# ── LOG KIỂM TRA QUYỀN ADMIN — phục vụ debug "sao user X báo không đủ quyền" ──
+# Mọi lần is_admin() TỪ CHỐI đều được log (INFO, chống spam: cùng user+guild+lý do chỉ log 1 lần/60s)
+# kèm: user, guild, lý do cụ thể, danh sách admin phụ của guild, user có phải admin phụ của SERVER KHÁC
+# không (lỗi hay gặp: gõ `.ad` nhầm server), và DÒNG CODE đã gọi is_admin (file:dòng hàm()) → biết ngay
+# lệnh/nút nào chặn. Cho phép qua admin phụ cũng log. Admin cố định chỉ log khi bật env ADMIN_DEBUG=1
+# (vì rất thường xuyên). Bật ADMIN_DEBUG=1 trên Railway để log MỌI lần kiểm tra không chống spam.
+_ADMIN_DEBUG = os.getenv("ADMIN_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+_ADMIN_LOG_THROTTLE = 60.0
+_admin_log_last: dict[tuple, float] = {}
+
+def _admin_check_log(level: int, member, guild_id, allowed: bool, reason: str) -> None:
+    key = (getattr(member, "id", None), guild_id, allowed, reason)
+    now = time.monotonic()
+    if not _ADMIN_DEBUG:
+        if now - _admin_log_last.get(key, -1e9) < _ADMIN_LOG_THROTTLE:
+            return
+        if len(_admin_log_last) > 2000:
+            _admin_log_last.clear()
+    _admin_log_last[key] = now
+    try:
+        f = sys._getframe(2)  # 0=hàm này, 1=is_admin, 2=nơi gọi is_admin
+        where = f"{os.path.basename(f.f_code.co_filename)}:{f.f_lineno} {f.f_code.co_name}()"
+    except Exception:
+        where = "?"
+    name = getattr(member, "name", None) or getattr(member, "display_name", None) or "?"
+    log.log(level, f"[ADMIN-CHECK] user={getattr(member, 'id', '?')} ({name}) guild={guild_id} → "
+                   f"{'✅ CHO PHÉP' if allowed else '⛔ TỪ CHỐI'} · {reason} · gọi từ {where}")
+
+def get_all_extra_admins() -> dict[int, list[int]]:
+    """{guild_id: [user_id, ...]} — admin phụ (.ad) của MỌI guild đang nằm trong cache RAM
+    (guild không có admin phụ thì không xuất hiện). Dùng cho `.admin` / debug; KHÔNG đổi guild context."""
+    out: dict[int, list[int]] = {}
+    for gid, d in list(_data_cache.items()):
+        ids = list(d.get("extra_admin_ids", []))
+        if ids:
+            out[gid] = ids
+    return out
 
 def is_admin(member) -> bool:
     """True nếu member là admin CỐ ĐỊNH (ADMIN_IDS, quyền mọi guild) HOẶC admin PHỤ
     (.ad) của ĐÚNG guild hiện tại (contextvar). Dùng hàm này thay vì check thẳng
-    member.id in ADMIN_IDS ở bất kỳ đâu cần phân quyền admin theo guild."""
-    if member.id in ADMIN_IDS:
+    member.id in ADMIN_IDS ở bất kỳ đâu cần phân quyền admin theo guild.
+    Mọi kết quả đáng chú ý đều được log — xem chú thích `_admin_check_log` ở trên."""
+    uid = member.id
+    if uid in ADMIN_IDS:
+        if _ADMIN_DEBUG:
+            _admin_check_log(logging.INFO, member, get_current_guild_id(), True, "admin cố định (ADMIN_IDS)")
         return True
-    if get_current_guild_id() is None:
+    gid = get_current_guild_id()
+    if gid is None:
+        _admin_check_log(logging.WARNING, member, None, False,
+                         "KHÔNG có guild context nên không tra được admin phụ — nếu user là admin phụ thì đây là "
+                         "LỖI context (thiếu set_current_guild / DM / event không qua before_invoke)")
         return False
-    return member.id in get_extra_admins()
+    extra = get_extra_admins()
+    if uid in extra:
+        _admin_check_log(logging.INFO, member, gid, True, "admin phụ của server này (.ad)")
+        return True
+    elsewhere = sorted(g for g, ids in get_all_extra_admins().items() if uid in ids and g != gid)
+    hint = (f" · ⚠️ user LÀ admin phụ của server khác {elsewhere} nhưng KHÔNG phải server này — "
+            f"cần gõ `.ad {uid}` trong đúng server này") if elsewhere else ""
+    _admin_check_log(logging.INFO, member, gid, False,
+                     f"không nằm trong ADMIN_IDS {list(ADMIN_IDS)} và không có trong admin phụ của guild "
+                     f"(guild có {len(extra)} admin phụ: {extra}){hint}")
+    return False
 
 
 # ══════════════════════════════════════════
@@ -747,5 +810,8 @@ async def init_data_cache(bot) -> None:
 
     guild_list = ", ".join(f"{g.id}(#{_data_cache[g.id].get('ticket', 0):03d})" for g in bot.guilds if g.id in _data_cache)
     print(f"[DATA] ✅ Đã kết nối MongoDB — {len(_data_cache)} guild(s): {guild_list}")
+    log.info(f"[ADMIN] Admin cố định (env): {list(ADMIN_IDS)} · RUBY={ADMIN_RUBY_ID} · TUYTAM={ADMIN_TUYTAM_ID}")
+    _extras = get_all_extra_admins()
+    log.info(f"[ADMIN] Admin phụ theo guild lúc khởi động: {_extras if _extras else '(chưa có guild nào có admin phụ)'}")
 
     _data_cache_ready.set()

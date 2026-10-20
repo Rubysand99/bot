@@ -3,6 +3,8 @@ Chỉ dùng để import code cogs trong test; KHÔNG mô phỏng hành vi Disco
 import sys, types
 
 class _Meta(type):
+    def __getitem__(cls, item):   # app_commands.Choice[str] ...
+        return cls
     def __getattr__(cls, name):
         if name.startswith("__"):
             raise AttributeError(name)

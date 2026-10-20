@@ -27,7 +27,7 @@ from shared.data import (
     load_data, save_data, load_global_data, save_global_data, save_cfg,
     get_authorized_guilds, is_guild_authorized, add_authorized_guild,
     remove_authorized_guild, set_guild_authorized,
-    get_extra_admins, add_extra_admin, remove_extra_admin, is_admin,
+    get_extra_admins, get_all_extra_admins, add_extra_admin, remove_extra_admin, is_admin,
     ensure_guild_loaded, init_data_cache,
     get_giveaways_cache, set_giveaways_cache,
     get_ticket_lock, flush_to_mongo, flush_global_to_mongo, save_data_and_wait,

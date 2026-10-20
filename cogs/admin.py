@@ -7,6 +7,7 @@ v4.0.0 — 2026-05-30
 import re as _re
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 
 import discord
@@ -20,8 +21,8 @@ from core.data import (
     get_guild_prefix,
     get_cfg_font, _uname_plain, is_staff_member,
     load_data,
-    is_guild_authorized, set_guild_authorized, is_data_cache_ready,
-    add_extra_admin, get_extra_admins, remove_extra_admin, is_admin,
+    is_guild_authorized, set_guild_authorized, is_data_cache_ready, get_authorized_guilds,
+    add_extra_admin, get_extra_admins, get_all_extra_admins, remove_extra_admin, is_admin,
     ensure_guild_loaded,
     can_use_dangerous_cmd,
     set_current_guild,
@@ -55,6 +56,9 @@ except Exception:
 # Nạp cog 1 lần duy nhất lúc bot khởi động (không reload theo từng lệnh) nên
 # dùng làm mốc tính uptime cho .botinfo là đủ chính xác.
 _BOT_START_TS = datetime.now(timezone.utc)
+
+log = logging.getLogger("cogs.admin")
+
 
 class AdminCog(commands.Cog):
     def __init__(self, bot):
@@ -115,6 +119,9 @@ class AdminCog(commands.Cog):
     @commands.command(name="ad", aliases=["addadmin", "themadmin"])
     async def add_admin_cmd(self, ctx, user_id: str = None):
         if ctx.author.id != ADMIN_RUBY_ID:
+            log.warning(f"[ADMIN-CMD] .{ctx.invoked_with} bị từ chối: author={ctx.author.id} ({ctx.author}) ≠ "
+                        f"ADMIN_RUBY_ID={ADMIN_RUBY_ID} (None = env ADMIN_RUBY_ID chưa cài/không hợp lệ trên Railway) "
+                        f"· guild={getattr(ctx.guild, 'id', None)} · args={ctx.message.content[:100]!r}")
             return await ctx.reply("❌ Chỉ Ruby được dùng lệnh này.", mention_author=False)
         if not ctx.guild:
             return await ctx.reply(
@@ -161,6 +168,9 @@ class AdminCog(commands.Cog):
     @commands.command(name="rmad", aliases=["removeadmin", "xoaadmin"])
     async def remove_admin_cmd(self, ctx, user_id: str = None):
         if ctx.author.id != ADMIN_RUBY_ID:
+            log.warning(f"[ADMIN-CMD] .{ctx.invoked_with} bị từ chối: author={ctx.author.id} ({ctx.author}) ≠ "
+                        f"ADMIN_RUBY_ID={ADMIN_RUBY_ID} (None = env ADMIN_RUBY_ID chưa cài/không hợp lệ trên Railway) "
+                        f"· guild={getattr(ctx.guild, 'id', None)} · args={ctx.message.content[:100]!r}")
             return await ctx.reply("❌ Chỉ Ruby được dùng lệnh này.", mention_author=False)
         if not ctx.guild:
             return await ctx.reply("❌ Dùng lệnh này **trong server** cần thu hồi quyền (không dùng qua DM).", mention_author=False)
@@ -184,42 +194,198 @@ class AdminCog(commands.Cog):
             fields=[("👤 User", f"`{uid}`", True), ("👑 Bởi", str(ctx.author), True)],
             user=ctx.author, guild_id=ctx.guild.id)
 
-    # ── .admin — Xem danh sách TẤT CẢ admin bot: 2 admin cố định (mọi server) + admin
-    # phụ CỦA SERVER ĐANG GÕ LỆNH (thêm qua .ad — không phải mọi server). Ai đang có
-    # quyền admin (cố định hoặc phụ của server này) đều xem được, không riêng Ruby. ──
+    # ── .admin — Danh sách admin. Admin CỐ ĐỊNH (Ruby/TuyTam) thấy: 2 admin cố định + admin phụ của
+    # TẤT CẢ server (kèm cảnh báo user không còn trong server / server chưa ủy quyền / bot đã rời...).
+    # Admin PHỤ chỉ thấy admin cố định + admin phụ của CHÍNH server mình (không lộ server khác).
+    # `.admin <id|@user>` = CHẨN ĐOÁN quyền của 1 user (sao báo không đủ quyền?). Mọi lần gọi đều ghi log. ──
+    @staticmethod
+    def _chunk_lines(lines: list[str], limit: int = 1000) -> list[str]:
+        """Gộp dòng thành các khối ≤ limit ký tự (giới hạn 1024 của value field embed)."""
+        chunks, cur = [], ""
+        for ln in lines:
+            ln = ln[:limit]
+            if cur and len(cur) + 1 + len(ln) > limit:
+                chunks.append(cur); cur = ln
+            else:
+                cur = f"{cur}\n{ln}" if cur else ln
+        if cur: chunks.append(cur)
+        return chunks or ["—"]
+
+    @staticmethod
+    def _pack_embeds(title: str, description: str, fields: list[tuple[str, str]], color: int) -> list[discord.Embed]:
+        """Chia field thành nhiều embed: ≤ 24 field và ≤ 4500 ký tự / embed (Discord giới hạn 25 field & 6000 ký tự)."""
+        embeds, cur, size = [], None, 0
+        def new(first: bool):
+            e = discord.Embed(title=title if first else f"{title} (tiếp {len(embeds) + 1})",
+                              description=description if first else None, color=color,
+                              timestamp=datetime.now(timezone.utc))
+            return e, len(e.title or "") + len(description if first else "")
+        cur, size = new(True)
+        n = 0
+        for name, value in fields:
+            name, value = name[:256], value[:1024]
+            if n >= 24 or size + len(name) + len(value) > 4500:
+                embeds.append(cur); cur, size = new(False); n = 0
+            cur.add_field(name=name, value=value, inline=False)
+            size += len(name) + len(value); n += 1
+        embeds.append(cur)
+        return embeds
+
+    def _user_label(self, uid: int) -> str:
+        u = self.bot.get_user(uid)
+        if u: return f"`{u}`"
+        name = self.__dict__.get("_name_cache", {}).get(uid)
+        return f"`{name}`" if name else "*(không tra được tên)*"
+
+    async def _warm_user_names(self, uids) -> None:
+        """Tra tên user chưa có trong cache của bot (tối đa 25 lần gọi API/lệnh, timeout 5s mỗi lần)."""
+        cache = self.__dict__.setdefault("_name_cache", {})
+        fetch = getattr(self.bot, "fetch_user", None)
+        for uid in list(dict.fromkeys(uids))[:25]:
+            if uid in cache or self.bot.get_user(uid) or not fetch: continue
+            try: cache[uid] = str(await asyncio.wait_for(fetch(uid), 5))
+            except Exception as e:
+                cache[uid] = None
+                log.info(f"[ADMIN-CMD] không tra được tên user {uid}: {type(e).__name__}")
+
     @commands.command(name="admin", aliases=["adminlist", "dsadmin"])
-    async def admin_list_cmd(self, ctx):
+    async def admin_list_cmd(self, ctx, target: str = None):
+        """Danh sách admin cố định + admin phụ theo server. `.admin <id>` = chẩn đoán quyền 1 user."""
+        gid = ctx.guild.id if ctx.guild else None
         if not is_admin(ctx.author):
+            log.info(f"[ADMIN-CMD] .admin bị từ chối (không phải admin): author={ctx.author.id} ({ctx.author}) guild={gid}")
             return
+        viewer_fixed = ctx.author.id in ADMIN_IDS
+        log.info(f"[ADMIN-CMD] .admin bởi {ctx.author.id} ({ctx.author}) guild={gid} "
+                 f"quyền={'cố định' if viewer_fixed else 'phụ'} target={target!r}")
 
-        embed = discord.Embed(title="👑 Danh sách Admin", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+        # ── CHẨN ĐOÁN 1 USER ──
+        if target:
+            digits = target.strip("<@!>")
+            if not digits.isdigit():
+                return await ctx.reply("❌ Dùng: `.admin` (xem danh sách) hoặc `.admin <id | @user>` (chẩn đoán quyền).", mention_author=False)
+            return await self._admin_diagnose(ctx, int(digits), viewer_fixed)
 
+        scope = [gid] if (gid and not viewer_fixed) else None
+        await self._warm_user_names(list(ADMIN_IDS) + [u for g, ids in get_all_extra_admins().items()
+                                                       if scope is None or g in scope for u in ids])
+        embeds = self._admin_overview_embeds(gid, viewer_fixed, ctx.author)
+        await ctx.reply(embed=embeds[0], mention_author=False)
+        for e in embeds[1:]:
+            await ctx.send(embed=e)
+
+    def _admin_overview_embeds(self, gid, viewer_fixed: bool, requester) -> list[discord.Embed]:
+        """Dựng embed danh sách admin (tách riêng khỏi lệnh để test được)."""
+        extras = get_all_extra_admins()
+        guilds_by_id = {g.id: g for g in self.bot.guilds}
+
+        # Khối 1: admin cố định
         fixed_lines = []
         for uid in ADMIN_IDS:
             tag = " *(Ruby)*" if uid == ADMIN_RUBY_ID else (" *(TuyTam)*" if uid == ADMIN_TUYTAM_ID else "")
-            fixed_lines.append(f"<@{uid}>{tag} — `{uid}`")
-        embed.add_field(
-            name="🌍 Admin cố định (mọi server)",
-            value="\n".join(fixed_lines) if fixed_lines else "*(chưa cài env)*",
-            inline=False,
-        )
+            fixed_lines.append(f"<@{uid}>{tag} — `{uid}` · {self._user_label(uid)}")
+        if ADMIN_RUBY_ID is None:
+            fixed_lines.append("⚠️ `ADMIN_RUBY_ID` chưa cài / không hợp lệ trên Railway → `.ad` `.rmad` sẽ không ai dùng được.")
+        if ADMIN_TUYTAM_ID is None:
+            fixed_lines.append("⚠️ `ADMIN_TUYTAM_ID` chưa cài / không hợp lệ trên Railway.")
+        fields: list[tuple[str, str]] = []
+        for i, chunk in enumerate(self._chunk_lines(fixed_lines)):
+            fields.append(("🌍 Admin cố định (quyền ở MỌI server)" + (" (tt)" if i else ""), chunk))
 
-        if ctx.guild:
-            extra = get_extra_admins()
-            embed.add_field(
-                name=f"🏠 Admin phụ — chỉ server này ({ctx.guild.name})",
-                value=("\n".join(f"<@{uid}> — `{uid}`" for uid in extra) if extra
-                       else "*(chưa có — thêm qua `.ad <id>`)*"),
-                inline=False,
-            )
+        # Khối 2: admin phụ theo server
+        if viewer_fixed:
+            scope_ids = set(extras) | ({gid} if gid else set())
+            order = sorted(scope_ids, key=lambda g: (g != gid, guilds_by_id[g].name.lower() if g in guilds_by_id else "~"))
         else:
-            embed.add_field(
-                name="🏠 Admin phụ theo server",
-                value="*(dùng lệnh trong 1 server để xem admin phụ của server đó)*",
-                inline=False,
-            )
+            order = [gid] if gid else []
+        total_extra = 0
+        authorized = set(get_authorized_guilds()) if viewer_fixed else set()
+        for g_id in order:
+            guild = guilds_by_id.get(g_id)
+            ids = extras.get(g_id, [])
+            total_extra += len(ids)
+            gname = guild.name if guild else "(bot không còn ở server này)"
+            flags = []
+            if g_id == gid: flags.append("◀ server này")
+            if viewer_fixed and g_id not in authorized: flags.append("🔒 chưa ủy quyền")
+            head = f"🏠 {gname} · {g_id}" + (f"  [{' · '.join(flags)}]" if flags else "")
+            lines = []
+            for uid in ids:
+                warn = []
+                if uid in ADMIN_IDS: warn.append("⚠️ trùng admin cố định")
+                if guild and guild.get_member(uid) is None: warn.append("⚠️ không thấy trong server")
+                lines.append(f"<@{uid}> — `{uid}` · {self._user_label(uid)}" + (f"  {' '.join(warn)}" if warn else ""))
+            if not lines:
+                lines = ["*(chưa có admin phụ — thêm bằng `.ad <id>` gõ trong server này)*"]
+            for i, chunk in enumerate(self._chunk_lines(lines)):
+                fields.append((head + (" (tt)" if i else ""), chunk))
 
-        embed.set_footer(text=f"Yêu cầu bởi {ctx.author}")
+        if viewer_fixed:
+            empty = [guilds_by_id[g] for g in guilds_by_id if g not in extras and g != gid]
+            if empty:
+                names = ", ".join(f"{g.name} (`{g.id}`)" for g in sorted(empty, key=lambda g: g.name.lower()))
+                for i, chunk in enumerate(self._chunk_lines([names], 1000)):
+                    fields.append(("📭 Server chưa có admin phụ" + (" (tt)" if i else ""), chunk))
+            desc = (f"**{len(ADMIN_IDS)}** admin cố định · **{total_extra}** admin phụ ở **{len(extras)}** server "
+                    f"· bot đang ở **{len(guilds_by_id)}** server.\n"
+                    f"Chẩn đoán 1 user: `.admin <id>` · Thêm: `.ad <id>` · Xoá: `.rmad <id>`")
+        else:
+            desc = ("Bạn là **admin phụ** — chỉ xem được admin phụ của server này.\n"
+                    "Chẩn đoán 1 user: `.admin <id>`")
+
+        embeds = self._pack_embeds("👑 Danh sách Admin", desc, fields, 0x5865F2)
+        embeds[-1].set_footer(text=f"Yêu cầu bởi {requester}")
+        return embeds
+
+    async def _admin_diagnose(self, ctx, uid: int, viewer_fixed: bool):
+        """`.admin <id>` — vì sao user này (không) có quyền admin? Liệt kê từng lớp kiểm tra."""
+        gid = ctx.guild.id if ctx.guild else None
+        await self._warm_user_names([uid])
+        extras = get_all_extra_admins()
+        member = ctx.guild.get_member(uid) if ctx.guild else None
+        fixed = uid in ADMIN_IDS
+        here = uid in get_extra_admins() if gid else False
+        elsewhere = sorted(g for g, ids in extras.items() if uid in ids and g != gid)
+        result = fixed or here
+
+        embed = discord.Embed(
+            title="🔍 Chẩn đoán quyền admin",
+            description=f"<@{uid}> — `{uid}` · {self._user_label(uid)}\n"
+                        f"**Kết quả `is_admin()` ở server này: {'✅ CÓ quyền admin' if result else '⛔ KHÔNG có quyền admin'}**",
+            color=0x57F287 if result else 0xED4245, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="1️⃣ Admin cố định (ADMIN_IDS / env Railway)",
+                        value="✅ Có" if fixed else f"❌ Không (danh sách hiện tại: {list(ADMIN_IDS)})", inline=False)
+        embed.add_field(name=f"2️⃣ Admin phụ của server này (`{gid}`)",
+                        value="✅ Có" if here else "❌ Không — chưa được `.ad` ở server này", inline=False)
+        if viewer_fixed:
+            if elsewhere:
+                names = ", ".join(f"{self.bot.get_guild(g).name if self.bot.get_guild(g) else '?'} (`{g}`)" for g in elsewhere)
+                embed.add_field(name="3️⃣ Admin phụ ở server KHÁC", value=names[:1000], inline=False)
+            else:
+                embed.add_field(name="3️⃣ Admin phụ ở server KHÁC", value="Không có", inline=False)
+        if member:
+            gp = member.guild_permissions
+            embed.add_field(
+                name="4️⃣ Quyền Discord trong server này",
+                value=(f"Administrator: {'✅' if gp.administrator else '❌'} · Kick: {'✅' if gp.kick_members else '❌'} · "
+                       f"Ban: {'✅' if gp.ban_members else '❌'} · Manage Channels: {'✅' if gp.manage_channels else '❌'}\n"
+                       f"Role cao nhất: {member.top_role.mention if member.top_role else '—'}"),
+                inline=False)
+        else:
+            embed.add_field(name="4️⃣ Có mặt trong server này?", value="👻 Không thấy (không ở server, hoặc chưa cache member)", inline=False)
+
+        tips = []
+        if not result and elsewhere:
+            tips.append(f"User là admin phụ của server khác nhưng **không phải server này** → Ruby gõ `.ad {uid}` ngay trong server này.")
+        if not result and not elsewhere:
+            tips.append(f"User chưa là admin ở đâu cả → Ruby gõ `.ad {uid}` trong server cần cấp quyền.")
+        if result and not fixed and not member:
+            tips.append("Là admin phụ nhưng **không thấy trong server** → họ không dùng lệnh được cho tới khi vào lại server.")
+        if tips:
+            embed.add_field(name="💡 Gợi ý", value="\n".join(tips)[:1000], inline=False)
+        embed.set_footer(text="Log chi tiết mọi lần kiểm tra quyền: xem Railway logs, tìm [ADMIN-CHECK] / [ADMIN]")
+        log.info(f"[ADMIN-CMD] chẩn đoán uid={uid} guild={gid}: fixed={fixed} here={here} elsewhere={elsewhere} "
+                 f"in_guild={bool(member)} → is_admin={result}")
         await ctx.reply(embed=embed, mention_author=False)
 
     # ── .settings ──
@@ -531,9 +697,13 @@ class AdminCog(commands.Cog):
                      "Không truyền `guild_id` → áp dụng cho server đang gõ lệnh. Dùng được cả qua DM bot.\n"
                      "`.leaveguild <guild_id>` — Cho bot rời khỏi 1 server cụ thể", False),
                     ("👑 Quản lý Admin bot (chỉ Ruby)",
-                     "`.ad <id>` (alias `.addadmin`/`.themadmin`) — Thêm 1 user làm admin bot, "
-                     "toàn quyền như Ruby/TuyTam ở **mọi** server. Có hiệu lực ngay, không cần "
-                     "restart bot. Chỉ Ruby dùng được lệnh này.", False),
+                     "`.ad <id>` (alias `.addadmin`/`.themadmin`) — Thêm admin phụ, toàn quyền admin "
+                     "**chỉ ở server đang gõ lệnh** (gõ trong đúng server cần cấp). Có hiệu lực ngay, không cần "
+                     "restart bot. Chỉ Ruby dùng được lệnh này.\n"
+                     "`.rmad <id>` — Thu hồi admin phụ khỏi server đang gõ lệnh (chỉ Ruby)\n"
+                     "`.admin` (alias `.adminlist`/`.dsadmin`) — Danh sách admin: admin cố định xem được admin phụ của "
+                     "**mọi server** (cảnh báo user không còn trong server, server chưa ủy quyền...); admin phụ chỉ xem server mình\n"
+                     "`.admin <id>` — Chẩn đoán quyền 1 user (vì sao báo không đủ quyền). Log chi tiết: Railway logs, tìm `[ADMIN-CHECK]`", False),
                     ("🔷 Slash commands",
                      "`/invite` `/invitetop` `/resetinvite`", False),
                 ]
