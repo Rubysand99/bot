@@ -1,3 +1,8 @@
+## [v4.62.3] — 2026-10-21
+
+### 🔧 Đổi kênh thông báo changelog (`bot.py`)
+- Embed "🔄 Bot Khởi Động" (gửi mỗi lần bot khởi động) giờ gửi vào kênh `1469983483853144125` thay cho kênh cũ `1486967511839801414`.
+
 ## [v4.62.2] — 2026-10-21
 
 ### ✨ Chuẩn bị hạ TuyTam xuống admin PHỤ — tách "nhận thông báo" khỏi "quyền admin cố định"
