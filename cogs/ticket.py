@@ -13,7 +13,7 @@ import discord
 from discord.ext import commands
 from discord.ui import Button, Select, TextInput
 
-from core.data import get_extra_admins
+from core.data import get_extra_admins, is_user_id, is_admin_id, TUYTAM_NOTIFY_ID
 from core.data import (
     ADMIN_IDS, ADMIN_TUYTAM_ID,
     get_cfg_transcript_channel,
@@ -320,7 +320,7 @@ def _build_ticket_overwrites_multi(guild, user, role_ids: list, seller_id: int |
 
     if role_ids:
         for rid in role_ids:
-            if rid in ADMIN_IDS:
+            if is_user_id(rid):
                 m = guild.get_member(rid)
                 if m:
                     overwrites[m] = _staff_perm
@@ -791,7 +791,7 @@ async def create_order_ticket(interaction: discord.Interaction, trade_type: str,
         overwrites  = _build_ticket_overwrites_multi(guild, interaction.user, _order_role_ids)
         if _order_role_ids:
             ping_target = " ".join(
-                f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>"
+                f"<@{r}>" if is_user_id(r) else f"<@&{r}>"
                 for r in _order_role_ids
             )
         else:
@@ -861,7 +861,7 @@ async def create_service_ticket(interaction: discord.Interaction, service_key: s
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
+        ping_str = " ".join(f"<@{r}>" if is_user_id(r) else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         _register_ticket(interaction.user.id, channel.id, channel.guild.id)
@@ -905,7 +905,7 @@ async def create_accpre_ticket(interaction: discord.Interaction, trade_type: str
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
+        ping_str = " ".join(f"<@{r}>" if is_user_id(r) else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         _register_ticket(interaction.user.id, channel.id, channel.guild.id)
@@ -960,7 +960,7 @@ async def create_build_ticket(interaction: discord.Interaction, trade_type: str)
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
+        ping_str = " ".join(f"<@{r}>" if is_user_id(r) else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         _register_ticket(interaction.user.id, channel.id, channel.guild.id)
@@ -1013,7 +1013,7 @@ async def create_ruby_ticket(interaction: discord.Interaction, option_label: str
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
+        ping_str = " ".join(f"<@{r}>" if is_user_id(r) else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         _register_ticket(interaction.user.id, channel.id, channel.guild.id)
@@ -1038,7 +1038,7 @@ async def create_middleman_ticket(interaction: discord.Interaction, partner_id: 
     """Tạo ticket Giao Dịch Trung Gian — sau khi user nhấn 'Tạo giao dịch' trên panel
     #🤝・middleman và nhập ID tài khoản muốn giao dịch (xem MiddlemanAccountModal).
     Hoạt động như 1 ticket mua hàng bình thường: tạo kênh riêng tư + ping staff,
-    NGOẠI TRỪ luôn ping thêm admin TuyTam (ADMIN_TUYTAM_ID) vì đây là giao dịch cần
+    NGOẠI TRỪ luôn ping thêm admin TuyTam (TUYTAM_NOTIFY_ID, nếu anh ấy là admin của server này) vì đây là giao dịch cần
     admin trực tiếp đứng ra làm trung gian."""
     guild = interaction.guild
     try:
@@ -1070,11 +1070,12 @@ async def create_middleman_ticket(interaction: discord.Interaction, partner_id: 
         embed.set_footer(text="TuyTam Store  •  Giao Dịch Trung Gian", icon_url=guild.icon.url if guild.icon else None)
 
         # Ping role được gán (nếu có) + LUÔN ping thêm admin TuyTam
+        # TuyTam chỉ được ping ở server mà anh ấy là admin (cố định hoặc admin phụ `.ad` của server này).
         ping_ids = list(role_ids)
-        if ADMIN_TUYTAM_ID and ADMIN_TUYTAM_ID not in ping_ids:
-            ping_ids.append(ADMIN_TUYTAM_ID)
+        if TUYTAM_NOTIFY_ID and TUYTAM_NOTIFY_ID not in ping_ids and is_admin_id(TUYTAM_NOTIFY_ID, quiet=True):
+            ping_ids.append(TUYTAM_NOTIFY_ID)
         if ping_ids:
-            ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in ping_ids)
+            ping_str = " ".join(f"<@{r}>" if is_user_id(r) else f"<@&{r}>" for r in ping_ids)
         else:
             ping_str = f"<@&{get_cfg_support_role()}>"
 
@@ -1132,7 +1133,7 @@ async def create_direct_order_ticket(interaction: discord.Interaction, server_ke
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
         if role_ids:
-            ping = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids)
+            ping = " ".join(f"<@{r}>" if is_user_id(r) else f"<@&{r}>" for r in role_ids)
         else:
             ping = f"<@&{get_cfg_support_role()}>"
 
@@ -1196,7 +1197,7 @@ async def create_listing_ticket(interaction: discord.Interaction, ign: str, pric
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
+        ping_str = " ".join(f"<@{r}>" if is_user_id(r) else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         _register_ticket(interaction.user.id, channel.id, channel.guild.id)
@@ -1254,7 +1255,7 @@ async def create_stockpost_ticket(interaction: discord.Interaction, content: str
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="TuyTam Store  •  Ticket System", icon_url=guild.icon.url if guild.icon else None)
 
-        ping_str = " ".join(f"<@{r}>" if r in ADMIN_IDS else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
+        ping_str = " ".join(f"<@{r}>" if is_user_id(r) else f"<@&{r}>" for r in role_ids) if role_ids else f"<@&{get_cfg_support_role()}>"
 
         await channel.send(f"{ping_str} | {interaction.user.mention}", embed=embed, view=TicketButtons())
         _register_ticket(interaction.user.id, channel.id, channel.guild.id)

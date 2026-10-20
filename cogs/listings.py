@@ -25,6 +25,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from core.data import is_user_id
 from core.data import (
     is_staff_member, _uname_plain, ADMIN_IDS,
     get_ticket_role_ids, GuildContextView,
@@ -51,7 +52,7 @@ def can_manage_listing(member: discord.Member) -> bool:
     if member.id in allowed_ids:
         return True
     member_role_ids = {r.id for r in member.roles}
-    return any(rid in member_role_ids for rid in allowed_ids if rid not in ADMIN_IDS)
+    return any(rid in member_role_ids for rid in allowed_ids if not is_user_id(rid))
 
 
 class ListingView(GuildContextView):

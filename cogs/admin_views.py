@@ -11,7 +11,7 @@ import discord
 from discord.ui import Button, TextInput, Select
 
 from cogs.logger import send_log
-from core.data import is_admin
+from core.data import is_admin, is_user_id
 from core.data import (
     ADMIN_IDS,
     get_cfg_font, set_cfg_font,
@@ -424,8 +424,8 @@ def _build_ticket_roles_embed(guild: discord.Guild | None = None) -> discord.Emb
         if not ids:
             return "*(chưa cài)*"
         # Admin IDs
-        admin_tags = [f"<@{i}>" for i in ids if i in ADMIN_IDS]
-        role_tags  = [f"<@&{i}>" for i in ids if i not in ADMIN_IDS]
+        admin_tags = [f"<@{i}>" for i in ids if is_user_id(i)]
+        role_tags  = [f"<@&{i}>" for i in ids if not is_user_id(i)]
         parts = admin_tags + role_tags
         return " ".join(parts) if parts else "*(chưa cài)*"
 
@@ -554,7 +554,7 @@ def _build_role_picker_embed(
     if current_ids:
         tags = []
         for rid in current_ids:
-            if rid in ADMIN_IDS:
+            if is_user_id(rid):
                 tags.append(f"<@{rid}> *(Admin ID)*")
             else:
                 tags.append(f"<@&{rid}>")
@@ -671,7 +671,7 @@ class _RolePickerView(View):
             admin_ids_set = set()
 
         # Xoá admin ids cũ nếu không chọn __admin__ nữa
-        self.pending_ids = [i for i in self.pending_ids if i not in ADMIN_IDS]
+        self.pending_ids = [i for i in self.pending_ids if not is_user_id(i)]
         self.pending_ids.extend(admin_ids_set)
 
         # Xoá role trang hiện tại, thêm lại những cái được tick
@@ -711,7 +711,7 @@ class _RolePickerView(View):
         if unique_ids:
             tags = []
             for rid in unique_ids:
-                tags.append(f"<@{rid}>" if rid in ADMIN_IDS else f"<@&{rid}>")
+                tags.append(f"<@{rid}>" if is_user_id(rid) else f"<@&{rid}>")
             desc = "\n".join(tags)
         else:
             desc = "*(trống)*"

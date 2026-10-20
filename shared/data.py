@@ -105,6 +105,9 @@ def _load_admin_ids() -> list[int]:
                 ids.append(int(val))
             except ValueError:
                 log.error(f"[DATA] ❌ {var} không hợp lệ (phải là số): '{val}'")
+        elif var == "ADMIN_TUYTAM_ID":
+            # TuyTam có thể được hạ xuống admin PHỤ (cấp bằng `.ad` theo từng server) → biến này là TÙY CHỌN.
+            log.info("[DATA] ℹ️ ADMIN_TUYTAM_ID không cài → TuyTam KHÔNG phải admin cố định (cấp quyền theo server bằng `.ad`).")
         else:
             log.warning(f"[DATA] ⚠️ {var} chưa được cài trong Railway env.")
     if not ids:
@@ -114,6 +117,18 @@ def _load_admin_ids() -> list[int]:
 ADMIN_IDS = _load_admin_ids()
 ADMIN_RUBY_ID   = next((i for i in ADMIN_IDS if str(i) == os.getenv("ADMIN_RUBY_ID", "").strip()), None)
 ADMIN_TUYTAM_ID = next((i for i in ADMIN_IDS if str(i) == os.getenv("ADMIN_TUYTAM_ID", "").strip()), None)
+
+def _load_tuytam_notify_id() -> int | None:
+    """ID người nhận thông báo riêng của shop TuyTam (DM hỏi giá/người mua đơn sold, ping ticket trung gian).
+    TÁCH khỏi quyền admin: đặt env `TUYTAM_NOTIFY_ID` để TuyTam vẫn nhận các thông báo này dù KHÔNG còn là admin
+    cố định. Không đặt → dùng `ADMIN_TUYTAM_ID` như trước (tương thích ngược, không đổi hành vi nếu chưa cấu hình)."""
+    raw = (os.getenv("TUYTAM_NOTIFY_ID", "") or "").strip()
+    if raw:
+        try: return int(raw)
+        except ValueError: log.error(f"[DATA] ❌ TUYTAM_NOTIFY_ID không hợp lệ (phải là số): '{raw}'")
+    return ADMIN_TUYTAM_ID
+
+TUYTAM_NOTIFY_ID = _load_tuytam_notify_id()
 
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
@@ -745,6 +760,18 @@ def is_admin_id(user_id: int, *, quiet: bool = False, name: str = "?") -> bool:
     return _admin_decision(user_id, name, quiet)
 
 
+def is_user_id(_id: int) -> bool:
+    """True nếu `_id` là ID của một NGƯỜI (admin cố định / người nhận thông báo TuyTam / admin phụ của guild
+    hiện tại) chứ không phải ID ROLE. Dùng ở các danh sách LẪN role + user (role ticket, ping, quyền kênh) để chọn
+    `<@id>` thay vì `<@&id>`. KHÔNG dùng `id in ADMIN_IDS` cho việc này nữa: admin phụ / TuyTam (không còn trong
+    ADMIN_IDS) sẽ bị coi là role → mention sai, không ping được, mất quyền vào kênh ticket."""
+    if _id in ADMIN_IDS or (TUYTAM_NOTIFY_ID and _id == TUYTAM_NOTIFY_ID):
+        return True
+    if get_current_guild_id() is None:
+        return False
+    return _id in get_extra_admins()
+
+
 async def guild_ui_gate(interaction: discord.Interaction, kind: str, obj) -> bool:
     """interaction_check dùng chung cho GuildContextView/Modal: set guild context + command context,
     áp dụng AUTH_GATE (chặn server chưa ủy quyền), và LOG mọi lượt bấm.
@@ -850,7 +877,7 @@ async def init_data_cache(bot) -> None:
 
     guild_list = ", ".join(f"{g.id}(#{_data_cache[g.id].get('ticket', 0):03d})" for g in bot.guilds if g.id in _data_cache)
     print(f"[DATA] ✅ Đã kết nối MongoDB — {len(_data_cache)} guild(s): {guild_list}")
-    log.info(f"[ADMIN] Admin cố định (env): {list(ADMIN_IDS)} · RUBY={ADMIN_RUBY_ID} · TUYTAM={ADMIN_TUYTAM_ID}")
+    log.info(f"[ADMIN] Admin cố định (env): {list(ADMIN_IDS)} · RUBY={ADMIN_RUBY_ID} · TUYTAM(cố định)={ADMIN_TUYTAM_ID} · TUYTAM_NOTIFY={TUYTAM_NOTIFY_ID}")
     _extras = get_all_extra_admins()
     log.info(f"[ADMIN] Admin phụ theo guild lúc khởi động: {_extras if _extras else '(chưa có guild nào có admin phụ)'}")
 

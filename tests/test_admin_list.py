@@ -270,5 +270,61 @@ class UiGateAndAuthGate(unittest.TestCase):
             asyncio.run(AG.log_command_error(Ctx(), ValueError("boom")))
         self.assertIn("LỖI", cm.output[0]); self.assertIn("boom", cm.output[0])
 
+class TuytamDemotedToExtraAdmin(unittest.TestCase):
+    """Kịch bản: xoá ADMIN_TUYTAM_ID khỏi Railway, TuyTam (id 222) được `.ad` làm admin phụ ở guild 1."""
+    def setUp(self):
+        self._ids = list(D.ADMIN_IDS); D.ADMIN_IDS[:] = [111]                  # chỉ còn Ruby là admin cố định
+        self._n = D.TUYTAM_NOTIFY_ID; D.TUYTAM_NOTIFY_ID = 222
+        D._data_cache = {1: {"extra_admin_ids": [222]}, 2: {}}
+        D.set_current_guild(1); D.set_command_context(None)
+    def tearDown(self): D.ADMIN_IDS[:] = self._ids; D.TUYTAM_NOTIFY_ID = self._n
+
+    def _env(self, **env):
+        old = {k: os.environ.get(k) for k in ("ADMIN_RUBY_ID", "ADMIN_TUYTAM_ID", "TUYTAM_NOTIFY_ID")}
+        for k in old: os.environ.pop(k, None)
+        os.environ.update(env)
+        def restore():
+            for k, v in old.items():
+                os.environ.pop(k, None)
+                if v is not None: os.environ[k] = v
+        self.addCleanup(restore)
+
+    def test_tuytam_is_admin_in_his_guild_only(self):
+        self.assertTrue(D.is_admin(U(222), quiet=True))                 # guild 1: admin phụ
+        D.set_current_guild(2)
+        self.assertFalse(D.is_admin(U(222), quiet=True))                # guild 2: chưa .ad → không có quyền
+
+    def test_ping_and_overwrite_treat_tuytam_as_user_not_role(self):
+        self.assertTrue(D.is_user_id(222))                               # không bị coi là role → <@id> chứ không phải <@&id>
+        self.assertTrue(D.is_user_id(111)); self.assertFalse(D.is_user_id(987654321))   # role id lạ → role
+        D.set_current_guild(2)
+        self.assertTrue(D.is_user_id(222))                               # vẫn là USER (nhờ TUYTAM_NOTIFY_ID) dù chưa .ad ở guild 2
+
+    def test_extra_admin_in_role_list_is_user_even_without_notify_id(self):
+        D.TUYTAM_NOTIFY_ID = None
+        D._data_cache[1]["extra_admin_ids"] = [333]
+        self.assertTrue(D.is_user_id(333))
+
+    def test_notify_id_env_fallback_and_override(self):
+        self._env(ADMIN_RUBY_ID="111", ADMIN_TUYTAM_ID="222")            # chưa cấu hình gì mới → như cũ
+        D.ADMIN_IDS[:] = D._load_admin_ids(); D.ADMIN_TUYTAM_ID = 222
+        self.assertEqual(D._load_tuytam_notify_id(), 222)
+        self._env(ADMIN_RUBY_ID="111", TUYTAM_NOTIFY_ID="222")           # đã hạ TuyTam: chỉ còn NOTIFY
+        D.ADMIN_TUYTAM_ID = None
+        self.assertEqual(D._load_tuytam_notify_id(), 222)
+        self._env(ADMIN_RUBY_ID="111", TUYTAM_NOTIFY_ID="abc")
+        with self.assertLogs("shared.data", level="ERROR"): self.assertIsNone(D._load_tuytam_notify_id())
+
+    def test_missing_tuytam_env_is_not_a_warning(self):
+        self._env(ADMIN_RUBY_ID="111")
+        with self.assertLogs("shared.data", level="INFO") as cm:
+            self.assertEqual(D._load_admin_ids(), [111])
+        self.assertFalse([r for r in cm.records if r.levelname in ("WARNING", "ERROR", "CRITICAL")])
+
+    def test_tuytam_cannot_use_fixed_only_commands(self):
+        self.assertNotIn(222, D.ADMIN_IDS)                                # → `.as` `.serverlist` `.leaveguild` `.aireset` từ chối
+        self.assertFalse(D.is_admin_id(222, quiet=True) and 222 in D.ADMIN_IDS)
+
+
 if __name__ == "__main__":
     unittest.main()

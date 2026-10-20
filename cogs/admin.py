@@ -17,7 +17,7 @@ from discord.ui import Button, TextInput
 
 from cogs.logger import send_log
 from core.data import (
-    ADMIN_IDS, ADMIN_TUYTAM_ID, ADMIN_RUBY_ID,
+    ADMIN_IDS, ADMIN_TUYTAM_ID, ADMIN_RUBY_ID, TUYTAM_NOTIFY_ID,
     get_guild_prefix,
     get_cfg_font, _uname_plain, is_staff_member,
     load_data,
@@ -286,8 +286,10 @@ class AdminCog(commands.Cog):
             fixed_lines.append(f"<@{uid}>{tag} — `{uid}` · {self._user_label(uid)}")
         if ADMIN_RUBY_ID is None:
             fixed_lines.append("⚠️ `ADMIN_RUBY_ID` chưa cài / không hợp lệ trên Railway → `.ad` `.rmad` sẽ không ai dùng được.")
-        if ADMIN_TUYTAM_ID is None:
-            fixed_lines.append("⚠️ `ADMIN_TUYTAM_ID` chưa cài / không hợp lệ trên Railway.")
+        if TUYTAM_NOTIFY_ID:
+            note = ("(không phải admin cố định — là admin phụ theo từng server)" if TUYTAM_NOTIFY_ID not in ADMIN_IDS
+                    else "(đồng thời là admin cố định)")
+            fixed_lines.append(f"📣 Nhận thông báo shop (DM đơn sold, ping trung gian): <@{TUYTAM_NOTIFY_ID}> {note}")
         fields: list[tuple[str, str]] = []
         for i, chunk in enumerate(self._chunk_lines(fixed_lines)):
             fields.append(("🌍 Admin cố định (quyền ở MỌI server)" + (" (tt)" if i else ""), chunk))

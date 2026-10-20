@@ -1,3 +1,19 @@
+## [v4.62.2] — 2026-10-21
+
+### ✨ Chuẩn bị hạ TuyTam xuống admin PHỤ — tách "nhận thông báo" khỏi "quyền admin cố định"
+- Trước đây `ADMIN_TUYTAM_ID` vừa là quyền admin cố định, vừa là địa chỉ nhận thông báo shop → xoá biến này sẽ làm hỏng âm thầm:
+  (1) luồng **đơn sold** (bot DM TuyTam hỏi giá / người mua — thiếu biến thì bỏ qua hoàn toàn, khách không được cộng tiền),
+  (2) **ping TuyTam ở ticket trung gian**, (3) mọi nơi dùng `id in ADMIN_IDS` để phân biệt ID NGƯỜI với ID ROLE trong danh sách
+  lẫn role/user (≈ 15 chỗ: ping ticket, quyền vào kênh ticket, hiển thị/ghi role ở `.st`, quyền `.addlisting`) — TuyTam rời `ADMIN_IDS`
+  thì bị coi là role → mention thành `<@&id>` (không ping được) và mất quyền vào kênh ticket.
+- Thêm env **`TUYTAM_NOTIFY_ID`** (người nhận thông báo shop). Không đặt → dùng `ADMIN_TUYTAM_ID` như cũ (**không đổi hành vi nếu chưa cấu hình gì**).
+  `shop_admin.py` (DM đơn sold) và ticket trung gian dùng biến này; ticket trung gian chỉ ping TuyTam ở server mà anh ấy là admin.
+- Thêm `is_user_id(id)` (shared/data.py): True nếu là admin cố định / TUYTAM_NOTIFY_ID / admin phụ của guild hiện tại. Thay `in ADMIN_IDS`
+  ở ticket.py (9 chỗ ping + quyền kênh), admin_views.py, listings.py. Cả admin phụ nằm trong danh sách role giờ cũng được mention đúng.
+- `ADMIN_TUYTAM_ID` thành TÙY CHỌN: thiếu → log INFO (không còn WARNING mỗi lần khởi động); `.admin` hiện "📣 Nhận thông báo shop" thay cảnh báo.
+- Sau khi hạ TuyTam, anh ấy KHÔNG còn: `.as` `.serverlist` `.leaveguild` `.aireset`, quyền ở server chưa được `.ad`, DM cảnh báo SePay & server chưa ủy quyền (chỉ gửi admin cố định).
+- Test: +6 (kịch bản TuyTam admin phụ, `is_user_id`, fallback/override env, không còn WARNING khi thiếu ADMIN_TUYTAM_ID).
+
 ## [v4.62.1] — 2026-10-20
 
 ### 🐛 Sửa lỗi: log không hiện + admin phụ vẫn bị chặn ở nhiều lệnh + 2 lỗ hổng leo thang quyền

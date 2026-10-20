@@ -27,7 +27,7 @@ from discord.ui import Button, TextInput
 from cogs.logger import send_log
 from cogs.seller import is_active_seller
 from core.data import (
-    ADMIN_TUYTAM_ID, ADMIN_RUBY_ID,
+    TUYTAM_NOTIFY_ID, ADMIN_RUBY_ID,
     get_cfg_stock_category, get_cfg_sold_category,
     get_cfg_sold_detection_enabled, set_cfg_sold_detection_enabled,
     get_guild_prefix, is_admin, _uname_plain,
@@ -221,10 +221,10 @@ class _SoldPriceModal(Modal, title="💰 Nhập giá đơn sold"):
 async def _notify_other_admin(bot, channel_id: int, resolved_by: int, amount: int, pending: dict):
     """Sau khi 1 admin điền giá, báo cho admin còn lại (nếu họ cũng có DM cho đơn này)."""
     other_id = None
-    if resolved_by == ADMIN_TUYTAM_ID and ADMIN_RUBY_ID and pending.get("ruby_message_id"):
+    if resolved_by == TUYTAM_NOTIFY_ID and ADMIN_RUBY_ID and pending.get("ruby_message_id"):
         other_id = ADMIN_RUBY_ID
-    elif resolved_by == ADMIN_RUBY_ID and ADMIN_TUYTAM_ID and pending.get("tuytam_message_id"):
-        other_id = ADMIN_TUYTAM_ID
+    elif resolved_by == ADMIN_RUBY_ID and TUYTAM_NOTIFY_ID and pending.get("tuytam_message_id"):
+        other_id = TUYTAM_NOTIFY_ID
 
     if not other_id:
         return
@@ -612,13 +612,13 @@ async def handle_sold(bot, message: discord.Message):
         # tiền cho đúng người (giống lệnh .done), KHÔNG chặn phần trên (kênh đã
         # chuyển, thống kê seller đã ghi xong dù DM này có gửi được hay không).
         add_pending_sold_buyer(channel.id, seller_id, amount, new_name, old_name, message.guild.id)
-        if not ADMIN_TUYTAM_ID:
-            print(f"[SOLD] ⚠️ Không hỏi được người mua cho kênh `{old_name}` — chưa cài ADMIN_TUYTAM_ID.")
-            await send_log(bot, "INFO", "⚠️ Sold-stock — chưa cài ADMIN_TUYTAM_ID, không hỏi được người mua",
+        if not TUYTAM_NOTIFY_ID:
+            print(f"[SOLD] ⚠️ Không hỏi được người mua cho kênh `{old_name}` — chưa cài TUYTAM_NOTIFY_ID.")
+            await send_log(bot, "INFO", "⚠️ Sold-stock — chưa cài TUYTAM_NOTIFY_ID, không hỏi được người mua",
                 fields=[("👤 Seller", _uname_plain(message.author), True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
                 user=message.author, guild_id=message.guild.id)
             return
-        msg_id = await _send_sold_buyer_dm(bot, ADMIN_TUYTAM_ID, channel.id, old_name, amount, message.author.mention)
+        msg_id = await _send_sold_buyer_dm(bot, TUYTAM_NOTIFY_ID, channel.id, old_name, amount, message.author.mention)
         if msg_id:
             set_pending_sold_buyer_dm(channel.id, tuytam_message_id=msg_id)
             bot.add_view(_SoldBuyerView(channel.id), message_id=msg_id)
@@ -633,14 +633,14 @@ async def handle_sold(bot, message: discord.Message):
     # (sau khi admin nhập giá xong, _SoldPriceModal.on_submit sẽ TỰ hỏi tiếp người mua)
     add_pending_sold_price(channel.id, seller_id, new_name, old_name, message.guild.id)
 
-    if not ADMIN_TUYTAM_ID:
-        print(f"[SOLD] ⚠️ Không đọc được giá từ tên kênh `{old_name}` & chưa cài ADMIN_TUYTAM_ID — bỏ qua hỏi giá.")
-        await send_log(bot, "INFO", "⚠️ Sold-stock — không parse được giá & chưa cài ADMIN_TUYTAM_ID",
+    if not TUYTAM_NOTIFY_ID:
+        print(f"[SOLD] ⚠️ Không đọc được giá từ tên kênh `{old_name}` & chưa cài TUYTAM_NOTIFY_ID — bỏ qua hỏi giá.")
+        await send_log(bot, "INFO", "⚠️ Sold-stock — không parse được giá & chưa cài TUYTAM_NOTIFY_ID",
             fields=[("👤 Seller", _uname_plain(message.author), True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
             user=message.author, guild_id=message.guild.id)
         return
 
-    msg_id = await _send_sold_price_dm(bot, ADMIN_TUYTAM_ID, channel.id, old_name, message.author.mention)
+    msg_id = await _send_sold_price_dm(bot, TUYTAM_NOTIFY_ID, channel.id, old_name, message.author.mention)
     if msg_id:
         set_pending_sold_dm(channel.id, tuytam_message_id=msg_id)
         bot.add_view(_SoldPriceView(channel.id), message_id=msg_id)
