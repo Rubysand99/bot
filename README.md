@@ -58,7 +58,7 @@ Bot Discord đa server quản lý shop, ticket, giveaway cho TuyTam Store — ki
 - MongoDB Atlas
 - Discord Bot Token (bật đủ Privileged Gateway Intents: Members, Message Content, Presence)
 
-### Biến môi trường (Railway)
+### Biến môi trường
 ```env
 TOKEN=your_discord_token
 MONGO_URI=your_mongodb_uri
@@ -76,6 +76,18 @@ ADMIN_DEBUG=0
 ```
 `ADMIN_RUBY_ID`/`ADMIN_TUYTAM_ID` là 2 biến riêng biệt (không gộp chung 1 biến `ADMIN_IDS`) — mỗi biến 1 user ID.
 
+### Triển khai (VPS)
+Bot chạy trên VPS Ubuntu dưới dạng service systemd `tuytam-bot` (không còn dùng Railway; `Procfile` chỉ còn là di sản).
+- Môi trường: `/root/bot` + `venv/` riêng, chạy `python bot.py`.
+- Tự cập nhật: script `autoupdate.sh` (đặt ngoài repo, chạy mỗi 5 phút) làm lần lượt:
+  1. `git fetch`; nếu không có commit mới trên nhánh hiện tại thì thoát, KHÔNG restart.
+  2. `git merge --ff-only`; nếu `requirements.txt` đổi thì `pip install -r` lại.
+  3. `systemctl restart tuytam-bot`, đợi 20 giây rồi kiểm tra service còn chạy.
+  4. Nếu service lỗi: `git reset --hard` về commit cũ, ghi commit lỗi vào `/root/.tuytam_bad_commit` (bị bỏ qua cho đến khi có commit mới), cài lại thư viện và restart.
+- Log cập nhật: `/var/log/tuytam-autoupdate.log`; log bot: `journalctl -u tuytam-bot`.
+- ⚠️ MỌI commit mới lên `main` (kể cả chỉ sửa tài liệu) đều làm bot restart trong vài giây, và script chỉ phát hiện lỗi lúc khởi động — hãy chạy test (`python3 -m unittest discover -s tests -p "test_*.py"`) trước khi push.
+- Webhook SePay (`/webhook/sepay`) cần URL công khai trỏ tới `PORT` của bot (qua reverse proxy hoặc mở cổng).
+
 ### Cấu trúc file
 ```
 bot-main/
@@ -87,7 +99,7 @@ bot-main/
 ├── README.md
 ├── requirements.txt
 ├── runtime.txt
-├── Procfile
+├── Procfile                # di sản từ thời Railway (VPS dùng systemd)
 ├── shared/
 │   ├── data.py             # Hạ tầng dùng chung: Mongo cache theo guild (ContextVar), admin, AUTH_GATE
 │   ├── auth_gate.py        # Cổng ủy quyền server + log lệnh
