@@ -285,6 +285,34 @@ def get_all_seller_categories() -> dict:
     return load_data().get("seller_categories", {})
 
 # ══════════════════════════════════════════
+# GIỚI HẠN KÍCH THƯỚC LIST LỊCH SỬ (tránh document guild chạm trần 16MB của MongoDB)
+# save_data() ghi CẢ document mỗi lần, và các list dưới đây chỉ append → phình mãi.
+# Khi vượt giới hạn, bỏ các record CŨ NHẤT (list luôn append theo thời gian).
+# Giới hạn đặt rất rộng (vài nghìn record ≈ vài MB) nên gần như không đổi hành vi hằng ngày.
+# ══════════════════════════════════════════
+MAX_TICKET_HISTORY = 8000
+MAX_RATINGS        = 3000
+MAX_SELLER_SALES   = 5000
+_trim_warned: set = set()
+
+def _trim_list(data: dict, key: str, limit: int) -> list:
+    """Cắt data[key] về tối đa `limit` record mới nhất. Trả về list record đã bỏ (cũ nhất)."""
+    lst = data.get(key)
+    if not isinstance(lst, list) or len(lst) <= limit:
+        return []
+    cut = len(lst) - limit
+    removed = lst[:cut]
+    del lst[:cut]
+    # Chỉ WARNING lần đầu mỗi key (mỗi process) — sau khi chạm giới hạn, MỖI lần append đều cắt 1 record,
+    # log WARNING mỗi lần sẽ spam Railway logs.
+    if key not in _trim_warned:
+        _trim_warned.add(key)
+        log.warning(f"[DATA] '{key}' chạm giới hạn {limit} record — từ nay bỏ record CŨ NHẤT mỗi lần ghi mới.")
+    else:
+        log.debug(f"[DATA] '{key}' cắt {cut} record cũ (giới hạn {limit}).")
+    return removed
+
+# ══════════════════════════════════════════
 # SELLER SOLD-STOCK SALES (.stock → sold qua "sold"/"SOLD")
 # Mỗi lần seller gõ "sold" thành công (seller hợp lệ + parse được giá)
 # sẽ ghi 1 record vào "seller_sales" (list). Thống kê 24h tính theo
@@ -302,6 +330,14 @@ def add_seller_sale(user_id: int, amount: int, channel_name: str, channel_id: in
         "time":        datetime.now(timezone.utc).isoformat(),
     }
     data["seller_sales"].append(record)
+    removed = _trim_list(data, "seller_sales", MAX_SELLER_SALES)
+    if removed:
+        # Giữ nguyên số liệu all-time: cộng dồn record bị bỏ vào bản tổng hợp theo seller.
+        archive = data.setdefault("seller_sales_archive", {})
+        for rec in removed:
+            a = archive.setdefault(str(rec.get("user_id")), {"count": 0, "amount": 0})
+            a["count"]  += 1
+            a["amount"] += rec.get("amount", 0) or 0
     save_data(data)
     return record
 
@@ -336,6 +372,11 @@ def get_seller_sales_stats() -> dict:
                 stats[uid]["amount_24h"] += amt
         except Exception:
             continue
+    # Cộng thêm phần đã được tổng hợp từ các record cũ bị bỏ (xem add_seller_sale).
+    for uid, a in load_data().get("seller_sales_archive", {}).items():
+        st = stats.setdefault(uid, {"count_24h": 0, "amount_24h": 0, "count_all": 0, "amount_all": 0})
+        st["count_all"]  += a.get("count", 0)
+        st["amount_all"] += a.get("amount", 0)
     return stats
 
 # ── Pending sold price — chờ admin TuyTam/Ruby điền giá thủ công qua DM ──
@@ -629,6 +670,7 @@ def save_rating(ticket_name, user_id, stars):
     data.setdefault("ratings", [])
     data["ratings"].append({"ticket": ticket_name, "user_id": user_id, "stars": stars,
                              "time": datetime.now(timezone.utc).isoformat()})
+    _trim_list(data, "ratings", MAX_RATINGS)
     save_data(data)
 
 def get_ticket_note(channel_id):
@@ -653,6 +695,7 @@ def save_ticket_record(record: dict):
     data = load_data()
     data.setdefault("ticket_history", [])
     data["ticket_history"].append(record)
+    _trim_list(data, "ticket_history", MAX_TICKET_HISTORY)
     save_data(data)
 
 def get_user_ticket_history(user_id: int) -> list:

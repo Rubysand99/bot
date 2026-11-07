@@ -19,10 +19,9 @@ Bot Discord đa server quản lý shop, ticket, giveaway cho TuyTam Store — ki
 - Tích hợp Groq (llama-3.x, gemma2) — chat, tóm tắt, dịch, phân tích văn bản
 - Admin điều khiển bot bằng ngôn ngữ tự nhiên (tạo/xoá kênh, role, purge, ban/kick/mute — có bước xác nhận trước khi chạy)
 
-### 📨 Invite Tracking + Chống Fake Acc
-- Đếm invite theo 5 trạng thái: total/unverify/verify/fake/left, leaderboard theo tháng
-- Verify server (FastAPI) xác minh IP qua link riêng cho từng member, phát hiện multi-acc/VPN
-- Backfill IP lịch sử (`.backfillip`)
+### 📨 Invite Tracking
+- Ghi nhận người mời ngay lúc member join, leaderboard theo tháng
+- (Tính năng verify/IP chống fake acc đã được gỡ bỏ — xem CHANGELOG.md)
 
 ### 🎉 Giveaway
 - Tạo qua modal, chọn thời gian/số người trúng/phần thưởng
@@ -51,7 +50,6 @@ Bot Discord đa server quản lý shop, ticket, giveaway cho TuyTam Store — ki
 | `.st` | Cài đặt bot (kênh log, role ticket, emoji, bật/tắt tính năng...) |
 | `.setrole <key> @role` | Gán role staff cho 1 loại ticket |
 | `.baocao` | Xuất báo cáo 24h thủ công |
-| `.backfillip` | Quét lại IP lịch sử cho member cũ |
 
 ## ⚙️ Cài đặt
 
@@ -67,9 +65,14 @@ MONGO_URI=your_mongodb_uri
 ADMIN_RUBY_ID=discord_user_id
 ADMIN_TUYTAM_ID=discord_user_id
 GROQ_API_KEY=your_groq_key
-VERIFY_SECRET=random_secret_string
-VERIFY_BASE_URL=https://your-app.up.railway.app
+SEPAY_WEBHOOK_API_KEY=random_secret_string   # khớp với API Key khai trong SePay (webhook /webhook/sepay)
 PORT=8000
+
+# Tuỳ chọn
+TUYTAM_NOTIFY_ID=discord_user_id   # người nhận thông báo shop (mặc định = ADMIN_TUYTAM_ID)
+GEMINI_API_KEY=your_gemini_key     # bật thêm model Gemini cho AI chat
+LOG_LEVEL=INFO
+ADMIN_DEBUG=0
 ```
 `ADMIN_RUBY_ID`/`ADMIN_TUYTAM_ID` là 2 biến riêng biệt (không gộp chung 1 biến `ADMIN_IDS`) — mỗi biến 1 user ID.
 
@@ -77,31 +80,42 @@ PORT=8000
 ```
 bot-main/
 ├── bot.py                  # Entry point: load cogs, on_ready, on_message
-├── verify_server.py        # FastAPI — xác minh IP, chạy chung process với bot
+├── verify_server.py        # FastAPI — webhook SePay (/webhook/sepay) + /health, chạy chung process với bot
+├── bot_ai.py / bot_ticket.py / bot_shop.py / bot_growth.py   # entry point riêng cho từng bot con (pilot)
 ├── AI_CONTEXT.md           # Bối cảnh dự án cho AI session (kiến trúc, quy ước code)
 ├── CHANGELOG.md
 ├── README.md
 ├── requirements.txt
 ├── runtime.txt
 ├── Procfile
+├── shared/
+│   ├── data.py             # Hạ tầng dùng chung: Mongo cache theo guild (ContextVar), admin, AUTH_GATE
+│   ├── auth_gate.py        # Cổng ủy quyền server + log lệnh
+│   └── logger.py           # send_log() dùng chung
 ├── core/
-│   ├── __init__.py
-│   └── data.py             # MongoDB, cache theo guild (ContextVar), mọi hàm đọc/ghi data
+│   ├── data.py             # Accessor riêng từng tính năng (ticket, seller, giveaway, cfg_*...)
+│   ├── ai_tools.py / ai_agents.py / rag.py / message_search.py / site_feed.py
+│   └── __init__.py
+├── tests/                  # python3 -m unittest discover -s tests -p "test_*.py"
 └── cogs/
     ├── __init__.py
     ├── admin.py             # Commands admin, .st, .help, xử lý đơn "đã bán"
     ├── admin_views.py       # View/Modal cho admin.py (setup, settings, role picker...)
     ├── ai_chat.py           # AI Chat (Groq) + AI điều khiển bot có xác nhận
     ├── giveaway.py
-    ├── invite.py            # Invite tracking + verify/IP fraud
+    ├── invite.py            # Invite tracking
+    ├── leaderboard.py       # Bảng xếp hạng chi tiêu (.bxh)
+    ├── legit.py             # Vouch/legit + đổi tên kênh có hàng đợi
+    ├── listings.py          # Đăng sản phẩm (/post, .addlisting)
     ├── logger.py            # Log đa kênh + báo cáo 24h
     ├── mod.py               # Ban/kick/timeout/warn/automod
     ├── seller.py            # Seller subscription
-    ├── shop_orders.py       # VietQR (thử nghiệm)
+    ├── shop_admin.py        # Bảng giá, đơn "sold", DM hỏi giá/người mua
+    ├── shop_orders.py       # VietQR + SePay (thử nghiệm)
     └── ticket.py            # Ticket + vouch/legit
 ```
 
 Kiến trúc multi-guild: mỗi guild có 1 document Mongo riêng (`guild_<id>`), truy cập qua `load_data()`/`save_data()` — các hàm này đọc guild hiện tại từ `contextvars.ContextVar`, xem chi tiết quy ước trong `AI_CONTEXT.md`.
 
 ## 📊 Version
-**v4.59.1** (xem `BOT_VERSION` trong `bot.py`) — Xem [CHANGELOG.md](CHANGELOG.md) để biết lịch sử thay đổi.
+**v4.62.4** (xem `BOT_VERSION` trong `bot.py`) — Xem [CHANGELOG.md](CHANGELOG.md) để biết lịch sử thay đổi.

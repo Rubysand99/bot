@@ -1,3 +1,18 @@
+## [v4.62.4] — 2026-11-07
+
+### 🔒 Giới hạn kích thước list lịch sử — tránh document guild chạm trần 16MB của MongoDB (`core/data.py`)
+- `save_data()` ghi CẢ document mỗi lần, còn `ticket_history` / `ratings` / `seller_sales` chỉ append → phình mãi (đã ghi nhận "chưa sửa" ở v4.59.1).
+  Thêm `_trim_list()` + giới hạn `MAX_TICKET_HISTORY=8000`, `MAX_RATINGS=3000`, `MAX_SELLER_SALES=5000` — vượt giới hạn thì bỏ record CŨ NHẤT khi ghi record mới
+  (log WARNING 1 lần/key/process, sau đó chỉ DEBUG để khỏi spam). Giới hạn đặt rộng nên không đổi hành vi hằng ngày.
+- `seller_sales`: record bị bỏ được cộng dồn vào `seller_sales_archive` (`{user_id: {count, amount}}`) và `get_seller_sales_stats()` cộng lại vào `count_all`/`amount_all`
+  → số liệu all-time của seller KHÔNG đổi. `user_total_spent` (tổng chi tiêu/BXH) là dữ liệu riêng, không bị ảnh hưởng.
+- ⚠️ `ticket_history`: sau khi vượt 8000 record, thống kê tháng (`.thongke`) và lịch sử ticket của từng user chỉ còn trong phạm vi 8000 record gần nhất.
+- Chưa xử lý: `ticket_notes` (theo từng kênh) vẫn không giới hạn.
+- Test: `tests/test_history_caps.py` (+6).
+
+### 📝 README
+- Gỡ phần verify/IP/`.backfillip`/`VERIFY_*` đã lỗi thời; bổ sung `SEPAY_WEBHOOK_API_KEY`, `TUYTAM_NOTIFY_ID`, `GEMINI_API_KEY`, `LOG_LEVEL`, `ADMIN_DEBUG`; cập nhật cây thư mục (shared/, tests/, các cog mới) và version.
+
 ## [v4.62.3] — 2026-10-21
 
 ### 🔧 Đổi kênh thông báo changelog (`bot.py`)
