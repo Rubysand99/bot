@@ -1,3 +1,11 @@
+## [v4.63.4] — 2026-11-08
+
+### 🐛 Fix: bấm BUY báo "Không thể tạo ticket! … got multiple values for argument 'ref_code'" + không có QR (`cogs/autobuy.py`)
+- **Nguyên nhân**: sau khi `build_payment_qr_embed` lưu đơn chờ, AutoBuy đọc lại đơn đó rồi lưu lần nữa kèm `autobuy_username` bằng `save_pending_shop_order(ref_code, **{**order, ...})`. Doc đơn đã chứa sẵn khoá `ref_code` nên bị truyền 2 lần → `TypeError`, ticket bị huỷ trước khi gửi QR (lỗi có từ v4.63.0).
+- **Sửa**: bỏ `ref_code` khỏi các field trước khi lưu lại; các field gốc (`guild_id`, `channel_id`, `seller_id`, `buyer_id`, `amount`…) giữ nguyên.
+- **Dọn dẹp khi tạo ticket lỗi**: ngoài trả acc về AVAILABLE + xoá kênh, giờ còn huỷ luôn đơn chờ thanh toán (QR) đã lưu và xoá bản ghi ticket — trước đây đơn mồ côi trỏ vào kênh đã xoá nằm lại tới khi hết hạn.
+- **Vì sao test cũ không bắt được**: `tests/smoke_autobuy_flow.py` thay `save/get/pop_pending_shop_order` và `build_payment_qr_embed` bằng hàm giả nuốt `**fields`. Giờ dùng hàm THẬT (chỉ giả lớp lưu trữ + bank seller) và thêm: kiểm tra đơn chờ giữ đủ field + QR thật trong ticket, lỗi sau khi đã lưu QR thì đơn chờ bị huỷ, seller chưa `.shopbank` thì rơi về Confirm tay, và đường thật SePay → `ShopOrdersCog._notify_paid_order` → `AutoBuyCog.on_paid` → giao acc (13 test, trước là 10). Thử hoàn lại bản sửa thì 8 test báo lỗi.
+
 ## [v4.63.3] — 2026-11-08
 
 ### 🏷️ Card AutoBuy: header dùng TÊN + ICON của server (`core/autobuy_card.py`, `cogs/autobuy.py`)

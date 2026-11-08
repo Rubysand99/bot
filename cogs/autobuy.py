@@ -315,6 +315,7 @@ class AutoBuyCog(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
         channel = None
+        ref_code = None
         try:
             seller_id = acc.get("seller_id")
             seller = await self._resolve_user(guild, seller_id)
@@ -341,8 +342,10 @@ class AutoBuyCog(commands.Cog):
                 from cogs.shop_orders import build_payment_qr_embed
                 qr_embed, ref_code, warn = build_payment_qr_embed(seller, buyer, amount, guild.id, channel.id)
                 if ref_code:
-                    order = get_pending_shop_order(ref_code) or {}
-                    save_pending_shop_order(ref_code, **{**order, "autobuy_username": acc["username"]})
+                    # save_pending_shop_order(ref_code, **fields) tự thêm "ref_code" vào doc → phải bỏ khỏi fields,
+                    # nếu không "got multiple values for argument 'ref_code'" (lỗi ở v4.63.0–v4.63.3).
+                    order = {k: v for k, v in (get_pending_shop_order(ref_code) or {}).items() if k != "ref_code"}
+                    save_pending_shop_order(ref_code, **order, autobuy_username=acc["username"])
 
             save_ab_ticket(channel.id, {
                 "username": acc["username"], "buyer_id": buyer.id, "seller_id": seller_id,
@@ -353,7 +356,10 @@ class AutoBuyCog(commands.Cog):
         except Exception as e:
             # hoàn tác: trả acc về AVAILABLE, dọn kênh dở
             update_ab_account(acc["username"], status=ST_AVAILABLE)
+            if ref_code:
+                pop_pending_shop_order(ref_code)      # QR đã lưu đơn chờ → huỷ, tránh đơn mồ côi trỏ vào kênh đã xoá
             if channel:
+                delete_ab_ticket(channel.id)
                 try:
                     await channel.delete(reason="AutoBuy: tạo ticket lỗi")
                 except Exception:

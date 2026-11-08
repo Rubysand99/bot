@@ -16,18 +16,25 @@ from discord.ext import commands
 
 import core.data as C
 import cogs.autobuy as AB
+import cogs.shop_orders as SO
 
 
 class FlowTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.data = {}
-        self.pending = {}
+        self.gdata = {}                      # "global data" — nơi shop_orders lưu đơn chờ thanh toán (_shop_pending_orders)
+        # ⚠️ KHÔNG thay save/get/pop_pending_shop_order và build_payment_qr_embed bằng hàm giả: bug v4.63.0–3
+        # ("got multiple values for argument 'ref_code'") lọt qua test vì hàm giả nuốt **fields. Dùng hàm THẬT,
+        # chỉ giả lớp lưu trữ + bank của seller.
         self._patches = [
             patch.object(C, "load_data", lambda: self.data),
             patch.object(C, "save_data", lambda d: self.data.update(d)),
-            patch.object(AB, "get_pending_shop_order", lambda ref: self.pending.get(ref)),
-            patch.object(AB, "save_pending_shop_order", lambda ref, **f: self.pending.__setitem__(ref, {**f, "ref_code": ref})),
-            patch.object(AB, "pop_pending_shop_order", lambda ref: self.pending.pop(ref, None)),
+            patch.object(C, "load_global_data", lambda: self.gdata),
+            patch.object(C, "save_global_data", lambda d: self.gdata.update(d)),
+            patch.object(SO, "get_cfg_shop_orders_enabled", lambda: True),
+            patch.object(SO, "get_shop_orders_bank", lambda uid: {
+                "bank_code": "vietinbank", "bank_name": "Vietinbank", "account_number": "0123456789",
+                "account_holder": "NGUYEN VAN A", "template": "compact2"}),
             patch.object(AB, "get_cfg_sold_category", lambda: 0),
             patch.object(AB, "is_active_seller", lambda g, u: True),
             patch.object(AB, "send_log", AsyncMock()),
@@ -75,20 +82,29 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
         return i
 
     async def _buy(self):
-        qr = discord.Embed(title="qr")
-        with patch("cogs.shop_orders.build_payment_qr_embed", return_value=(qr, "DH123456", None)):
-            i = self._interaction()
-            await self.cog._on_buy(i, "foo")
+        i = self._interaction()
+        await self.cog._on_buy(i, "foo")          # build_payment_qr_embed THẬT → lưu đơn chờ thật
         return i
+
+    def _ref(self):
+        return C.get_ab_ticket(555)["ref_code"]
 
     async def test_buy_creates_ticket_and_pending_order(self):
         i = await self._buy()
         acc = C.get_ab_account("Foo")
         self.assertEqual(acc["status"], "PROCESSING")
         t = C.get_ab_ticket(555)
-        self.assertEqual((t["username"], t["buyer_id"], t["ref_code"], t["amount"]), ("Foo", 200, "DH123456", 140000))
-        self.assertEqual(self.pending["DH123456"]["autobuy_username"], "Foo")
-        self.ticket_ch.send.assert_awaited()
+        self.assertEqual((t["username"], t["buyer_id"], t["amount"]), ("Foo", 200, 140000))
+        self.assertRegex(t["ref_code"], r"^DH\d{6}$")
+        order = C.get_pending_shop_order(t["ref_code"])        # đơn chờ do build_payment_qr_embed lưu + autobuy gắn thêm
+        self.assertEqual(order["autobuy_username"], "Foo")
+        self.assertEqual((order["guild_id"], order["channel_id"], order["seller_id"], order["buyer_id"], order["amount"]),
+                         (1, 555, 100, 200, 140000))        # các field gốc còn nguyên
+        self.assertEqual(order["ref_code"], t["ref_code"])
+        # QR thật đã gửi vào ticket (embed thứ 2)
+        sent = self.ticket_ch.send.await_args.kwargs
+        self.assertEqual(len(sent["embeds"]), 2)
+        self.assertIn(t["ref_code"], sent["embeds"][1].image.url)
         i.followup.send.assert_awaited()
 
     async def test_double_buy_rejected(self):
@@ -101,15 +117,32 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
     async def test_buy_failure_rolls_back(self):
         self.guild.create_text_channel = AsyncMock(side_effect=discord.HTTPException(MagicMock(status=500, reason="x"), "boom"))
         i = self._interaction()
-        with patch("cogs.shop_orders.build_payment_qr_embed", return_value=(None, None, None)):
-            await self.cog._on_buy(i, "foo")
+        await self.cog._on_buy(i, "foo")
         self.assertEqual(C.get_ab_account("Foo")["status"], "AVAILABLE")
         self.assertIsNone(C.get_ab_ticket(555))
+        self.assertEqual(self.gdata.get("_shop_pending_orders", {}), {})
+
+    async def test_failure_after_qr_saved_drops_pending_order(self):
+        with patch.object(AB, "save_ab_ticket", side_effect=RuntimeError("db down")):
+            i = self._interaction()
+            await self.cog._on_buy(i, "foo")
+        self.assertEqual(C.get_ab_account("Foo")["status"], "AVAILABLE")
+        self.assertEqual(self.gdata.get("_shop_pending_orders", {}), {})   # đơn chờ đã lưu bởi QR phải bị huỷ
+        self.ticket_ch.delete.assert_awaited()
+        self.assertIn("Không thể tạo ticket", i.followup.send.await_args.args[0])
+
+    async def test_no_bank_falls_back_to_manual(self):
+        with patch.object(SO, "get_shop_orders_bank", lambda uid: None):
+            i = self._interaction()
+            await self.cog._on_buy(i, "foo")
+        t = C.get_ab_ticket(555)
+        self.assertIsNone(t["ref_code"])
+        self.assertEqual(C.get_ab_account("Foo")["status"], "PROCESSING")
+        self.assertEqual(len(self.ticket_ch.send.await_args.kwargs["embeds"]), 1)   # không QR, có hướng dẫn thủ công
 
     async def test_sepay_paid_delivers_once(self):
         await self._buy()
-        order = self.pending.pop("DH123456")
-        order.update(guild_id=1, channel_id=555)
+        order = C.pop_pending_shop_order(self._ref())          # giống _process_sepay_payload: pop khi khớp tiền
         self.bot.get_guild = lambda gid: self.guild
         self.bot.fetch_user = AsyncMock(return_value=self.buyer)
         problems = await self.cog.on_paid(order, 140000, 140000)
@@ -123,6 +156,25 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.cog.on_paid(order, 140000, 140000), [])
         self.buyer.send.assert_awaited_once()
         self.assertEqual(len(self.spent), 1)
+
+    async def test_shop_orders_hook_routes_autobuy_orders(self):
+        """Đường THẬT SePay → ShopOrdersCog._notify_paid_order → AutoBuyCog.on_paid → giao acc."""
+        await self._buy()
+        ref = self._ref()
+        order = C.pop_pending_shop_order(ref)
+        fake_self = MagicMock()
+        fake_self.bot.get_guild = lambda gid: self.guild
+        fake_self.bot.get_cog = lambda name: self.cog if name == "AutoBuyCog" else None
+        self.bot.get_guild = lambda gid: self.guild
+        self.bot.fetch_user = AsyncMock(return_value=self.buyer)
+        problems = await SO.ShopOrdersCog._notify_paid_order(fake_self, order, ref, 140000, 140000)
+        self.assertEqual(problems, [])
+        self.assertEqual(C.get_ab_account("Foo")["status"], "SOLD")
+        self.buyer.send.assert_awaited_once()
+        # cog AutoBuy chưa load → báo rõ thay vì rơi vào luồng .done
+        order2 = {**order, "ref_code": "DH000000"}
+        fake_self.bot.get_cog = lambda name: None
+        self.assertTrue(any("AutoBuy chưa load" in p for p in await SO.ShopOrdersCog._notify_paid_order(fake_self, order2, "DH000000", 1, 1)))
 
     async def test_confirm_and_sepay_concurrent_deliver_once(self):
         await self._buy()
@@ -144,7 +196,7 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
         await self.cog.cancel_ticket(555)
         self.assertEqual(C.get_ab_account("Foo")["status"], "AVAILABLE")
         self.assertIsNone(C.get_ab_ticket(555))
-        self.assertNotIn("DH123456", self.pending)
+        self.assertEqual(self.gdata.get("_shop_pending_orders", {}), {})
 
     async def test_cancel_after_sold_keeps_sold(self):
         await self._buy()
