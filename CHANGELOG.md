@@ -1,3 +1,15 @@
+## [v4.65.0] — 2026-11-09
+
+### 📷 `.shopbank` đăng ký bank bằng ẢNH QR — không cần gõ thông tin (`core/vietqr.py` MỚI, `cogs/shop_orders.py`)
+- Gõ `.shopbank` và **đính kèm ảnh QR nhận tiền** của ngân hàng (hoặc **reply vào ảnh QR**) → bot tự đọc mã VietQR, lấy **ngân hàng (mã BIN) + số tài khoản (+ tên chủ TK nếu QR có)** rồi lưu bank của bạn như khi nhập tay. Gõ đủ 4 tham số như cũ thì vẫn nhập tay; có ảnh + chữ ngắn thì chữ là tên chủ TK (`.shopbank Nguyen Van A` kèm ảnh).
+- Dùng được cho QR tĩnh lẫn QR động từ app ngân hàng; kiểm tra checksum CRC16, từ chối QR ví (MoMo/ZaloPay…), QR số thẻ, ảnh mờ/không có QR — báo lý do rõ ràng, KHÔNG lưu gì.
+- `bank_code` lưu chính **mã BIN** (img.vietqr.io nhận cả BIN lẫn mã chữ) → QR thanh toán của `.done`/Auto Buy hiện đúng ngân hàng, kể cả ngân hàng chưa có trong bảng tên (hiện "Ngân hàng (BIN …)").
+- Ảnh QR do chính người gõ gửi được xoá sau khi lưu (tin trả lời đã giữ thông tin); ảnh của người khác (reply) thì giữ nguyên. Ảnh tối đa 8MB.
+- QR không có tên chủ TK (nhiều app không nhúng) → lưu rỗng và nhắc cách thêm tên; QR thanh toán vẫn dùng được (SePay đối soát bằng số TK + mã `DHxxxxxx`).
+- Thư viện đọc QR: `zxing-cpp` (thêm vào `requirements.txt`), import lười — thiếu thì chỉ riêng tính năng đọc ảnh báo "chưa cài thư viện", bot vẫn chạy bình thường và `.shopbank` nhập tay vẫn dùng được.
+- `.help autobuy`, `.help shoporders`, các lời nhắc "chưa đăng ký ngân hàng" cập nhật theo cách mới.
+- Test: `tests/test_vietqr.py` (+10: CRC chuẩn, parse payload, đọc ảnh QR thật tạo bằng `qrcode`, ảnh có viền rộng/nhỏ), `tests/smoke_autobuy_flow.py` 20 → 25 (đăng ký từ ảnh → QR thanh toán dùng đúng BIN + số TK, reply vào ảnh, ảnh lỗi/QR ví/QR thẻ/sai CRC không lưu, nhập tay vẫn thắng, thiếu thư viện).
+
 ## [v4.64.0] — 2026-11-08
 
 ### 🔐 Auto Buy: chỉ seller/owner đã có bank mới được nạp kho & đăng bán (`cogs/autobuy.py`) — ĐỔI HÀNH VI

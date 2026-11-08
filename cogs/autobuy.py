@@ -139,7 +139,7 @@ def has_bank(user_id) -> bool:
 
 MSG_NOT_SELLER = ("❌ Chỉ **seller** (đang có gói seller còn hạn — xem `.seller list`) hoặc **owner/admin** "
                   "mới được nạp kho và đăng bán tài khoản.")
-SHOPBANK_HINT = '`.shopbank "Tên NH" ma_bank SoTK "Chủ TK"`'
+SHOPBANK_HINT = '`.shopbank` kèm **ảnh QR nhận tiền** của ngân hàng (bot tự đọc), hoặc nhập tay `.shopbank "Tên NH" ma_bank SoTK "Chủ TK"`'
 
 
 def msg_no_bank(owner_id, me_id) -> str:

@@ -17,6 +17,9 @@ from discord.ext import commands
 import core.data as C
 import cogs.autobuy as AB
 import cogs.shop_orders as SO
+import importlib.util
+import io
+import test_vietqr as TV          # make_vietqr() — dựng payload VietQR hợp lệ để test
 
 
 class FlowTest(unittest.IsolatedAsyncioTestCase):
@@ -292,6 +295,92 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.cog._can_handle_ticket(staff, {"seller_id": 100}))
         with patch.object(AB, "is_active_seller", lambda g, u: False):
             self.assertFalse(AB.can_sell_acc(staff))
+
+    # ───────── .shopbank + ảnh QR: đăng ký bank không cần gõ thông tin ─────────
+    def _qr_png(self, payload, box=8, border=4):
+        import qrcode
+        buf = io.BytesIO(); qrcode.make(payload, box_size=box, border=border).convert("RGB").save(buf, "PNG"); return buf.getvalue()
+
+    def _bank_ctx(self, png, args=None, reply=False, uid=1):
+        att = MagicMock(spec=discord.Attachment); att.filename = "qr.png"; att.content_type = "image/png"
+        att.size = len(png); att.read = AsyncMock(return_value=png)
+        ctx = MagicMock(); ctx.author = self._member(uid); ctx.reply = AsyncMock()
+        ctx.message.delete = AsyncMock()
+        if reply:                                           # lệnh reply vào tin nhắn có ảnh (ảnh không nằm trong tin gõ lệnh)
+            ctx.message.attachments = []
+            ref_msg = MagicMock(spec=discord.Message); ref_msg.attachments = [att]
+            ctx.message.reference.resolved = ref_msg
+        else:
+            ctx.message.attachments = [att]; ctx.message.reference = None
+        return ctx
+
+    async def _shopbank(self, ctx, args=None):
+        cog = SO.ShopOrdersCog.__new__(SO.ShopOrdersCog)      # bỏ qua __init__ — lệnh chỉ cần self để gọi _register_bank_from_qr
+        await SO.ShopOrdersCog.shopbank_cmd.callback(cog, ctx, args=args)
+
+    @unittest.skipUnless(all(importlib.util.find_spec(m) for m in ("qrcode", "zxingcpp")), "cần qrcode + zxing-cpp")
+    async def test_shopbank_from_qr_image_registers_bank_and_qr_uses_it(self):
+        ctx = self._bank_ctx(self._qr_png(TV.make_vietqr("970422", "0369999888", name="TRAN THI B")))
+        await self._shopbank(ctx)
+        bank = C.get_shop_orders_bank(1)
+        self.assertEqual((bank["bank_code"], bank["account_number"], bank["account_holder"], bank["bank_name"]),
+                         ("970422", "0369999888", "TRAN THI B", "MB Bank"))
+        self.assertEqual(bank["template"], "compact2")
+        self.assertIn("MB Bank", ctx.reply.await_args.args[0])
+        ctx.message.delete.assert_awaited()                     # đã xoá ảnh QR của người gõ
+        self.assertTrue(AB.has_bank(1))                         # đủ điều kiện đăng bán Auto Buy
+        # QR thanh toán sinh ra dùng đúng BIN + số TK này
+        seller = self._member(1); seller.mention = "<@1>"
+        embed, ref, warn = SO.build_payment_qr_embed(seller, self.buyer, 50000, 1, 555)
+        self.assertIsNone(warn)
+        self.assertIn("img.vietqr.io/image/970422-0369999888-compact2.png", embed.image.url)
+        self.assertIn("accountName=TRAN%20THI%20B", embed.image.url)
+
+    @unittest.skipUnless(all(importlib.util.find_spec(m) for m in ("qrcode", "zxingcpp")), "cần qrcode + zxing-cpp")
+    async def test_shopbank_qr_holder_from_args_and_reply_to_image(self):
+        png = self._qr_png(TV.make_vietqr("970436", "1234567890"))          # QR không có tên chủ TK
+        ctx = self._bank_ctx(png, reply=True)
+        await self._shopbank(ctx, args="Nguyen Van A")
+        bank = C.get_shop_orders_bank(1)
+        self.assertEqual((bank["bank_code"], bank["account_holder"]), ("970436", "Nguyen Van A"))
+        ctx.message.delete.assert_not_awaited()                 # ảnh của người khác (reply) thì KHÔNG xoá
+        # không có tên ở cả QR lẫn lệnh → lưu rỗng + nhắc cách thêm tên
+        self.data["shop_orders_banks"].pop("1")
+        ctx = self._bank_ctx(png)
+        await self._shopbank(ctx)
+        self.assertEqual(C.get_shop_orders_bank(1)["account_holder"], "")
+        self.assertIn("tên chủ TK", ctx.reply.await_args.args[0])
+
+    @unittest.skipUnless(all(importlib.util.find_spec(m) for m in ("qrcode", "zxingcpp")), "cần qrcode + zxing-cpp")
+    async def test_shopbank_qr_rejects_bad_images_without_saving(self):
+        from PIL import Image
+        blank = io.BytesIO(); Image.new("RGB", (300, 300), (255, 255, 255)).save(blank, "PNG")
+        cases = [
+            (blank.getvalue(), "Không đọc được"),
+            (self._qr_png("https://momo.vn/pay/abc"), "không phải mã **VietQR"),
+            (self._qr_png(TV.make_vietqr(service="QRIBFTTC")), "số thẻ"),
+            (self._qr_png(TV.make_vietqr()[:-1] + "0" if not TV.make_vietqr().endswith("0") else TV.make_vietqr()[:-1] + "1"), "sai mã kiểm tra"),
+        ]
+        for png, expect in cases:
+            ctx = self._bank_ctx(png)
+            await self._shopbank(ctx)
+            self.assertIn(expect, ctx.reply.await_args.args[0])
+            ctx.message.delete.assert_not_awaited()
+        self.assertIsNone(C.get_shop_orders_bank(1))
+
+    async def test_shopbank_typed_args_still_win_over_image(self):
+        ctx = self._bank_ctx(b"not-an-image")
+        with patch.object(SO, "decode_qr_texts", side_effect=AssertionError("không được đọc ảnh khi đã gõ đủ tham số")):
+            await self._shopbank(ctx, args='"Vietinbank" vietinbank 0123456789 "Nguyen Van A"')
+        bank = C.get_shop_orders_bank(1)
+        self.assertEqual((bank["bank_code"], bank["account_number"]), ("vietinbank", "0123456789"))
+
+    async def test_shopbank_qr_needs_decoder_library_message(self):
+        ctx = self._bank_ctx(b"x")
+        with patch.object(SO, "decode_qr_texts", side_effect=SO.QRDecoderMissing("thiếu")):
+            await self._shopbank(ctx)
+        self.assertIn("zxing-cpp", ctx.reply.await_args.args[0])
+        self.assertIsNone(C.get_shop_orders_bank(1))
 
 
 if __name__ == "__main__":

@@ -28,7 +28,7 @@ Bot Discord đa server quản lý shop, ticket, giveaway cho TuyTam Store — ki
 - Reroll, kết thúc sớm, resume tự động sau khi bot restart (kể cả giveaway dài ngày)
 
 ### 🛒 Auto Buy — bán tài khoản Minecraft tự động
-- **Chỉ seller còn hạn (`.seller list`) hoặc owner, và đã `.shopbank`** mới nạp kho/đăng bán được
+- **Chỉ seller còn hạn (`.seller list`) hoặc owner, và đã `.shopbank`** mới nạp kho/đăng bán được — đăng ký bank chỉ cần gõ `.shopbank` + **đính kèm ảnh QR ngân hàng** (bot tự đọc)
 - `/add_acc` nạp thông tin đăng nhập vào kho → `/stock acc` đăng **card ảnh** (skin, cape, rank, stats, giá; header là **tên + icon server**) + nút **BUY**
 - Khách bấm BUY → ticket riêng + **QR VietQR** (bank của seller đăng ký bằng `.shopbank`); **SePay báo tiền về là bot TỰ GIAO** tài khoản qua DM
 - Chưa bật Shop Orders / seller chưa `.shopbank` → seller/staff bấm **Confirm** tay (giống bot autobuy cũ)
@@ -143,4 +143,4 @@ bot-main/
 Kiến trúc multi-guild: mỗi guild có 1 document Mongo riêng (`guild_<id>`), truy cập qua `load_data()`/`save_data()` — các hàm này đọc guild hiện tại từ `contextvars.ContextVar`, xem chi tiết quy ước trong `AI_CONTEXT.md`.
 
 ## 📊 Version
-**v4.64.0** (xem `BOT_VERSION` trong `bot.py`) — Xem [CHANGELOG.md](CHANGELOG.md) để biết lịch sử thay đổi.
+**v4.65.0** (xem `BOT_VERSION` trong `bot.py`) — Xem [CHANGELOG.md](CHANGELOG.md) để biết lịch sử thay đổi.

@@ -31,6 +31,7 @@ import re
 import random
 import string
 import shlex
+import asyncio
 import logging
 from urllib.parse import quote
 from datetime import datetime, timezone, timedelta
@@ -38,6 +39,8 @@ from datetime import datetime, timezone, timedelta
 import discord
 from discord.ext import commands
 from discord.ui import TextInput
+
+from core.vietqr import MAX_IMAGE_BYTES, QRDecoderMissing, bank_name_from_bin, decode_qr_texts, pick_vietqr
 
 from core.data import is_admin
 from core.data import (
@@ -178,7 +181,7 @@ def build_payment_qr_embed(seller: discord.abc.User, buyer: discord.abc.User, am
     if not bank:
         return None, None, (
             f"⚠️ {seller.mention} chưa đăng ký ngân hàng nhận tiền — gõ "
-            f'`.shopbank "Tên NH" ma_bank SoTK "Chủ TK"` để lần `.done` sau tự có QR.'
+            f'`.shopbank` kèm ảnh QR ngân hàng (hoặc `.shopbank "Tên NH" ma_bank SoTK "Chủ TK"`) để lần `.done` sau tự có QR.'
         )
 
     bank_code      = bank.get("bank_code")
@@ -386,6 +389,36 @@ class QueueOrderView(GuildContextView):
                 default_product = ch.name
 
         await interaction.response.send_modal(ReceiptProductModal(interaction.message, default_product))
+
+
+_IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
+
+QR_ERRORS = {
+    "no_qr": "❌ Không đọc được mã QR trong ảnh. Gửi ảnh **nét, đủ sáng, không bị cắt viền** — chụp màn hình mã QR nhận tiền trong app ngân hàng.",
+    "not_vietqr": "❌ Đây không phải mã **VietQR ngân hàng** (có thể là QR ví MoMo/ZaloPay hoặc link). Hãy dùng QR nhận tiền / QR tài khoản của app ngân hàng.",
+    "bad_crc": "❌ Mã QR bị lỗi (sai mã kiểm tra) — ảnh có thể bị mờ hoặc chỉnh sửa. Chụp lại màn hình QR rồi gửi lại.",
+    "card": "❌ Đây là QR **số thẻ**, bot cần QR **tài khoản**. Trong app ngân hàng chọn mã QR nhận tiền theo số tài khoản.",
+    "bad_account": "❌ QR thiếu/sai mã ngân hàng hoặc số tài khoản — dùng QR nhận tiền chuẩn VietQR của app ngân hàng.",
+}
+
+
+async def _find_qr_attachment(ctx: commands.Context):
+    """Ảnh QR: đính kèm ngay trong tin nhắn gõ lệnh, hoặc trong tin nhắn mà lệnh đang REPLY tới."""
+    candidates = list(ctx.message.attachments)
+    ref = ctx.message.reference
+    if not candidates and ref:
+        msg = ref.resolved if isinstance(ref.resolved, discord.Message) else None
+        if msg is None and ref.message_id:
+            try:
+                msg = await ctx.channel.fetch_message(ref.message_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                msg = None
+        if msg:
+            candidates = list(msg.attachments)
+    for a in candidates:
+        if (a.content_type or "").startswith("image/") or (a.filename or "").lower().endswith(_IMAGE_EXT):
+            return a
+    return None
 
 
 class ShopOrdersCog(commands.Cog):
@@ -599,7 +632,8 @@ class ShopOrdersCog(commands.Cog):
 
     @commands.command(name="shopbank")
     async def shopbank_cmd(self, ctx: commands.Context, *, args: str = None):
-        """Dùng: .shopbank "<tên hiển thị>" <bank_code_vietqr> <số TK> "<chủ TK>" ["<ghi chú>"] [template]
+        """Dùng: .shopbank + ĐÍNH KÈM ẢNH QR ngân hàng (bot tự đọc) — hoặc nhập tay:
+        .shopbank "<tên hiển thị>" <bank_code_vietqr> <số TK> "<chủ TK>" ["<ghi chú>"] [template]
         Đăng ký/cập nhật bank CỦA BẠN — mỗi seller 1 bank riêng, .done bạn gõ dùng đúng bank này.
         bank_code_vietqr: mã ngân hàng theo VietQR, vd vietinbank, mbbank, vietcombank, tpbank...
         Danh sách mã: https://api.vietqr.io/v2/banks
@@ -607,12 +641,26 @@ class ShopOrdersCog(commands.Cog):
         if not (is_admin(ctx.author) or has_ticket_access(ctx.author)):
             return await ctx.reply("❌ Chỉ admin hoặc seller mới dùng được lệnh này.")
 
+        # 📷 Chỉ cần gửi ảnh QR ngân hàng: `.shopbank` + đính kèm ảnh (hoặc reply vào ảnh). Gõ đủ 4 tham số như cũ thì
+        # giữ nguyên cách nhập tay; có ảnh mà tham số < 4 thì phần chữ (nếu có) được coi là TÊN CHỦ TK.
+        qr_att = await _find_qr_attachment(ctx)
+        if qr_att:
+            typed_full = False
+            if args:
+                try:
+                    typed_full = len(shlex.split(args)) >= 4
+                except ValueError:
+                    typed_full = False
+            if not typed_full:
+                return await self._register_bank_from_qr(ctx, qr_att, (args or "").strip().strip('"'))
+
         if not args:
             bank = get_shop_orders_bank(ctx.author.id)
             if not bank:
                 return await ctx.reply(
                     "📭 Bạn chưa đăng ký bank nào.\n"
-                    'Đăng ký: `.shopbank "Vietinbank" vietinbank 0123456789 "Nguyen Van A"`'
+                    'Đăng ký nhanh: gõ `.shopbank` và **đính kèm ảnh QR nhận tiền** của ngân hàng (bot tự đọc).\n'
+                    'Hoặc nhập tay: `.shopbank "Vietinbank" vietinbank 0123456789 "Nguyen Van A"`'
                 )
             return await ctx.reply(
                 "**Bank của bạn hiện tại:**\n"
@@ -651,6 +699,51 @@ class ShopOrdersCog(commands.Cog):
             f"› Lưu ý: nội dung CK trên QR giờ TỰ SINH riêng theo từng đơn để đối soát — "
             f"tham số ghi chú ở trên chỉ để bạn tự nhớ, không còn in lên QR nữa."
         )
+
+    async def _register_bank_from_qr(self, ctx: commands.Context, att: discord.Attachment, holder: str) -> None:
+        """Đọc ảnh VietQR → lưu bank CỦA NGƯỜI GÕ LỆNH (giống `.shopbank` nhập tay, bank_code = mã BIN)."""
+        if att.size and att.size > MAX_IMAGE_BYTES:
+            return await ctx.reply("❌ Ảnh quá lớn (tối đa 8MB) — chụp màn hình QR rồi gửi lại.")
+        try:
+            data = await att.read()
+            texts = await asyncio.to_thread(decode_qr_texts, data)
+        except QRDecoderMissing as e:
+            log.error(f"[SHOPBANK] {e}")
+            return await ctx.reply("❌ Bot chưa cài thư viện đọc QR (`pip install zxing-cpp`) — nhờ admin cài, hoặc nhập tay: "
+                                   '`.shopbank "Vietinbank" vietinbank 0123456789 "Nguyen Van A"`')
+        except Exception as e:
+            log.warning(f"[SHOPBANK] không đọc được ảnh: {e}")
+            return await ctx.reply("❌ Không mở được ảnh này — gửi lại ảnh PNG/JPG của mã QR.")
+
+        info = pick_vietqr(texts)
+        if not info["ok"]:
+            return await ctx.reply(QR_ERRORS.get(info["error"], QR_ERRORS["no_qr"]))
+
+        old = get_shop_orders_bank(ctx.author.id) or {}
+        bank_name = bank_name_from_bin(info["bin"])
+        account_holder = holder or info["holder"] or (old.get("account_holder") if old.get("account_number") == info["account_number"] else "") or ""
+        save_shop_orders_bank(
+            ctx.author.id,
+            bank_name=bank_name, bank_code=info["bin"], account_number=info["account_number"],
+            account_holder=account_holder, default_content=old.get("default_content", ""),
+            template=old.get("template") or "compact2",
+            registered_at=datetime.now(timezone.utc).isoformat(), source="qr",
+        )
+        lines = [
+            f"✅ Đã đăng ký bank **của bạn** từ ảnh QR: **{bank_name}** (BIN `{info['bin']}`) — `{info['account_number']}` — "
+            f"{account_holder or '*(QR không có tên chủ TK)*'}",
+            "› Từ giờ QR thanh toán (`.done`, Auto Buy) dùng đúng bank này. Xem lại: `.shopbank` · toàn bộ: `.listbank`",
+        ]
+        if not account_holder:
+            lines.append('› QR này không chứa tên chủ TK nên QR thanh toán sẽ không hiện tên. Muốn hiện tên: gửi lại ảnh với lệnh '
+                         '`.shopbank Nguyen Van A` (thêm tên chủ TK sau lệnh).')
+        lines.append("› Nhớ kiểm tra số TK ở trên có ĐÚNG không — tiền khách chuyển sẽ vào đúng tài khoản này.")
+        await ctx.reply("\n".join(lines))
+        if att in ctx.message.attachments:        # ảnh QR do chính người gõ gửi → xoá cho gọn (tin trả lời ở trên đã giữ thông tin)
+            try:
+                await ctx.message.delete()
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                pass
 
     @commands.command(name="listbank")
     async def listbank_cmd(self, ctx: commands.Context):

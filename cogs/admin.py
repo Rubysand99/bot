@@ -830,7 +830,8 @@ class AdminCog(commands.Cog):
                      "Tính năng thử nghiệm — bật/tắt qua `.st`. Khi bật, `.done <tiền>` (mục Ticket)\n"
                      "sẽ tự tạo mã QR VietQR động theo số tiền thay vì chỉ báo hoàn thành.", False),
                     ("⚙️ Cấu hình (admin, bắt buộc trước khi dùng)",
-                     "`.shopbank <thông tin>` — Cài thông tin ngân hàng (tên NH, số TK, chủ TK...) để tạo QR\n"
+                     "`.shopbank` + **đính kèm ảnh QR ngân hàng** — bot tự đọc ngân hàng + số TK (hoặc reply vào ảnh QR)\n"
+                     "`.shopbank <thông tin>` — Nhập tay: tên NH, mã VietQR, số TK, chủ TK...\n"
                      "`.setqueue #kênh` — Cài kênh hàng đợi đơn hàng cho seller (nút ✅ xác nhận đã xử lý)\n"
                      "`.shoporderno [số]` — Xem/đổi số hóa đơn kế tiếp (admin)\n"
                      "Kênh Proof (nơi hóa đơn công khai được gửi) — cài trong `.st` → Proof Channel", False),

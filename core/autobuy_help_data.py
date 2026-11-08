@@ -77,8 +77,9 @@ PAGES = {
              "(kênh hướng dẫn đổi thông tin / 2FA / lock acc / nơi vouch)\n"
              "Xem lại toàn bộ: `.abset`"),
             ("4️⃣ Bank + thanh toán tự động (để bot tự giao)",
-             "• Mỗi **seller/owner** đăng ký bank nhận tiền của mình (**bắt buộc trước khi đăng bán**): `.shopbank \"Vietinbank\" vietinbank 0123456789 \"Nguyen Van A\"` "
-             "(xem lại: `.shopbank`, danh sách: `.listbank`)\n"
+             "• Mỗi **seller/owner** đăng ký bank nhận tiền của mình (**bắt buộc trước khi đăng bán**) — cách nhanh nhất: gõ `.shopbank` "
+             "và **đính kèm ảnh QR nhận tiền** của ngân hàng (hoặc reply vào ảnh QR), bot tự đọc ngân hàng + số TK. "
+             "Nhập tay: `.shopbank \"Vietinbank\" vietinbank 0123456789 \"Nguyen Van A\"` (xem lại: `.shopbank`, danh sách: `.listbank`)\n"
              "• Admin bật **Shop Orders** trong `.st`\n"
              "• Webhook SePay `/webhook/sepay` + biến môi trường `SEPAY_WEBHOOK_API_KEY` khớp API Key khai trên SePay "
              "(chi tiết: `.help shoporders`)\n"
@@ -234,6 +235,10 @@ PAGES = {
             ("`/add_acc` hoặc `/stock acc` báo \"Chỉ seller…\" / \"chưa đăng ký ngân hàng\"",
              "Bạn cần là **seller còn hạn** (`.seller list`, admin thêm bằng `.seller add`) hoặc owner/admin, và đã `.shopbank`. "
              "Owner đăng hộ acc của seller khác thì seller đó cũng phải đã `.shopbank`. Gõ `.shopbank` (không tham số) để xem bank đang lưu."),
+            ("`.shopbank` + ảnh QR báo không đọc được / không phải VietQR",
+             "Dùng **mã QR nhận tiền theo số tài khoản** trong app ngân hàng (không phải QR ví MoMo/ZaloPay, không phải QR số thẻ). "
+             "Chụp màn hình **nét, không cắt viền QR**. Vẫn lỗi → nhập tay: `.shopbank \"Vietinbank\" vietinbank 0123456789 \"Nguyen Van A\"`. "
+             "Báo thiếu thư viện đọc QR → admin chạy `pip install zxing-cpp` trên VPS rồi restart bot."),
             ("Nút BUY báo \"đang có người mở đơn\" mãi",
              "Ticket cũ còn treo. Vào kênh `ticket-<tên acc>` bấm 🔒 **Close** (hoặc xoá kênh) → acc tự quay lại BUY được. "
              "Không thấy kênh ticket nữa mà nút vẫn kẹt → báo admin."),
