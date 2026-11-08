@@ -155,6 +155,17 @@ class _AddAccModal(GuildContextModal, title="Nhập Tài Khoản Minecraft"):
             ephemeral=True)
 
 
+def store_info(guild: discord.Guild) -> dict:
+    """Tên + icon của SERVER → vẽ lên header card (thay cho logo/chữ "Drew Store" của bản Node)."""
+    icon = ""
+    if guild.icon:
+        try:
+            icon = str(guild.icon.replace(size=128, static_format="png").url)
+        except Exception:
+            icon = str(guild.icon.url)
+    return {"store_name": guild.name, "store_icon_url": icon}
+
+
 class AutoBuyCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -554,7 +565,8 @@ class AutoBuyCog(commands.Cog):
             if not ch:
                 return
             text = f"(<@{buyer_id}>) Đã Mua tài khoản ( {acc['username']} ) với giá ( {acc.get('price') or 'N/A'} )"
-            png = await render_card({k: acc.get(k) or "" for k in ("username", "price", "rank", "capes", "statshpx", "statsdonut")})
+            png = await render_card({**{k: acc.get(k) or "" for k in ("username", "price", "rank", "capes", "statshpx", "statsdonut")},
+                                     **store_info(guild)})
             if png:
                 e = discord.Embed(color=COLOR_DARK).set_image(url="attachment://bill_card.png")
                 await ch.send(content=text, embed=e, file=discord.File(io.BytesIO(png), "bill_card.png"),
@@ -708,7 +720,7 @@ class AutoBuyCog(commands.Cog):
         capes = " ".join(dict.fromkeys(CUSTOM_EMOJI_RE.findall(capes)))     # bỏ trùng, giữ thứ tự
 
         png = await render_card({"username": username, "price": price, "rank": rank, "capes": capes,
-                                 "statshpx": statshpx, "statsdonut": statsdonut})
+                                 "statshpx": statshpx, "statsdonut": statsdonut, **store_info(interaction.guild)})
         if not png:
             return await interaction.followup.send("❌ Không thể tạo ảnh card!", ephemeral=True)
 

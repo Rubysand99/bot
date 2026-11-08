@@ -5,6 +5,8 @@ của bot autobuy Node, vốn dùng @napi-rs/canvas).
 - Nền: assets/autobuy/card_bg.png (5 file bg1..bg5 của bản Node giống hệt nhau nên chỉ giữ 1).
 - Font: assets/autobuy/Minecraft.ttf nếu bạn tự bỏ vào (không đi kèm repo vì bản quyền), không thì
   assets/autobuy/font.ttf (DejaVu Sans Bold — miễn phí, kèm repo), không có nữa thì font mặc định Pillow.
+- Header (logo + tên cửa hàng): nền gốc có sẵn logo/chữ "Drew Store - MFA" → vẽ đè bằng **icon + tên SERVER** của
+  nơi đăng card (data["store_icon_url"], data["store_name"]); chữ cũ được xoá bằng nội suy dọc từ dải kính sạch phía trên/dưới.
 - Ảnh skin/cape tải qua aiohttp (mc-heads, crafatar..., emoji Discord CDN). Lỗi mạng → bỏ phần đó, vẫn ra card.
 - Phần tải ảnh chạy async, phần vẽ (CPU) chạy trong thread để không chặn event loop của bot.
 """
@@ -29,6 +31,12 @@ STATS_ROW1 = [(412, 305, 130), (630, 305, 130), (850, 305, 130)]   # LEVEL / ACH
 # Bản Node đặt y=422 (đúng mép dưới khung); mẫu nền có sẵn dấu '-' placeholder ở y≈396 nên hạ xuống 411 cho chữ nằm gọn trong khung.
 STATS_ROW2 = [(412, 411, 130), (630, 411, 130), (850, 411, 130)]   # PLAYTIME / MONEY / SHARDS
 SKIN_CENTER_X, SKIN_GROUND_Y, SKIN_MAX_W, SKIN_MAX_H = 142, 338, 155, 245
+
+# Header của nền: logo tròn tâm (75,56) bán kính ≤28; chữ "Drew Store - MFA" bắt đầu x≈123, giữa y≈55, hết x≈365.
+HEADER_LOGO_C, HEADER_LOGO_R = (75, 56), 30            # icon server vẽ to hơn logo cũ một chút để che kín
+HEADER_TEXT_X, HEADER_TEXT_Y, HEADER_TEXT_MAX_X = 123, 55, 835   # chữ mới được kéo dài tới trước "Listed Account" (x≈865)
+HEADER_ERASE = (116, 40, 376, 72)                      # vùng chữ cũ cần xoá (x0, y0, x1, y1)
+STORE_SUFFIX = "- MFA"
 
 
 # ───────────────────────── tải ảnh (async) ─────────────────────────
@@ -158,7 +166,59 @@ def _draw_cape(img, cape, slot):
     img.alpha_composite(tile, (x, y))
 
 
-def _compose(data: dict, skin, capes: list) -> bytes:
+def _erase_old_header_text(img) -> None:
+    """Xoá chữ cũ bằng nội suy dọc: mỗi cột lấy màu 1 hàng 'kính' sạch phía trên và phía dưới chữ rồi pha dần — giữ đúng
+    sắc xanh lá/xanh trời của nền ở từng vị trí (dán 1 mảng phẳng sẽ lộ). Chỉ sửa vùng chữ, không đụng thanh header."""
+    from PIL import Image
+    x0, y0, x1, y1 = HEADER_ERASE
+    top = img.crop((x0, y0 - 3, x1, y0 - 2)).convert("RGBA")
+    bot = img.crop((x0, y1 + 2, x1, y1 + 3)).convert("RGBA")
+    for y in range(y0, y1 + 1):
+        img.paste(Image.blend(top, bot, (y - y0) / (y1 - y0)), (x0, y))
+
+
+def _round_icon(icon, name: str, size: int):
+    """Icon server tròn; không có icon → hình tròn tối + chữ cái đầu tên server."""
+    from PIL import Image, ImageDraw
+    if icon is not None:
+        w, h = icon.size
+        side = min(w, h)
+        icon = icon.crop(((w - side) // 2, (h - side) // 2, (w - side) // 2 + side, (h - side) // 2 + side)).resize((size, size), Image.LANCZOS)
+    else:
+        icon = Image.new("RGBA", (size, size), (38, 44, 64, 255))
+        letter = (name.strip()[:1] or "?").upper()
+        f = _font(int(size * 0.55))
+        ImageDraw.Draw(icon).text((size / 2, size / 2), letter, font=f, fill=(255, 255, 255, 255), anchor="mm")
+    mask = Image.new("L", (size * 4, size * 4), 0)       # vẽ mask 4x rồi thu nhỏ → viền tròn mịn
+    ImageDraw.Draw(mask).ellipse((0, 0, size * 4 - 1, size * 4 - 1), fill=255)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.paste(icon, (0, 0), mask.resize((size, size), Image.LANCZOS))
+    return out
+
+
+def _paint_header(img, store_name: str, store_icon) -> None:
+    from PIL import Image, ImageDraw
+    name = (store_name or "").strip()
+    if not name and store_icon is None:
+        return                                           # không có thông tin server → giữ nguyên nền gốc
+    _erase_old_header_text(img)
+    # logo (đè kín logo cũ) + viền mảnh
+    size = HEADER_LOGO_R * 2
+    cx, cy = HEADER_LOGO_C
+    img.alpha_composite(_round_icon(store_icon, name, size), (cx - HEADER_LOGO_R, cy - HEADER_LOGO_R))
+    ImageDraw.Draw(img).ellipse((cx - HEADER_LOGO_R, cy - HEADER_LOGO_R, cx + HEADER_LOGO_R, cy + HEADER_LOGO_R),
+                                outline=(255, 255, 255, 110), width=2)
+    # tên server (trắng) + " - MFA" (xám) cùng baseline
+    draw = ImageDraw.Draw(img)
+    suffix_font = _font(24)
+    suffix_w = draw.textlength(f"  {STORE_SUFFIX}", font=suffix_font)
+    f = _fit_font(draw, name, 32, 14, HEADER_TEXT_MAX_X - HEADER_TEXT_X - suffix_w)
+    name_w = draw.textlength(name, font=f)
+    _text(img, (HEADER_TEXT_X, HEADER_TEXT_Y), name, f, (255, 255, 255, 255), "lm", blur=5)
+    _text(img, (HEADER_TEXT_X + name_w, HEADER_TEXT_Y), f"  {STORE_SUFFIX}", suffix_font, (168, 168, 168, 255), "lm", blur=4)
+
+
+def _compose(data: dict, skin, capes: list, store_icon=None) -> bytes:
     from PIL import Image, ImageDraw, ImageFilter
 
     name = str(data.get("username") or "NameAccount")
@@ -171,6 +231,7 @@ def _compose(data: dict, skin, capes: list) -> bytes:
     except Exception as e:
         log.warning(f"[AUTOBUY] không đọc được nền card ({e}) — dùng nền trơn")
         img = Image.new("RGBA", (W, H), (22, 26, 38, 255))
+    _paint_header(img, str(data.get("store_name") or ""), store_icon)
     draw = ImageDraw.Draw(img)
 
     # tên account (dưới chân skin)
@@ -222,7 +283,8 @@ def _compose(data: dict, skin, capes: list) -> bytes:
 
 
 async def render_card(data: dict) -> bytes | None:
-    """data: username, price, rank, capes, statshpx, statsdonut (đều là chuỗi). Trả về bytes PNG, None nếu lỗi."""
+    """data: username, price, rank, capes, statshpx, statsdonut (đều là chuỗi); tuỳ chọn store_name, store_icon_url
+    (tên + icon server → vẽ lên header). Trả về bytes PNG, None nếu lỗi."""
     try:
         import aiohttp
         username = str(data.get("username") or "NameAccount")
@@ -232,10 +294,13 @@ async def render_card(data: dict) -> bytes | None:
         emojis = emojis[:7]
         async with aiohttp.ClientSession() as session:
             skin_task = asyncio.create_task(_fetch_skin(session, username))
+            icon_url = str(data.get("store_icon_url") or "")
+            icon_task = asyncio.create_task(_fetch_bytes(session, icon_url)) if icon_url else None
             cape_bufs = await asyncio.gather(*[_fetch_bytes(session, e["url"]) for e in emojis])
             skin = await skin_task
+            store_icon = _open_image(await icon_task) if icon_task else None
         capes = [_open_image(b) for b in cape_bufs]
-        return await asyncio.to_thread(_compose, data, skin, capes)
+        return await asyncio.to_thread(_compose, data, skin, capes, store_icon)
     except Exception:
         log.exception("[AUTOBUY] render_card lỗi")
         return None

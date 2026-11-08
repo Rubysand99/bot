@@ -112,7 +112,7 @@ PAGES = {
              "`statshpx` — Hypixel: `Level, Achievements` vd `150, 4500`\n"
              "`statsdonut` — DonutSMP: `Playtime, Money, Shards` vd `120h, 50M, 1500`"),
             ("🖼️ Kết quả",
-             "Card ảnh (skin, tên, giá, capes, rank, chỉ số) + dòng Seller + nút 🛒 **BUY** / ℹ️ **Cách mua**.\n"
+             "Card ảnh (skin, tên, giá, capes, rank, chỉ số; góc trên là **tên + icon server** của bạn) + dòng Seller + nút 🛒 **BUY** / ℹ️ **Cách mua**.\n"
              "Có danh mục Stock → tạo kênh `✅・140k・3-cape` (giá rút gọn + số cape), khách xem được nhưng không chat. "
              "Chưa cài → đăng ngay kênh đang gõ lệnh.\n"
              "Đăng lại cùng username → card mới. Acc đang có người mở đơn thì chưa đăng lại được."),

@@ -1,3 +1,11 @@
+## [v4.63.3] — 2026-11-08
+
+### 🏷️ Card AutoBuy: header dùng TÊN + ICON của server (`core/autobuy_card.py`, `cogs/autobuy.py`)
+- Ảnh nền gốc có sẵn logo và chữ "Drew Store - MFA" của shop Node. Giờ card (cả khi `/stock acc` lẫn bill) vẽ **icon tròn + tên của server** đang đăng card, kèm hậu tố xám `- MFA`; "Listed Account" bên phải giữ nguyên.
+- Chữ cũ được xoá bằng nội suy dọc từ dải "kính" sạch phía trên/dưới (giữ đúng sắc xanh lá/xanh trời của nền, không lộ mảng vá); icon mới vẽ to hơn logo cũ nên che kín.
+- Tên dài tự thu nhỏ chữ (hỗ trợ tiếng Việt có dấu); server không có icon → vòng tròn tối + chữ cái đầu tên server; không có cả tên lẫn icon → giữ nguyên nền gốc.
+- Test: `tests/test_autobuy_logic.py` (+2): header đổi đúng vùng logo/chữ, "Listed Account" không bị đụng, tên dài/không icon không lỗi.
+
 ## [v4.63.2] — 2026-11-08
 
 ### 📖 `.help autobuy` — hướng dẫn ĐẦY ĐỦ nhiều trang (thay mục 1 trang của v4.63.1)

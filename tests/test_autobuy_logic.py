@@ -118,6 +118,37 @@ class CardRender(unittest.TestCase):
         self.assertEqual(im.size, (1036, 600))
         self.assertEqual(im.format, "PNG")
 
+
+    def test_header_uses_server_name_and_icon(self):
+        import io
+        from PIL import Image, ImageChops
+        import core.autobuy_card as K
+        bg = Image.open(os.path.join(K.ASSET_DIR, "card_bg.png")).convert("RGB").resize((K.W, K.H), Image.LANCZOS)
+        icon = Image.new("RGBA", (128, 128), (220, 60, 120, 255))
+        base = {"username": "x", "price": "100k"}
+
+        def header(data, ic=None):
+            im = Image.open(io.BytesIO(K._compose(data, None, [], ic))).convert("RGB")
+            return im.crop((20, 20, 900, 90))
+        orig = bg.crop((20, 20, 900, 90))
+        # không có thông tin server → giữ nguyên nền gốc (logo/chữ gốc còn đó)
+        self.assertIsNone(ImageChops.difference(header(base), orig).getbbox())
+        # có tên + icon server → header khác nền gốc ở vùng logo + chữ
+        with_store = header({**base, "store_name": "Nobi Shop"}, icon)
+        d = ImageChops.difference(with_store, orig).getbbox()
+        self.assertIsNotNone(d)
+        # icon server (đỏ-hồng) phải xuất hiện ở tâm logo (75,56)
+        px = Image.open(io.BytesIO(K._compose({**base, "store_name": "Nobi Shop"}, None, [], icon))).convert("RGB").getpixel((75, 56))
+        self.assertGreater(px[0], 180); self.assertLess(px[1], 120)
+        # vùng "Listed Account" bên phải không bị đụng tới
+        right = (880, 30, 1000, 75)
+        a = Image.open(io.BytesIO(K._compose({**base, "store_name": "Nobi Shop"}, None, [], icon))).convert("RGB").crop(right)
+        self.assertIsNone(ImageChops.difference(a, bg.crop(right)).getbbox())
+
+    def test_header_survives_long_name_and_no_icon(self):
+        import core.autobuy_card as K
+        self.assertTrue(K._compose({"username": "x", "price": "1", "store_name": "Cửa Hàng " * 12}, None, [], None).startswith(b"\x89PNG"))
+
     def test_compose_survives_missing_skin_and_capes(self):
         import core.autobuy_card as K
         self.assertTrue(K._compose({"username": "x", "price": ""}, None, [None, None]).startswith(b"\x89PNG"))
