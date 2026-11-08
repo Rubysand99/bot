@@ -568,6 +568,15 @@ async def handle_sold(bot, message: discord.Message):
         return
 
     old_name = channel.name
+
+    # AutoBuy: tài khoản có card ở kênh này → đánh dấu SOLD + khoá nút BUY (không để khách mua nốt acc đã bán tay).
+    try:
+        _ab = bot.get_cog("AutoBuyCog")
+        if _ab:
+            await _ab.on_manual_sold(channel)
+    except Exception as _e:
+        print(f"[SOLD] ⚠️ AutoBuy on_manual_sold lỗi: {_e}")
+
     if "•" in old_name:
         new_name = "❌•" + old_name.split("•", 1)[-1]
     else:

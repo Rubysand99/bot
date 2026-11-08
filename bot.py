@@ -18,8 +18,8 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.62.4"
-BOT_UPDATED = "2026-11-07"
+BOT_VERSION = "4.63.0"
+BOT_UPDATED = "2026-11-08"
 CHANGELOG_CHANNEL_ID = 1469983483853144125
 
 TOKEN = os.getenv("TOKEN")
@@ -120,6 +120,7 @@ COGS = [
     "cogs.shop_orders",
     "cogs.leaderboard",
     "cogs.listings",
+    "cogs.autobuy",
 ]
 
 async def load_cogs():

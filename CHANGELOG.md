@@ -1,3 +1,19 @@
+## [v4.63.0] — 2026-11-08
+
+### 🛒 Tích hợp AutoBuy (bán tài khoản Minecraft tự động) — `cogs/autobuy.py` (MỚI)
+Port bot autobuy (Node.js "Drew Store") sang cog Python, dùng lại hạ tầng có sẵn thay vì chạy 2 bot:
+- **Luồng**: `/add_acc` (nạp thông tin đăng nhập) → `/stock acc` (đăng card ảnh + nút BUY) → khách bấm BUY → ticket + QR → thanh toán → giao DM, card thành SOLD, kênh sang danh mục sold, bill, nhắc vouch.
+- **Tự giao qua SePay**: QR dùng bank seller đăng ký bằng `.shopbank` + mã `DHxxxxxx`; khi SePay báo tiền về, `shop_orders._notify_paid_order` gọi `AutoBuyCog.on_paid()` → tự giao (bản Node chỉ xác nhận tay). Chưa có bank/Shop Orders tắt → vẫn Confirm tay như cũ.
+- **Dùng chung cấu hình**: kênh stock/sold = `cfg_stock_category`/`cfg_sold_category` của `.st`; quyền = `can_manage_listing()`; doanh số = `add_user_spent` (BXH) + `add_seller_sale`. Cấu hình riêng: `.abset` (ticket, bill, youtube, 2fa, lock, vouch, qr).
+- **Không trùng lệnh có sẵn**: bỏ `/done`, `/leaderboard`, `/set_qr` (đã có `/done` ticket, `.bxh`, `.shopbank`), vouch autoreact (đã có `legit.py`). Chưa port: `/skin`, `/sticky`, `.av`, `.vietqr`.
+- **Hook**: `shop_admin.handle_sold` → `on_manual_sold()` (gõ "sold" tay trong kênh stock thì acc cũng thành SOLD, khoá nút BUY — không mua nốt được acc đã bán tay).
+- Lệnh mới: `/add_acc`, `/stock acc`, `/restock`, `/ab_import` (nhập `kho.json` của bot Node, giữ nguyên card cũ), `.abset`, `.abresend`.
+- Nút xử lý bằng `on_interaction` theo prefix custom_id (không đăng ký View) → sống qua restart; giữ custom_id cũ `buy_acc_*`/`guide_how_to_buy` nên card đăng bởi bot Node vẫn mua được.
+- **Ảnh card**: vẽ bằng Pillow (`core/autobuy_card.py`), nền `assets/autobuy/card_bg.png`, font `font.ttf` (DejaVu Sans Bold); có `Minecraft.ttf` trong cùng thư mục sẽ ưu tiên dùng. Thêm `Pillow>=10.1.0` vào `requirements.txt` (autoupdate tự `pip install` khi requirements đổi).
+- **Sửa lỗi so với bản Node**: (1) race khi 2 khách bấm BUY cùng lúc → chiếm acc đồng bộ (`claim_ab_account`); (2) giá "1.2M" bị hiện thành "1k"/"1.200 VND" (kênh + card); (3) Confirm tay + SePay cùng lúc không giao 2 lần (idempotent); (4) nhắc vouch tối đa 2 giờ thay vì vô hạn; (5) tạo ticket lỗi thì hoàn tác acc về AVAILABLE; (6) đóng ticket huỷ luôn mã QR còn chờ.
+- ⚠️ Kho `ab_accounts` chứa **thông tin đăng nhập dạng văn bản** trong document guild (giống bản Node lưu JSON) — chỉ admin/DB mới đọc được; không bật log/share dump DB.
+- Test: `tests/test_autobuy_logic.py` (+12), `tests/smoke_autobuy_flow.py` (10 luồng, cần discord.py thật, chạy riêng: `python3 tests/smoke_autobuy_flow.py`).
+
 ## [v4.62.4] — 2026-11-07
 
 ### 🔒 Giới hạn kích thước list lịch sử — tránh document guild chạm trần 16MB của MongoDB (`core/data.py`)

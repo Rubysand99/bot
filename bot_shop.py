@@ -3,7 +3,7 @@ bot_shop.py — Entry point RIÊNG cho Shop Bot (Phase 2, bot con thứ 4 sau AI
 
 Cùng repo, cùng cogs/core/shared với bot.py chính. Chỉ khác:
   - Token riêng (biến env TOKEN_SHOP)
-  - Load 5 cog: cogs.shop_admin, cogs.listings, cogs.shop_orders, cogs.leaderboard, cogs.seller
+  - Load 6 cog: cogs.shop_admin, cogs.listings, cogs.shop_orders, cogs.leaderboard, cogs.seller, cogs.autobuy
   - Tự chạy verify_server.py (webhook SePay) trong process của MÌNH — ĐÚNG chỗ theo
     AI_CONTEXT.md gốc ("verify_server.py PHẢI thuộc Shop"). shop_orders.py gọi
     register_payment_callback() lúc cog_load() — callback đó CHỈ hoạt động nếu
@@ -86,6 +86,7 @@ COGS_SHOP = [
     "cogs.shop_orders",
     "cogs.leaderboard",
     "cogs.seller",
+    "cogs.autobuy",
 ]
 
 async def load_cogs():

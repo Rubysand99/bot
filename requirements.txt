@@ -4,6 +4,9 @@ discord.py>=2.3.2
 # ── Environment variables (.env) ──
 python-dotenv>=1.0.0
 
+# ── Ảnh card AutoBuy (cogs/autobuy.py) ──
+Pillow>=10.1.0
+
 # ── HTTP clients ──
 requests>=2.31.0
 aiohttp>=3.9.0

@@ -27,6 +27,13 @@ Bot Discord đa server quản lý shop, ticket, giveaway cho TuyTam Store — ki
 - Tạo qua modal, chọn thời gian/số người trúng/phần thưởng
 - Reroll, kết thúc sớm, resume tự động sau khi bot restart (kể cả giveaway dài ngày)
 
+### 🛒 Auto Buy — bán tài khoản Minecraft tự động
+- `/add_acc` nạp thông tin đăng nhập vào kho → `/stock acc` đăng **card ảnh** (skin, cape, rank, stats, giá) + nút **BUY**
+- Khách bấm BUY → ticket riêng + **QR VietQR** (bank của seller đăng ký bằng `.shopbank`); **SePay báo tiền về là bot TỰ GIAO** tài khoản qua DM
+- Chưa bật Shop Orders / seller chưa `.shopbank` → seller/staff bấm **Confirm** tay (giống bot autobuy cũ)
+- Giao xong: card thành SOLD, kênh stock chuyển sang danh mục sold, gửi bill, cộng BXH `.bxh` + thống kê seller, nhắc khách vouch
+- Cấu hình: `.abset` (ticket/bill/youtube/2fa/lock/vouch/qr) — stock/sold dùng chung `.st` · `.abresend <user>` gửi lại DM · `/ab_import` nhập kho từ bot Node cũ · `/restock` liệt kê kênh stock
+
 ### 💰 Seller Subscription
 - Theo dõi gian hàng thuê theo thời gian, cảnh báo sắp hết hạn + tự động hết hạn
 - Thống kê doanh số theo seller
@@ -104,7 +111,9 @@ bot-main/
 │   ├── data.py             # Hạ tầng dùng chung: Mongo cache theo guild (ContextVar), admin, AUTH_GATE
 │   ├── auth_gate.py        # Cổng ủy quyền server + log lệnh
 │   └── logger.py           # send_log() dùng chung
+├── assets/autobuy/         # Nền card (card_bg.png) + font (font.ttf; bỏ Minecraft.ttf vào đây nếu muốn)
 ├── core/
+│   ├── autobuy_logic.py / autobuy_card.py   # Auto Buy: hàm thuần + vẽ card Pillow
 │   ├── data.py             # Accessor riêng từng tính năng (ticket, seller, giveaway, cfg_*...)
 │   ├── ai_tools.py / ai_agents.py / rag.py / message_search.py / site_feed.py
 │   └── __init__.py
@@ -116,6 +125,7 @@ bot-main/
     ├── ai_chat.py           # AI Chat (Groq) + AI điều khiển bot có xác nhận
     ├── giveaway.py
     ├── invite.py            # Invite tracking
+    ├── autobuy.py           # Auto Buy: kho acc MC, card ảnh, ticket + QR, tự giao qua SePay
     ├── leaderboard.py       # Bảng xếp hạng chi tiêu (.bxh)
     ├── legit.py             # Vouch/legit + đổi tên kênh có hàng đợi
     ├── listings.py          # Đăng sản phẩm (/post, .addlisting)
@@ -130,4 +140,4 @@ bot-main/
 Kiến trúc multi-guild: mỗi guild có 1 document Mongo riêng (`guild_<id>`), truy cập qua `load_data()`/`save_data()` — các hàm này đọc guild hiện tại từ `contextvars.ContextVar`, xem chi tiết quy ước trong `AI_CONTEXT.md`.
 
 ## 📊 Version
-**v4.62.4** (xem `BOT_VERSION` trong `bot.py`) — Xem [CHANGELOG.md](CHANGELOG.md) để biết lịch sử thay đổi.
+**v4.63.0** (xem `BOT_VERSION` trong `bot.py`) — Xem [CHANGELOG.md](CHANGELOG.md) để biết lịch sử thay đổi.

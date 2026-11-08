@@ -532,6 +532,13 @@ class ShopOrdersCog(commands.Cog):
         if not guild:
             return ["bot không còn ở server của đơn này"]
 
+        # Đơn do AutoBuy (cogs/autobuy.py) tạo → TỰ GIAO tài khoản thay vì đẩy vào hàng đợi `.done`.
+        if order.get("autobuy_username"):
+            ab = self.bot.get_cog("AutoBuyCog")
+            if not ab:
+                return ["cog AutoBuy chưa load trên bot này — không tự giao được tài khoản"]
+            return await ab.on_paid(order, transfer_amount, expected_amount)
+
         channel = await get_or_fetch_channel(self.bot, order["channel_id"])
         seller = await self._resolve_user(guild, order.get("seller_id"))
         buyer = await self._resolve_user(guild, order.get("buyer_id"))

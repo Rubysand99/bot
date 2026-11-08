@@ -1204,3 +1204,102 @@ def set_shop_order_counter(number: int) -> None:
 
 def save_cfg_queue_channel(channel_id: int) -> None:
     save_cfg("cfg_queue_channel", channel_id)
+
+
+# ══════════════════════════════════════════
+# AUTO BUY — kho tài khoản Minecraft + ticket mua hàng (cogs/autobuy.py)
+# Port từ bot autobuy (Node, lưu file JSON) sang document guild trong Mongo:
+#   ab_accounts : {username_lower: {username, status, price, rank, capes, seller_id,
+#                  password, primary_email, security_email, recovery_code, secret_key,
+#                  card_channel_id, card_message_id, ...}}   ⚠️ có THÔNG TIN ĐĂNG NHẬP (bí mật)
+#   ab_tickets  : {channel_id(str): {username, buyer_id, seller_id, price, amount, ref_code, ...}}
+#   ab_cfg      : {ticket_category_id, bill_channel_id, kenh_youtube, kenh_2fa, kenh_lock,
+#                  kenh_vouch, fallback_qr}
+# Kênh stock/sold dùng CHUNG cfg_stock_category / cfg_sold_category của `.st` (không nhân đôi cấu hình).
+# ══════════════════════════════════════════
+def get_ab_account(username: str) -> dict | None:
+    if not username:
+        return None
+    return load_data().get("ab_accounts", {}).get(str(username).strip().lower())
+
+def get_all_ab_accounts() -> dict:
+    return load_data().get("ab_accounts", {})
+
+def save_ab_account(doc: dict) -> bool:
+    """Upsert nguyên 1 tài khoản theo username (không phân biệt hoa/thường)."""
+    uname = str(doc.get("username") or "").strip()
+    if not uname:
+        return False
+    data = load_data()
+    accs = data.setdefault("ab_accounts", {})
+    accs[uname.lower()] = {**doc, "username": uname, "updated_at": datetime.now(timezone.utc).isoformat()}
+    save_data(data)
+    return True
+
+def update_ab_account(username: str, **patch) -> bool:
+    data = load_data()
+    accs = data.get("ab_accounts", {})
+    key = str(username or "").strip().lower()
+    if key not in accs:
+        return False
+    accs[key].update(patch)
+    accs[key]["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_data(data)
+    return True
+
+def find_ab_account_by_channel(channel_id: int) -> dict | None:
+    """Tài khoản có card nằm ở kênh này (card_channel_id)."""
+    for acc in load_data().get("ab_accounts", {}).values():
+        if str(acc.get("card_channel_id")) == str(channel_id):
+            return acc
+    return None
+
+def claim_ab_account(username: str) -> tuple[str, dict | None]:
+    """ĐỒNG BỘ kiểm tra + chiếm tài khoản (AVAILABLE → PROCESSING) trong 1 bước, KHÔNG có await ở giữa
+    → 2 khách bấm BUY cùng lúc thì chỉ 1 người chiếm được (bản Node kiểm tra rồi mới await nên có race).
+    Trả về (kết quả, account): "ok" | "missing" | "sold" | "processing"."""
+    data = load_data()
+    acc = data.get("ab_accounts", {}).get(str(username or "").strip().lower())
+    if not acc:
+        return "missing", None
+    st = acc.get("status")
+    if st == "SOLD":
+        return "sold", acc
+    if st == "PROCESSING":
+        return "processing", acc
+    acc["status"] = "PROCESSING"
+    acc["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_data(data)
+    return "ok", acc
+
+def get_ab_ticket(channel_id: int) -> dict | None:
+    return load_data().get("ab_tickets", {}).get(str(channel_id))
+
+def get_all_ab_tickets() -> dict:
+    return load_data().get("ab_tickets", {})
+
+def save_ab_ticket(channel_id: int, doc: dict) -> None:
+    data = load_data()
+    data.setdefault("ab_tickets", {})[str(channel_id)] = {**doc, "created_at": doc.get("created_at") or datetime.now(timezone.utc).isoformat()}
+    save_data(data)
+
+def delete_ab_ticket(channel_id: int) -> bool:
+    data = load_data()
+    tickets = data.get("ab_tickets", {})
+    if str(channel_id) not in tickets:
+        return False
+    del tickets[str(channel_id)]
+    save_data(data)
+    return True
+
+def get_ab_cfg(key: str, default=None):
+    return load_data().get("ab_cfg", {}).get(key, default)
+
+def set_ab_cfg(key: str, value) -> None:
+    data = load_data()
+    cfg = data.setdefault("ab_cfg", {})
+    if value in (None, "", 0):
+        cfg.pop(key, None)
+    else:
+        cfg[key] = value
+    save_data(data)
