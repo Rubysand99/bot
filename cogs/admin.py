@@ -921,12 +921,18 @@ class AdminCog(commands.Cog):
             "shoporders": "shoporders", "shop": "shoporders", "qr": "shoporders",
             "vietqr": "shoporders", "donhang": "shoporders", "order": "shoporders", "bxh": "shoporders", "bxhpanel": "shoporders", "leaderboard": "shoporders",
             "listings": "listings", "listing": "listings", "sanpham": "listings", "forum": "listings",
+            "autobuy": "autobuy", "ab": "autobuy", "buy": "autobuy", "acc": "autobuy", "stock": "autobuy", "muaacc": "autobuy",
         }
 
         if topic:
+            # `.help autobuy [trang]` — hướng dẫn nhiều trang (menu chọn trang), xem cogs/autobuy_help.py
+            _parts = topic.lower().strip().split()
+            if _parts and ALIASES.get(_parts[0]) == "autobuy":
+                from cogs.autobuy_help import send_autobuy_help
+                return await send_autobuy_help(ctx, _parts[1] if len(_parts) > 1 else None, BOT_VERSION)
             key = ALIASES.get(topic.lower().strip())
             if not key:
-                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "invite", "dichvu", "giveaway", "mod", "ai", "log", "admin", "seller", "shoporders", "listings"])
+                topics_list = " | ".join(f"`{k}`" for k in ["ticket", "invite", "dichvu", "giveaway", "mod", "ai", "log", "admin", "seller", "shoporders", "listings", "autobuy"])
                 return await ctx.reply(f"❌ Không tìm thấy mục `{topic}`.\nCác mục hợp lệ: {topics_list}")
             t = TOPICS[key]
             embed = discord.Embed(
@@ -942,7 +948,7 @@ class AdminCog(commands.Cog):
         # Embed tổng quan
         embed = discord.Embed(
             title="📖  Danh Sách Lệnh — TuyTam Bot",
-            description="Dùng `.help <mục>` để xem chi tiết từng phần.\nVí dụ: `.help mod` | `.help ticket` | `.help admin` | `.help listings`",
+            description="Dùng `.help <mục>` để xem chi tiết từng phần.\nVí dụ: `.help mod` | `.help ticket` | `.help admin` | `.help listings` | `.help autobuy`",
             color=0x5865F2,
             timestamp=datetime.now(timezone.utc)
         )
@@ -957,6 +963,7 @@ class AdminCog(commands.Cog):
         embed.add_field(name="🏪 Seller",    value="`.seller add/remove/list/panel` `.myseller`\n`.setsellercat` `.addsellerrole` *(xem `.help ticket`)*", inline=True)
         embed.add_field(name="🧾 Shop Orders", value="`.shopbank` `.setqueue` `.shoporderno`\n`.bxh` `.bxhpanel` — bảng xếp hạng\n*(dùng chung `.done` ở Ticket)*", inline=True)
         embed.add_field(name="🛒 Sản phẩm",    value="`.addlisting #forum \"IGN\" \"Giá\" \"Cape\"`\n*(xem `.help listings`)*", inline=True)
+        embed.add_field(name="🛒 Auto Buy",    value="`/add_acc` `/stock acc` `/restock`\n`.abset` `.abresend` `/ab_import`\n*(hướng dẫn đầy đủ: `.help autobuy`)*", inline=True)
         embed.set_footer(text=f"TuyTam Store  •  v{BOT_VERSION}  •  .help <mục> để xem chi tiết")
         await ctx.reply(embed=embed)
 

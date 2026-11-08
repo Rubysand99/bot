@@ -1,3 +1,19 @@
+## [v4.63.2] — 2026-11-08
+
+### 📖 `.help autobuy` — hướng dẫn ĐẦY ĐỦ nhiều trang (thay mục 1 trang của v4.63.1)
+- `.help autobuy [trang]` mở hướng dẫn **7 trang** có menu chọn trang + nút ◀ ▶ (chỉ người gõ lệnh bấm được, hết hạn sau 10 phút):
+  1 tổng quan · 2 `setup` cài đặt lần đầu · 3 `ban` đăng bán (`/add_acc`, `/stock acc` từng tham số, `/restock`, bán tay) · 4 `mua` khách mua (copy gửi khách được) ·
+  5 `thanhtoan` thanh toán/giao hàng/Confirm/Close/tiền về muộn · 6 `quanly` (`.abset`, `.abresend`, `/ab_import`, nơi lưu dữ liệu) · 7 `loi` xử lý sự cố.
+  Gõ thẳng trang: `.help autobuy setup`, `.help ab 4`, `.help stock thanhtoan`… (alias: `ab`, `buy`, `acc`, `stock`, `muaacc`; trang gọi được bằng tên hoặc số 1–7).
+- Nội dung ở `core/autobuy_help_data.py` (thuần dữ liệu); giao diện ở `cogs/autobuy_help.py`; `cogs/admin.py` chỉ định tuyến.
+- Test: `tests/test_autobuy_help.py` (+6) kiểm tra giới hạn embed của Discord (field ≤1024, tổng ≤6000) và các lệnh/khoá/tham số được hướng dẫn **có thật** trong `cogs/autobuy.py` — sửa cog mà quên sửa help thì test báo.
+
+## [v4.63.1] — 2026-11-08
+
+### 📖 `.help` — thêm mục Auto Buy (`cogs/admin.py`)
+- Mục mới `.help autobuy` (alias `ab`, `buy`, `acc`, `stock`, `muaacc`): lệnh `/add_acc`, `/stock acc`, `/restock`, `.abresend`, `/ab_import`, các nút BUY/Cách mua/Confirm/Close, cách thanh toán (QR `.shopbank` + SePay tự giao, hoặc Confirm tay) và cấu hình `.abset`.
+- Trang tổng quan `.help` thêm ô "🛒 Auto Buy" và gợi ý `.help autobuy`; thông báo "không tìm thấy mục" liệt kê thêm `autobuy`.
+
 ## [v4.63.0] — 2026-11-08
 
 ### 🛒 Tích hợp AutoBuy (bán tài khoản Minecraft tự động) — `cogs/autobuy.py` (MỚI)
