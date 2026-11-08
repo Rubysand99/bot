@@ -39,10 +39,10 @@ PAGES = {
              "6️⃣ Khách vouch trong ticket → bot đóng ticket"),
             ("👥 Ai làm được gì",
              "**Khách:** bấm 🛒 BUY / ℹ️ Cách mua\n"
-             "**Staff & seller** (và người/role gán ở `.st` → Vai trò ticket → 🛒 Quản lý Auto Buy): "
-             "`/add_acc` `/stock acc` `/restock` `.abresend`, nút ✅ Confirm / 🔒 Close\n"
-             "**Admin:** `.abset` `/ab_import` + cài đặt trong `.st`\n"
-             "**Seller:** `.shopbank` — bank nhận tiền của riêng mình"),
+             "**Seller còn hạn** (`.seller list`) **hoặc owner/admin — và đã `.shopbank`:** `/add_acc` `/stock acc` (nạp kho + đăng bán)\n"
+             "**Staff, seller, người/role gán ở `.st` → Vai trò ticket → 🛒 Quản lý Auto Buy:** "
+             "`/restock` `.abresend`, nút ✅ Confirm / 🔒 Close\n"
+             "**Admin:** `.abset` `/ab_import` + cài đặt trong `.st`"),
             ("📚 Các trang hướng dẫn (gõ hoặc chọn ở menu bên dưới)",
              "`.help autobuy setup` — ⚙️ cài đặt lần đầu\n"
              "`.help autobuy ban` — 📦 đăng bán acc (`/add_acc`, `/stock acc`, `/restock`)\n"
@@ -65,22 +65,24 @@ PAGES = {
              "`.st` → cài **danh mục Stock** (mỗi acc đăng bán = 1 kênh mới trong đây) và **danh mục Sold** "
              "(kênh đã bán tự chuyển sang).\n"
              "Không cài Stock → `/stock acc` đăng card ngay kênh đang gõ lệnh. Không cài Sold → kênh đã bán chỉ đổi icon ❌."),
-            ("2️⃣ Quyền bán hàng",
-             "Staff/seller dùng được sẵn. Muốn thêm người hoặc role *chỉ* được đăng bán: "
-             "`.st` → **Vai trò ticket** → 🛒 **Quản lý Auto Buy** (role đó cũng được vào ticket mua hàng)."),
+            ("2️⃣ Ai được đăng bán",
+             "Chỉ **seller** có gói còn hạn — thêm bằng `.seller add @user <số ngày>`, xem `.seller list` — hoặc **owner/admin**. "
+             "Người đăng **bắt buộc đã `.shopbank`** (bước 4), nếu không bot từ chối `/add_acc` và `/stock acc`.\n"
+             "Role gán ở `.st` → **Vai trò ticket** → 🛒 **Quản lý Auto Buy** *không* cho đăng bán — chỉ cho vào ticket mua hàng, "
+             "bấm Confirm/Close, `/restock`, `.abresend`."),
             ("3️⃣ Ticket & bill",
              "`.abset ticket <ID danh mục>` — danh mục chứa kênh ticket (không cài → ticket nằm ngoài danh mục)\n"
              "`.abset bill <#kênh>` — kênh nhận bill (ảnh card + người mua + giá) sau mỗi đơn\n"
              "Tuỳ chọn, hiện trong DM giao hàng: `.abset youtube|2fa|lock|vouch <#kênh>` "
              "(kênh hướng dẫn đổi thông tin / 2FA / lock acc / nơi vouch)\n"
              "Xem lại toàn bộ: `.abset`"),
-            ("4️⃣ Thanh toán tự động (để bot tự giao)",
-             "• Mỗi **seller** đăng ký bank nhận tiền của mình: `.shopbank \"Vietinbank\" vietinbank 0123456789 \"Nguyen Van A\"` "
+            ("4️⃣ Bank + thanh toán tự động (để bot tự giao)",
+             "• Mỗi **seller/owner** đăng ký bank nhận tiền của mình (**bắt buộc trước khi đăng bán**): `.shopbank \"Vietinbank\" vietinbank 0123456789 \"Nguyen Van A\"` "
              "(xem lại: `.shopbank`, danh sách: `.listbank`)\n"
              "• Admin bật **Shop Orders** trong `.st`\n"
              "• Webhook SePay `/webhook/sepay` + biến môi trường `SEPAY_WEBHOOK_API_KEY` khớp API Key khai trên SePay "
              "(chi tiết: `.help shoporders`)\n"
-             "Thiếu bất kỳ mục nào → vẫn bán được nhưng seller/staff phải bấm ✅ Confirm tay."),
+             "Thiếu bank → *không đăng bán được*. Thiếu Shop Orders/SePay → vẫn bán được nhưng seller/staff phải bấm ✅ Confirm tay."),
             ("5️⃣ Quyền của bot",
              "Bot cần: **Manage Channels** (tạo kênh stock/ticket, đổi tên, chuyển danh mục), **Send Messages**, "
              "**Embed Links**, **Attach Files**, **Read Message History**. Thiếu → tạo ticket lỗi (bot tự hoàn tác, acc không bị kẹt)."),
@@ -98,6 +100,11 @@ PAGES = {
         "title": "Auto Buy — Đăng bán acc (staff/seller)",
         "description": "Hai bước: **nạp thông tin vào kho** (`/add_acc`) rồi **đăng card** (`/stock acc`). Người chạy `/add_acc` là **seller** của acc đó.",
         "fields": [
+            ("🔐 Điều kiện để đăng bán",
+             "• Là **seller còn hạn** (`.seller list`) hoặc **owner/admin**\n"
+             "• Đã **`.shopbank`** — tiền khách chuyển sẽ vào bank này. Chưa có → bot từ chối và nhắc lệnh\n"
+             "• `/stock acc`: bank của **seller của acc** (không nhất thiết là người đang gõ) cũng phải có — owner đăng hộ acc của seller thì seller đó phải đã `.shopbank`\n"
+             "• Shop Orders đang tắt → vẫn đăng được nhưng bot sẽ cảnh báo: ticket không có QR, phải Confirm tay"),
             ("1️⃣ `/add_acc` — nạp kho",
              "Mở form, dán mỗi dòng `Nhãn: giá trị`:\n"
              "```\nUsername: \nCapes: \nRecovery Code: \nPrimary Email: \nSecurity Email: \nSecret Key: \nPassword: \n```"
@@ -123,7 +130,7 @@ PAGES = {
              "**SOLD**, nút BUY bị khoá nên không ai mua nốt acc đã bán."),
             ("💡 Mẹo",
              "• Seller của acc = người nhận tiền: QR dùng **bank của người này** (`.shopbank`), được ping trong ticket và được tính doanh số\n"
-             "• Staff cùng quản lý được acc của nhau (Confirm/Close), nhưng QR vẫn chạy về bank seller của acc"),
+             "• Staff (không phải seller) không đăng bán được nhưng vẫn Confirm/Close ticket, `/restock`, `.abresend`"),
         ],
     },
     # ─────────────────────────────────────────────
@@ -164,6 +171,10 @@ PAGES = {
              "Điều kiện: Shop Orders bật + seller đã `.shopbank` + webhook SePay hoạt động (xem `.help autobuy setup`).\n"
              "Ticket hiện QR; khi SePay báo đã nhận **đủ hoặc dư** số tiền, đúng mã `DHxxxxxx` → bot tự giao. "
              "Lệch số TK nhận, thiếu tiền hoặc mã không có đơn → **không tự giao**, bot báo admin xử lý tay."),
+            ("🔎 Bot biết đã có tiền bằng cách nào?",
+             "Ảnh QR chỉ để khách quét — bot **không tự thấy tài khoản ngân hàng**. Việc nhận biết tiền về đến từ **SePay**: "
+             "ngân hàng báo SePay → SePay gọi webhook `/webhook/sepay` của bot → bot khớp **mã `DHxxxxxx`** + số tiền + số TK rồi giao. "
+             "Chưa nối SePay thì QR vẫn hiện nhưng bot không tự giao — dùng ✅ Confirm."),
             ("✋ Cách 2 — Confirm tay",
              "Dùng khi chưa có QR tự động (thiếu bank / Shop Orders tắt / giá thoả thuận). Ticket hiện hướng dẫn liên hệ seller "
              "(hoặc QR dự phòng `.abset qr`). Khách gửi bill → **staff hoặc seller của acc** bấm ✅ **Confirm** → giao ngay. "
@@ -220,6 +231,9 @@ PAGES = {
         "title": "Auto Buy — Sự cố thường gặp",
         "description": "Tra nhanh theo triệu chứng.",
         "fields": [
+            ("`/add_acc` hoặc `/stock acc` báo \"Chỉ seller…\" / \"chưa đăng ký ngân hàng\"",
+             "Bạn cần là **seller còn hạn** (`.seller list`, admin thêm bằng `.seller add`) hoặc owner/admin, và đã `.shopbank`. "
+             "Owner đăng hộ acc của seller khác thì seller đó cũng phải đã `.shopbank`. Gõ `.shopbank` (không tham số) để xem bank đang lưu."),
             ("Nút BUY báo \"đang có người mở đơn\" mãi",
              "Ticket cũ còn treo. Vào kênh `ticket-<tên acc>` bấm 🔒 **Close** (hoặc xoá kênh) → acc tự quay lại BUY được. "
              "Không thấy kênh ticket nữa mà nút vẫn kẹt → báo admin."),

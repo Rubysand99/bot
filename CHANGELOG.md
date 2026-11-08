@@ -1,3 +1,13 @@
+## [v4.64.0] — 2026-11-08
+
+### 🔐 Auto Buy: chỉ seller/owner đã có bank mới được nạp kho & đăng bán (`cogs/autobuy.py`) — ĐỔI HÀNH VI
+- `/add_acc` và `/stock acc` giờ yêu cầu: (1) là **seller còn hạn** (`.seller list`) **hoặc owner/admin**, VÀ (2) đã **`.shopbank`** đầy đủ (mã ngân hàng + số TK). Trước đây ai là staff/có role Auto Buy cũng đăng được, dù chưa có bank → ticket không có QR.
+- `/stock acc`: kiểm bank của **seller của acc** (acc đã nạp bởi người khác thì seller đó phải có bank; owner đăng hộ cũng vậy) và báo rõ seller nào thiếu.
+- Vẫn mở cho staff / role "🛒 Quản lý Auto Buy": nút ✅ Confirm / 🔒 Close, `/restock`, `.abresend`.
+- `/stock acc` cảnh báo nếu **Shop Orders đang tắt** (ticket sẽ không có QR tự động).
+- `.help autobuy` cập nhật: ai được làm gì, điều kiện đăng bán, giải thích bot biết tiền về nhờ SePay (QR chỉ là ảnh), thêm mục sự cố "báo Chỉ seller… / chưa đăng ký ngân hàng".
+- Test: `tests/smoke_autobuy_flow.py` 13 → 20 (từ chối non-seller, seller thiếu bank, owner có/không bank, acc của seller khác thiếu bank, staff vẫn Confirm được nhưng không đăng bán); bank đọc bằng `get_shop_orders_bank` THẬT.
+
 ## [v4.63.4] — 2026-11-08
 
 ### 🐛 Fix: bấm BUY báo "Không thể tạo ticket! … got multiple values for argument 'ref_code'" + không có QR (`cogs/autobuy.py`)

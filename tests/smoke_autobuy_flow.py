@@ -21,7 +21,9 @@ import cogs.shop_orders as SO
 
 class FlowTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.data = {}
+        self.data = {"shop_orders_banks": {"100": {   # seller 100 đã `.shopbank` — đọc bằng get_shop_orders_bank THẬT
+            "bank_code": "vietinbank", "bank_name": "Vietinbank", "account_number": "0123456789",
+            "account_holder": "NGUYEN VAN A", "template": "compact2"}}}
         self.gdata = {}                      # "global data" — nơi shop_orders lưu đơn chờ thanh toán (_shop_pending_orders)
         # ⚠️ KHÔNG thay save/get/pop_pending_shop_order và build_payment_qr_embed bằng hàm giả: bug v4.63.0–3
         # ("got multiple values for argument 'ref_code'") lọt qua test vì hàm giả nuốt **fields. Dùng hàm THẬT,
@@ -32,9 +34,6 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
             patch.object(C, "load_global_data", lambda: self.gdata),
             patch.object(C, "save_global_data", lambda d: self.gdata.update(d)),
             patch.object(SO, "get_cfg_shop_orders_enabled", lambda: True),
-            patch.object(SO, "get_shop_orders_bank", lambda uid: {
-                "bank_code": "vietinbank", "bank_name": "Vietinbank", "account_number": "0123456789",
-                "account_holder": "NGUYEN VAN A", "template": "compact2"}),
             patch.object(AB, "get_cfg_sold_category", lambda: 0),
             patch.object(AB, "is_active_seller", lambda g, u: True),
             patch.object(AB, "send_log", AsyncMock()),
@@ -217,6 +216,82 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
             await self.cog._on_confirm(i, "foo")
         self.assertIn("Từ chối", i.response.send_message.await_args.args[0])
         self.assertEqual(C.get_ab_account("Foo")["status"], "PROCESSING")
+
+    # ───────── quyền đăng bán: seller còn hạn / owner + đã .shopbank ─────────
+    def _member(self, uid):
+        m = MagicMock(spec=discord.Member); m.id = uid; m.name = f"u{uid}"; m.guild = self.guild
+        return m
+
+    def _slash(self, member):
+        i = self._interaction(); i.user = member
+        i.response.send_modal = AsyncMock()
+        return i
+
+    async def test_add_acc_denied_for_non_seller(self):
+        i = self._slash(self._member(300))
+        with patch.object(AB, "is_active_seller", lambda g, u: False):
+            await self.cog.add_acc_cmd.callback(self.cog, i)
+        self.assertEqual(i.response.send_message.await_args.args[0], AB.MSG_NOT_SELLER)
+        i.response.send_modal.assert_not_awaited()
+
+    async def test_add_acc_denied_when_seller_has_no_bank(self):
+        i = self._slash(self._member(300))                       # seller còn hạn nhưng chưa .shopbank
+        with patch.object(AB, "is_active_seller", lambda g, u: True):
+            await self.cog.add_acc_cmd.callback(self.cog, i)
+        self.assertIn("shopbank", i.response.send_message.await_args.args[0])
+        i.response.send_modal.assert_not_awaited()
+
+    async def test_add_acc_opens_modal_for_seller_with_bank_and_for_owner_with_bank(self):
+        self.data["shop_orders_banks"]["300"] = self.data["shop_orders_banks"]["100"]
+        self.data["shop_orders_banks"]["1"] = self.data["shop_orders_banks"]["100"]      # id 1 = ADMIN_RUBY_ID (owner)
+        for uid, is_seller in ((300, True), (1, False)):
+            i = self._slash(self._member(uid))
+            with patch.object(AB, "is_active_seller", lambda g, u, v=is_seller: v):
+                await self.cog.add_acc_cmd.callback(self.cog, i)
+            i.response.send_modal.assert_awaited_once()
+
+    async def test_owner_without_bank_is_denied(self):
+        i = self._slash(self._member(1))
+        with patch.object(AB, "is_active_seller", lambda g, u: False):
+            await self.cog.add_acc_cmd.callback(self.cog, i)
+        self.assertIn("shopbank", i.response.send_message.await_args.args[0])
+        i.response.send_modal.assert_not_awaited()
+
+    async def test_stock_acc_gates(self):
+        stock = lambda i: AB.AutoBuyCog.stock_acc.callback(self.cog, i, username="Foo", price="140k")
+        # 1) không phải seller/owner (dù là staff) → từ chối
+        i = self._slash(self._member(300))
+        with patch.object(AB, "is_active_seller", lambda g, u: False):
+            await stock(i)
+        self.assertEqual(i.response.send_message.await_args.args[0], AB.MSG_NOT_SELLER)
+        # 2) seller của ACC (100) chưa có bank → từ chối, nêu rõ seller nào thiếu
+        del self.data["shop_orders_banks"]["100"]
+        i = self._slash(self._member(1))
+        with patch.object(AB, "is_active_seller", lambda g, u: False):
+            await stock(i)
+        self.assertIn("<@100>", i.response.send_message.await_args.args[0])
+        i.response.defer.assert_not_awaited()
+        # 3) đủ điều kiện (owner đăng hộ acc của seller 100 đã có bank) → đi qua cổng, tới bước vẽ card (render_card patched → None)
+        self.data["shop_orders_banks"]["100"] = {"bank_code": "vcb", "account_number": "1"}
+        i = self._slash(self._member(1))
+        with patch.object(AB, "is_active_seller", lambda g, u: False):
+            await stock(i)
+        i.response.defer.assert_awaited()
+        self.assertIn("ảnh card", i.followup.send.await_args.args[0])
+
+    async def test_stock_acc_poster_must_have_bank_for_new_account(self):
+        # acc chưa có trong kho → seller = chính người đăng → phải có bank
+        i = self._slash(self._member(300))
+        with patch.object(AB, "is_active_seller", lambda g, u: True):
+            await AB.AutoBuyCog.stock_acc.callback(self.cog, i, username="Brand_New", price="1k")
+        self.assertIn("shopbank", i.response.send_message.await_args.args[0])
+
+    async def test_staff_can_still_confirm_but_not_sell(self):
+        staff = self._member(777)
+        with patch.object(AB.AutoBuyCog, "_is_staff", staticmethod(lambda m: True)):
+            self.assertTrue(self.cog._can_handle_ticket(staff, {"seller_id": 100}))
+        with patch.object(AB, "is_active_seller", lambda g, u: False):
+            self.assertFalse(AB.can_sell_acc(staff))
 
 
 if __name__ == "__main__":

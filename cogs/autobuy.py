@@ -6,7 +6,9 @@ Port từ bot autobuy (Node.js "Drew Store") sang cog Python, dùng lại hạ t
     khi tiền về, đơn TỰ GIAO (DM thông tin đăng nhập). Seller/staff vẫn bấm "Confirm" tay được
     (trường hợp chưa bật Shop Orders hoặc seller chưa `.shopbank`, như bản Node).
   • Kênh stock / sold: dùng CHUNG cfg_stock_category / cfg_sold_category của `.st`.
-  • Quyền staff: can_manage_listing() (staff/seller hoặc role "🤖 Auto Buy" gán trong `.st`).
+  • Quyền: nạp kho/đăng bán (/add_acc, /stock acc) CHỈ seller còn hạn (`.seller list`) hoặc owner/admin VÀ phải đã
+    `.shopbank` (can_sell_acc + has_bank). Confirm/Close ticket, /restock, .abresend: can_manage_listing() (staff/seller
+    hoặc role "🛒 Quản lý Auto Buy" gán trong `.st`).
   • Doanh số: cộng add_user_spent (BXH `.bxh`) + add_seller_sale (thống kê seller) khi giao thành công.
 
 Luồng: staff /add_acc (nạp thông tin đăng nhập vào kho) → /stock acc (đăng card ảnh + nút BUY) →
@@ -44,8 +46,8 @@ from core.autobuy_logic import (
 )
 from core.data import (
     add_seller_sale, add_user_spent, claim_ab_account, delete_ab_ticket, find_ab_account_by_channel,
-    get_ab_account, get_ab_cfg, get_ab_ticket, get_all_ab_accounts, get_cfg_sold_category,
-    get_cfg_stock_category, get_or_fetch_channel, get_pending_shop_order, is_admin,
+    get_ab_account, get_ab_cfg, get_ab_ticket, get_all_ab_accounts, get_cfg_shop_orders_enabled, get_cfg_sold_category,
+    get_cfg_stock_category, get_or_fetch_channel, get_pending_shop_order, get_shop_orders_bank, is_admin,
     pop_pending_shop_order, save_ab_account, save_ab_ticket, save_pending_shop_order, set_ab_cfg,
     set_current_guild, update_ab_account,
 )
@@ -120,6 +122,34 @@ def _fmt_ref(val, placeholder: str) -> str:
     return f"<#{s}>" if s.isdigit() else s
 
 
+def can_sell_acc(member) -> bool:
+    """Chỉ SELLER (gói `.seller` còn hạn — xem `.seller list`) hoặc OWNER/admin mới được nạp kho + đăng bán acc.
+    (Confirm/Close ticket, /restock, .abresend vẫn mở cho cả staff — xem _is_staff.)"""
+    return isinstance(member, discord.Member) and (is_admin(member, quiet=True) or is_active_seller(member.guild.id, member.id))
+
+
+def has_bank(user_id) -> bool:
+    """User đã `.shopbank` ĐẦY ĐỦ (mã ngân hàng + số TK) — tiền khách chuyển sẽ vào bank này."""
+    try:
+        bank = get_shop_orders_bank(int(user_id)) if user_id else None
+    except (TypeError, ValueError):
+        return False
+    return bool(bank and bank.get("bank_code") and bank.get("account_number"))
+
+
+MSG_NOT_SELLER = ("❌ Chỉ **seller** (đang có gói seller còn hạn — xem `.seller list`) hoặc **owner/admin** "
+                  "mới được nạp kho và đăng bán tài khoản.")
+SHOPBANK_HINT = '`.shopbank "Tên NH" ma_bank SoTK "Chủ TK"`'
+
+
+def msg_no_bank(owner_id, me_id) -> str:
+    if str(owner_id) == str(me_id):
+        return (f"❌ Bạn chưa đăng ký **tài khoản ngân hàng** nhận tiền. Gõ {SHOPBANK_HINT} rồi thử lại "
+                "(tiền khách chuyển khoản sẽ vào đúng bank này).")
+    return (f"❌ Seller của tài khoản này (<@{owner_id}>) chưa đăng ký **ngân hàng** nhận tiền — "
+            f"họ cần gõ {SHOPBANK_HINT} trước khi đăng bán.")
+
+
 class _AddAccModal(GuildContextModal, title="Nhập Tài Khoản Minecraft"):
     account_data = discord.ui.TextInput(
         label="Nhập đúng form thông tin tài khoản:",
@@ -129,8 +159,10 @@ class _AddAccModal(GuildContextModal, title="Nhập Tài Khoản Minecraft"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        if not isinstance(interaction.user, discord.Member) or not can_manage_listing(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền thêm tài khoản!", ephemeral=True)
+        if not can_sell_acc(interaction.user):
+            return await interaction.response.send_message(MSG_NOT_SELLER, ephemeral=True)
+        if not has_bank(interaction.user.id):
+            return await interaction.response.send_message(msg_no_bank(interaction.user.id, interaction.user.id), ephemeral=True)
         parsed = parse_account_form(str(self.account_data.value))
         if not parsed:
             return await interaction.response.send_message(
@@ -685,16 +717,18 @@ class AutoBuyCog(commands.Cog):
             pass
 
     # ═════════════ LỆNH ═════════════
-    @app_commands.command(name="add_acc", description="[Staff] Nhập thông tin tài khoản Minecraft vào kho")
+    @app_commands.command(name="add_acc", description="[Seller/Owner] Nhập thông tin tài khoản Minecraft vào kho")
     @app_commands.guild_only()
     async def add_acc_cmd(self, interaction: discord.Interaction):
-        if not self._is_staff(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền sử dụng lệnh này (Staff/Seller)!", ephemeral=True)
+        if not can_sell_acc(interaction.user):
+            return await interaction.response.send_message(MSG_NOT_SELLER, ephemeral=True)
+        if not has_bank(interaction.user.id):
+            return await interaction.response.send_message(msg_no_bank(interaction.user.id, interaction.user.id), ephemeral=True)
         await interaction.response.send_modal(_AddAccModal())
 
     stock = app_commands.Group(name="stock", description="Quản lý kho tài khoản", guild_only=True)
 
-    @stock.command(name="acc", description="[Staff] Đăng card tài khoản Minecraft kèm nút BUY")
+    @stock.command(name="acc", description="[Seller/Owner] Đăng card tài khoản Minecraft kèm nút BUY")
     @app_commands.describe(username="Tên tài khoản Minecraft", price="Giá bán (vd: 100k, 140000, 1.2M)",
                            capes="Emoji capes (trống = lấy từ kho nếu đã /add_acc)",
                            rank="Rank Hypixel (VIP, MVP, MVP+, NON)",
@@ -702,8 +736,11 @@ class AutoBuyCog(commands.Cog):
                            statsdonut="DonutSMP: Playtime, Money, Shards (vd: 120h, 50M, 1500)")
     async def stock_acc(self, interaction: discord.Interaction, username: str, price: str, capes: str = "",
                         rank: str = "", statshpx: str = "", statsdonut: str = ""):
-        if not self._is_staff(interaction.user):
-            return await interaction.response.send_message("❌ Bạn không có quyền đăng bán tài khoản!", ephemeral=True)
+        if not can_sell_acc(interaction.user):
+            return await interaction.response.send_message(MSG_NOT_SELLER, ephemeral=True)
+        stored_seller = (get_ab_account(username.strip()) or {}).get("seller_id") or interaction.user.id
+        if not has_bank(stored_seller):            # QR chạy về bank của SELLER CỦA ACC (có thể khác người đang đăng)
+            return await interaction.response.send_message(msg_no_bank(stored_seller, interaction.user.id), ephemeral=True)
         username, price = username.strip(), price.strip()
         if parse_amount(price) <= 0:
             return await interaction.response.send_message("❌ Giá không hợp lệ (vd: `140k`, `1.2M`).", ephemeral=True)
@@ -759,6 +796,8 @@ class AutoBuyCog(commands.Cog):
                          "statshpx": statshpx, "statsdonut": statsdonut, "seller_id": seller_id,
                          "card_channel_id": msg.channel.id, "card_message_id": msg.id, "status": ST_AVAILABLE})
         note = "" if stored else "\n⚠️ Tài khoản này chưa có thông tin đăng nhập trong kho — hãy `/add_acc` trước khi có người mua!"
+        if not get_cfg_shop_orders_enabled():
+            note += "\n⚠️ **Shop Orders đang tắt** nên ticket sẽ KHÔNG có QR tự động (phải bấm Confirm tay) — bật trong `.st`."
         await interaction.followup.send(f"✅ Đã đăng card `{username}` tại {target.mention}.{note}", ephemeral=True)
 
     @app_commands.command(name="restock", description="[Staff] Thông báo danh sách các kênh trong kho stock")
