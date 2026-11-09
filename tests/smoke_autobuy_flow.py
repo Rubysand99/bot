@@ -471,6 +471,78 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
         bank = C.get_shop_orders_bank(1)
         self.assertEqual((bank["bank_code"], bank["account_number"], bank["account_holder"]), ("970415", "109885314930", "NGUYEN TAN HOANG QUAN"))
 
+    # ───────── `.setbank` (admin gán bank cho seller) ─────────
+    SELLER_A, SELLER_B = 123456789012345678, 876543210987654321
+
+    def _admin_ctx(self, uid=1):
+        ctx = self._bank_ctx(b"x", uid=uid); ctx.message.attachments = []; ctx.message.reference = None
+        ctx.guild = self.guild
+        members = {}
+        for mid, name in ((self.SELLER_A, "SellerA"), (self.SELLER_B, "SellerB")):
+            m = MagicMock(spec=discord.Member); m.id = mid; m.name = name; m.display_name = name; m.mention = f"<@{mid}>"
+            members[mid] = m
+        self.guild.get_member = lambda uid_, _m=members: _m.get(uid_)
+        self.guild.fetch_member = AsyncMock(side_effect=discord.NotFound(MagicMock(status=404, reason="x"), "unknown"))
+        return ctx, members
+
+    async def _setbank(self, ctx, args):
+        cog = SO.ShopOrdersCog.__new__(SO.ShopOrdersCog)
+        await SO.ShopOrdersCog.setbank_cmd.callback(cog, ctx, args=args)
+
+    async def test_setbank_assigns_bank_to_the_right_id_and_qr_uses_it(self):
+        ctx, members = self._admin_ctx()
+        await self._setbank(ctx, f"{self.SELLER_A} 970422 80086266778899 Trương Nguyễn Thanh Hùng")
+        bank = C.get_shop_orders_bank(self.SELLER_A)
+        self.assertEqual((bank["bank_name"], bank["bank_code"], bank["account_number"], bank["account_holder"], bank["source"]),
+                         ("MB Bank", "970422", "80086266778899", "TRUONG NGUYEN THANH HUNG", "admin"))
+        self.assertIsNone(C.get_shop_orders_bank(self.SELLER_B))                       # chỉ đúng ID được gán
+        self.assertIn("✅", ctx.reply.await_args.args[0]); self.assertIn("chưa có gói seller", ctx.reply.await_args.args[0])
+        self.assertTrue(AB.has_bank(self.SELLER_A))
+        embed, _r, warn = SO.build_payment_qr_embed(members[self.SELLER_A], self.buyer, 170000, 1, 555)
+        self.assertIsNone(warn)
+        self.assertIn("970422-80086266778899", embed.image.url)
+        self.assertIn("accountName=TRUONG%20NGUYEN%20THANH%20HUNG", embed.image.url)
+
+    async def test_setbank_accepts_mention_multiline_and_reports_each_line(self):
+        ctx, members = self._admin_ctx()
+        await self._setbank(ctx, f"```\n<@{self.SELLER_A}> 970415 109885314930 NGUYEN TAN HOANG QUAN\n"
+                                 f"<@!{self.SELLER_B}> mbbank 0369999888\n"
+                                 f"999999999999999999 970422 0123456789 NGUOI LA\n"
+                                 f"{self.SELLER_A} 970422 ma_bank X\n```")
+        msg = ctx.reply.await_args.args[0]
+        self.assertIn("2/4", msg)
+        self.assertEqual(C.get_shop_orders_bank(self.SELLER_A)["account_number"], "109885314930")
+        self.assertEqual(C.get_shop_orders_bank(self.SELLER_B)["bank_code"], "mbbank")
+        self.assertIn("chưa có tên", msg)                                                # dòng B không có tên chủ TK
+        self.assertIn("Dòng 3", msg); self.assertIn("không tìm thấy thành viên", msg)    # ID không có trong server
+        self.assertIn("Dòng 4", msg); self.assertIn("không hợp lệ", msg)                 # chữ mẫu ma_bank bị chặn → KHÔNG ghi đè bank đúng ở dòng 1
+        self.assertEqual(C.get_shop_orders_bank(self.SELLER_A)["bank_code"], "970415")
+
+    async def test_setbank_overwrite_note_bad_input_and_usage(self):
+        ctx, _m = self._admin_ctx()
+        await self._setbank(ctx, f"{self.SELLER_A} 970422 111111111111")
+        await self._setbank(ctx, f"{self.SELLER_A} 970422 222222222222 TEN MOI")
+        self.assertIn("đã thay bank cũ …1111", ctx.reply.await_args.args[0])
+        self.assertEqual(C.get_shop_orders_bank(self.SELLER_A)["account_holder"], "TEN MOI")
+        await self._setbank(ctx, "abc 970422 111111111111"); self.assertIn("không phải @mention/ID", ctx.reply.await_args.args[0])
+        await self._setbank(ctx, f"{self.SELLER_A} 970422"); self.assertIn("thiếu thông tin", ctx.reply.await_args.args[0])
+        await self._setbank(ctx, None); self.assertIn("admin gán bank cho seller", ctx.reply.await_args.args[0])
+        await self._setbank(ctx, "\n".join([f"{self.SELLER_A} 970422 111111111111"] * 26)); self.assertIn("Tối đa 25", ctx.reply.await_args.args[0])
+
+    async def test_setbank_denied_for_non_admin(self):
+        ctx, _m = self._admin_ctx(uid=300)
+        await self._setbank(ctx, f"{self.SELLER_A} 970422 111111111111")
+        self.assertIn("Chỉ admin", ctx.reply.await_args.args[0])
+        self.assertIsNone(C.get_shop_orders_bank(self.SELLER_A))
+
+    @unittest.skipUnless(all(importlib.util.find_spec(m) for m in ("qrcode", "zxingcpp")), "cần qrcode + zxing-cpp")
+    async def test_shopbank_alias_qr_explains_and_points_to_setbank(self):
+        ctx = self._bank_ctx(self._qr_png(TV.make_vietqr("970422", "VQRQAXYZ1234")))      # QR kiểu MB: mã định danh thay số TK
+        await self._shopbank(ctx)
+        msg = ctx.reply.await_args.args[0]
+        self.assertIn("mã định danh", msg); self.assertIn("970422", msg); self.assertIn(".setbank", msg); self.assertIn("MB Bank", msg)
+        self.assertIsNone(C.get_shop_orders_bank(1))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.65.2"
+BOT_VERSION = "4.66.0"
 BOT_UPDATED = "2026-11-08"
 CHANGELOG_CHANNEL_ID = 1469983483853144125
 

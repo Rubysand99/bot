@@ -89,8 +89,12 @@ class BankValidation(unittest.TestCase):
         self.assertEqual(V.normalize_holder("@@@"), "")
         self.assertEqual(V.normalize_holder(""), "")
 
-    def test_qr_account_must_be_digits(self):
-        self.assertEqual(V.parse_vietqr(make_vietqr("970422", "ABCDEF123"))["error"], "bad_account")
+    def test_alias_qr_like_mb_is_reported_with_bin(self):
+        # MB nhúng MÃ ĐỊNH DANH (VQRQ…) thay số TK → không đọc được số TK thật từ QR, nhưng biết ngân hàng (BIN)
+        r = V.parse_vietqr(make_vietqr("970422", "VQRQAXYZ1234"))
+        self.assertEqual((r["ok"], r["error"], r["bin"]), (False, "alias", "970422"))
+        self.assertEqual(V.pick_vietqr(["https://x.y", make_vietqr("970422", "VQRQAXYZ1234")])["error"], "alias")
+        self.assertEqual(V.parse_vietqr(make_vietqr("970422", "12"))["error"], "bad_account")        # quá ngắn
 
 
 HAVE_LIBS = all(importlib.util.find_spec(m) for m in ("PIL", "qrcode", "zxingcpp"))

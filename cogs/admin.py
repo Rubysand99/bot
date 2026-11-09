@@ -832,6 +832,7 @@ class AdminCog(commands.Cog):
                     ("⚙️ Cấu hình (admin, bắt buộc trước khi dùng)",
                      "`.shopbank` + **đính kèm ảnh QR ngân hàng** — bot tự đọc ngân hàng + số TK (hoặc reply vào ảnh QR)\n"
                      "`.shopbank <thông tin>` — Nhập tay: tên NH, mã VietQR, số TK, chủ TK...\n"
+                     "`.setbank <@seller|ID> <mã NH|BIN> <số TK> [tên]` — **Admin** gán bank cho seller (nhiều dòng = nhiều seller)\n"
                      "`.setqueue #kênh` — Cài kênh hàng đợi đơn hàng cho seller (nút ✅ xác nhận đã xử lý)\n"
                      "`.shoporderno [số]` — Xem/đổi số hóa đơn kế tiếp (admin)\n"
                      "Kênh Proof (nơi hóa đơn công khai được gửi) — cài trong `.st` → Proof Channel", False),

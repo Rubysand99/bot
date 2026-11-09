@@ -1,3 +1,14 @@
+## [v4.66.0] — 2026-11-09
+
+### 🏦 `.setbank` — admin gán bank cho seller bằng 1 lệnh + xử lý QR kiểu "mã định danh" (MB…) (`cogs/shop_orders.py`, `core/vietqr.py`)
+- **Vì sao**: thử với ảnh QR MB thật — bot đọc được mã (CRC hợp lệ, BIN `970422`) nhưng trường tài khoản là **mã định danh `VQRQ…` chứ không phải số TK thật** (số TK thật `800…` chỉ in trên hình). Với kiểu QR này không thể lấy số TK từ mã, và dùng mã định danh làm số TK thì QR ảnh/đối soát SePay (so số TK) đều sai. Trước đây bot báo chung chung "QR thiếu/sai số TK".
+- **Lệnh mới `.setbank <@seller|ID> <mã NH|BIN> <số TK> [tên chủ TK]`** (chỉ admin): gán bank thẳng cho đúng người theo ID/mention, không cần seller tự gõ. **Mỗi dòng = 1 seller** (tối đa 25 dòng/lần, có thể bọc trong ``` ```), báo kết quả từng dòng; dòng sai không ảnh hưởng dòng đúng. `.setbank` không kèm gì → hướng dẫn + bảng mã BIN thường gặp.
+- Kiểm tra giống `.shopbank`: số TK 6–19 chữ số, mã NH hợp lệ, chặn chữ mẫu; kiểm ID có thật trong server (bắt gõ nhầm ID); tên chủ TK chuẩn hoá IN HOA không dấu; gán lại cho cùng seller sẽ ghi đè và báo "đã thay bank cũ …xxxx"; cảnh báo nếu người đó chưa có gói seller (`.seller add`). Bank lưu `source="admin"`, `set_by`.
+- **`.shopbank` + ảnh QR kiểu mã định danh**: báo rõ "QR của MB (BIN 970422) dùng mã định danh…" kèm sẵn lệnh nhập tay/`.setbank` với BIN điền sẵn — thay cho lỗi chung.
+- Parser: lỗi mới `alias` (kèm `bin`); số TK từ QR phải toàn chữ số (6–19).
+- `.help autobuy setup`/`loi`, `.help shoporders`, lời nhắc "chưa đăng ký ngân hàng" cập nhật theo cách mới.
+- Test: `tests/test_vietqr.py` +1 (alias QR), `tests/smoke_autobuy_flow.py` 34 → 39 (gán đúng ID + QR thanh toán dùng đúng BIN/số TK/tên, nhiều dòng + @mention + dòng lỗi không ghi đè dòng đúng, ghi đè + thông báo, từ chối non-admin/ID sai/thiếu thông tin/quá 25 dòng, QR kiểu MB hướng sang `.setbank`).
+
 ## [v4.65.2] — 2026-11-09
 
 ### ✏️ `.shopbank name <tên>` — thêm tên chủ TK cho bank đăng ký từ ảnh QR (`cogs/shop_orders.py`, `core/vietqr.py`)

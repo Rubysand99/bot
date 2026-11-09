@@ -396,6 +396,16 @@ class QueueOrderView(GuildContextView):
 
 _IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 
+SETBANK_USAGE = (
+    "**`.setbank` — admin gán bank cho seller** (mỗi dòng = 1 seller, tối đa 25 dòng):\n"
+    "`.setbank <@seller|ID> <mã NH hoặc BIN> <số TK> [tên chủ TK]`\n"
+    "Ví dụ: `.setbank 123456789012345678 970422 0123456789 NGUYEN VAN A`\n"
+    "› Mã BIN thường gặp: MB `970422` · Vietcombank `970436` · VietinBank `970415` · BIDV `970418` · Techcombank `970407` · "
+    "ACB `970416` · TPBank `970423` · VPBank `970432` · Sacombank `970403`\n"
+    "› Số TK lấy **số in trên ảnh QR/app ngân hàng** (một số ngân hàng như MB nhúng mã định danh vào QR nên bot không đọc được số TK)\n"
+    "› Tên chủ TK có thể bỏ trống (tự IN HOA, bỏ dấu). Gán lại cho cùng seller sẽ ghi đè bank cũ."
+)
+
 # Ví dụ nhập tay dùng GIÁ TRỊ THẬT (không dùng chữ mẫu như `ma_bank` — người dùng hay copy nguyên văn)
 BANK_TYPED_EXAMPLE = '`.shopbank "MB Bank" mbbank 0123456789 "NGUYEN VAN A"` (tên NH · mã NH · SỐ TK · tên chủ TK)'
 
@@ -755,6 +765,13 @@ class ShopOrdersCog(commands.Cog):
 
         info = pick_vietqr(texts)
         if not info["ok"]:
+            if info["error"] == "alias":
+                bin_ = info["bin"]
+                return await ctx.reply(
+                    f"❌ QR của **{bank_name_from_bin(bin_)}** (BIN `{bin_}`) dùng **mã định danh** thay cho số tài khoản nên bot "
+                    "không lấy được số TK từ QR (số TK thật chỉ in trên hình, không nằm trong mã).\n"
+                    f"› Nhập tay kèm **số TK in trên ảnh**: `.shopbank \"{bank_name_from_bin(bin_)}\" {bin_} <SỐ TK> \"TÊN CHỦ TK\"`\n"
+                    f"› Hoặc nhờ admin gán giúp: `.setbank <@seller|ID> {bin_} <SỐ TK> <TÊN CHỦ TK>`")
             return await ctx.reply(QR_ERRORS.get(info["error"], QR_ERRORS["no_qr"]))
 
         old = get_shop_orders_bank(ctx.author.id) or {}
@@ -783,6 +800,70 @@ class ShopOrdersCog(commands.Cog):
                 await ctx.message.delete()
             except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                 pass
+
+    @commands.command(name="setbank")
+    async def setbank_cmd(self, ctx: commands.Context, *, args: str = None):
+        """.setbank <@seller|ID> <mã NH|BIN> <số TK> [tên chủ TK] — ADMIN gán bank cho seller. Mỗi dòng = 1 seller."""
+        if not is_admin(ctx.author):
+            return await ctx.reply("❌ Chỉ admin mới dùng được lệnh này.")
+        lines = [ln.strip() for ln in (args or "").replace("```", "").splitlines() if ln.strip()]
+        if not lines:
+            return await ctx.reply(SETBANK_USAGE)
+        if len(lines) > 25:
+            return await ctx.reply("❌ Tối đa 25 dòng (25 seller) mỗi lần.")
+        out, ok = [], 0
+        for n, line in enumerate(lines, 1):
+            done, text = await self._setbank_line(ctx, line)
+            ok += 1 if done else 0
+            out.append(text if done else f"❌ Dòng {n}: {text}")
+        head = f"**Gán bank xong: {ok}/{len(lines)} thành công**\n" if len(lines) > 1 else ""
+        msg = head + "\n".join(out)
+        await ctx.reply(msg[:1990], allowed_mentions=discord.AllowedMentions.none())
+
+    async def _setbank_line(self, ctx: commands.Context, line: str) -> tuple[bool, str]:
+        parts = line.split(None, 3)
+        if len(parts) < 3:
+            return False, f"thiếu thông tin — cần `<@seller|ID> <mã NH|BIN> <số TK> [tên chủ TK]`. Dòng: `{line[:70]}`"
+        m = re.fullmatch(r"<@!?(\d{15,20})>|(\d{15,20})", parts[0])
+        if not m:
+            return False, f"`{parts[0][:30]}` không phải @mention/ID Discord hợp lệ (ID là dãy 17–20 chữ số)"
+        uid = int(m.group(1) or m.group(2))
+        member = ctx.guild.get_member(uid)
+        if member is None:
+            try:
+                member = await ctx.guild.fetch_member(uid)
+            except (discord.NotFound, discord.HTTPException):
+                member = None
+        if member is None:
+            return False, f"không tìm thấy thành viên ID `{uid}` trong server này (gõ nhầm ID?)"
+
+        code, account = parts[1], parts[2]
+        holder = normalize_holder(parts[3]) if len(parts) > 3 else ""
+        err = validate_bank(code, account, holder)
+        if err:
+            return False, f"{member.display_name}: {err}"
+        account = normalize_account(account)
+        old = get_shop_orders_bank(uid) or {}
+        bank_name = bank_name_from_bin(code) if (code.isdigit() and len(code) == 6) else code.upper()
+        save_shop_orders_bank(
+            uid, bank_name=bank_name, bank_code=code.lower() if not code.isdigit() else code, account_number=account,
+            account_holder=holder, default_content=old.get("default_content", ""),
+            template=old.get("template") or "compact2",
+            registered_at=datetime.now(timezone.utc).isoformat(), source="admin", set_by=ctx.author.id,
+        )
+        notes = []
+        try:
+            from cogs.seller import is_active_seller
+            if not (is_admin(member) or is_active_seller(ctx.guild.id, uid)):
+                notes.append("⚠️ chưa có gói seller (`.seller add`) nên chưa đăng bán Auto Buy được")
+        except Exception:
+            pass
+        if old.get("account_number") and old.get("account_number") != account:
+            notes.append(f"đã thay bank cũ …{str(old['account_number'])[-4:]}")
+        if not holder:
+            notes.append("chưa có tên chủ TK")
+        return True, (f"✅ {member.mention} — **{bank_name}** (`{code}`) · `{account}` · {holder or '*(chưa có tên)*'}"
+                      + (f" — {'; '.join(notes)}" if notes else ""))
 
     @commands.command(name="listbank")
     async def listbank_cmd(self, ctx: commands.Context):

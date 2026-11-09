@@ -124,7 +124,7 @@ def parse_tlv(s: str) -> dict | None:
 
 def parse_vietqr(payload: str) -> dict:
     """Trả về {"ok": True, bin, account_number, holder, amount, service} hoặc {"ok": False, "error": mã}.
-    error: "not_vietqr" (không phải QR NAPAS) | "bad_crc" | "card" (QR số thẻ) | "bad_account"."""
+    error: "not_vietqr" (không phải QR NAPAS) | "bad_crc" | "card" (QR số thẻ) | "bad_account" | "alias" (QR chứa mã định danh, kèm "bin")."""
     payload = (payload or "").strip()
     fields = parse_tlv(payload)
     if not fields or "38" not in fields:
@@ -139,7 +139,13 @@ def parse_vietqr(payload: str) -> dict:
     service = (napas.get("02") or "").upper()
     if service == SERVICE_CARD:
         return {"ok": False, "error": "card"}
-    if not (bin_.isdigit() and len(bin_) == 6 and acc.isdigit() and ACCOUNT_MIN <= len(acc) <= ACCOUNT_MAX):
+    if not (bin_.isdigit() and len(bin_) == 6):
+        return {"ok": False, "error": "bad_account"}
+    if acc.isalnum() and not acc.isdigit():
+        # Một số ngân hàng (vd MB) nhúng MÃ ĐỊNH DANH (VQRQ…) thay cho số TK thật → không lấy được số TK từ QR
+        # (số TK thật chỉ in trên hình) → admin dùng `.setbank`/nhập tay với số TK in trên ảnh.
+        return {"ok": False, "error": "alias", "bin": bin_}
+    if not (acc.isdigit() and ACCOUNT_MIN <= len(acc) <= ACCOUNT_MAX):
         return {"ok": False, "error": "bad_account"}
     return {"ok": True, "bin": bin_, "account_number": acc, "holder": (fields.get("59") or "").strip(),
             "amount": (fields.get("54") or "").strip(), "service": service or SERVICE_ACCOUNT}
@@ -154,7 +160,7 @@ def pick_vietqr(texts: list[str]) -> dict:
     if not texts:
         return {"ok": False, "error": "no_qr"}
     best = None
-    rank = {"bad_crc": 3, "card": 3, "bad_account": 2, "not_vietqr": 1}
+    rank = {"alias": 4, "bad_crc": 3, "card": 3, "bad_account": 2, "not_vietqr": 1}
     for t in texts:
         r = parse_vietqr(t)
         if r["ok"]:

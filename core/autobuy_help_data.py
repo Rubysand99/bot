@@ -59,7 +59,7 @@ PAGES = {
     "setup": {
         "emoji": "⚙️", "label": "Cài đặt lần đầu",
         "title": "Auto Buy — Cài đặt lần đầu (admin)",
-        "description": "Làm lần lượt các bước dưới đây **một lần**. Bước 1–3 là đủ để bán (xác nhận tay); thêm bước 4 để bot **tự giao**.",
+        "description": "Làm lần lượt các bước dưới đây **một lần**. Bước 1–4 là đủ để bán (xác nhận tay); thêm bước 5 để bot **tự giao**.",
         "fields": [
             ("1️⃣ Danh mục Stock & Sold",
              "`.st` → cài **danh mục Stock** (mỗi acc đăng bán = 1 kênh mới trong đây) và **danh mục Sold** "
@@ -67,7 +67,7 @@ PAGES = {
              "Không cài Stock → `/stock acc` đăng card ngay kênh đang gõ lệnh. Không cài Sold → kênh đã bán chỉ đổi icon ❌."),
             ("2️⃣ Ai được đăng bán",
              "Chỉ **seller** có gói còn hạn — thêm bằng `.seller add @user <số ngày>`, xem `.seller list` — hoặc **owner/admin**. "
-             "Người đăng **bắt buộc đã `.shopbank`** (bước 4), nếu không bot từ chối `/add_acc` và `/stock acc`.\n"
+             "Người đăng **bắt buộc đã có bank** (bước 4: admin `.setbank` hoặc seller `.shopbank`), nếu không bot từ chối `/add_acc` và `/stock acc`.\n"
              "Role gán ở `.st` → **Vai trò ticket** → 🛒 **Quản lý Auto Buy** *không* cho đăng bán — chỉ cho vào ticket mua hàng, "
              "bấm Confirm/Close, `/restock`, `.abresend`."),
             ("3️⃣ Ticket & bill",
@@ -76,22 +76,26 @@ PAGES = {
              "Tuỳ chọn, hiện trong DM giao hàng: `.abset youtube|2fa|lock|vouch <#kênh>` "
              "(kênh hướng dẫn đổi thông tin / 2FA / lock acc / nơi vouch)\n"
              "Xem lại toàn bộ: `.abset`"),
-            ("4️⃣ Bank + thanh toán tự động (để bot tự giao)",
-             "• Mỗi **seller/owner** đăng ký bank nhận tiền của mình (**bắt buộc trước khi đăng bán**) — cách nhanh nhất: gõ `.shopbank` "
-             "và **đính kèm ảnh QR nhận tiền** của ngân hàng (hoặc reply vào ảnh QR), bot tự đọc ngân hàng + số TK. "
-             "QR ngân hàng thường **không chứa tên chủ TK** — muốn QR thanh toán hiện tên: `.shopbank name NGUYEN VAN A` (không bắt buộc). "
-             "Nhập tay: `.shopbank \"MB Bank\" mbbank 0123456789 \"NGUYEN VAN A\"` (xem lại: `.shopbank`, danh sách: `.listbank`)\n"
+            ("4️⃣ Bank nhận tiền của seller (bắt buộc trước khi đăng bán)",
+             "**Cách 1 — Admin gán giúp** (khuyên dùng, ít lỗi nhất): `.setbank <@seller|ID> <mã NH|BIN> <số TK> [tên]` — "
+             "mỗi dòng 1 seller; gõ `.setbank` để xem ví dụ + mã BIN.\n"
+             "**Cách 2 — Seller tự gõ `.shopbank` kèm ảnh QR** nhận tiền (hoặc reply vào ảnh QR): bot tự đọc ngân hàng + số TK. "
+             "Một số QR (vd **MB**) nhúng *mã định danh* thay số TK nên bot không đọc được số TK → dùng cách 1 với số TK in trên ảnh.\n"
+             "**Cách 3 — Nhập tay:** `.shopbank \"MB Bank\" mbbank 0123456789 \"NGUYEN VAN A\"`\n"
+             "Tên chủ TK không bắt buộc (QR không chứa tên): thêm bằng `.shopbank name NGUYEN VAN A`. "
+             "Xem lại: `.shopbank` · danh sách: `.listbank`."),
+            ("5️⃣ Thanh toán tự động (để bot tự giao)",
              "• Admin bật **Shop Orders** trong `.st`\n"
              "• Webhook SePay `/webhook/sepay` + biến môi trường `SEPAY_WEBHOOK_API_KEY` khớp API Key khai trên SePay "
              "(chi tiết: `.help shoporders`)\n"
              "Thiếu bank → *không đăng bán được*. Thiếu Shop Orders/SePay → vẫn bán được nhưng seller/staff phải bấm ✅ Confirm tay."),
-            ("5️⃣ Quyền của bot",
+            ("6️⃣ Quyền của bot",
              "Bot cần: **Manage Channels** (tạo kênh stock/ticket, đổi tên, chuyển danh mục), **Send Messages**, "
              "**Embed Links**, **Attach Files**, **Read Message History**. Thiếu → tạo ticket lỗi (bot tự hoàn tác, acc không bị kẹt)."),
-            ("6️⃣ Có kho cũ từ bot autobuy Node?",
+            ("7️⃣ Có kho cũ từ bot autobuy Node?",
              "`/ab_import` + đính kèm `kho.json` → nhập kho, **giữ nguyên card cũ** (nút BUY cũ vẫn mua được). "
              "Nhớ **tắt bot Node** để 2 bot không cùng xử lý nút."),
-            ("7️⃣ Chạy thử 1 đơn nhỏ",
+            ("8️⃣ Chạy thử 1 đơn nhỏ",
              "`/add_acc` một acc test → `/stock acc username:<tên> price:1k` → dùng acc/tài khoản phụ bấm BUY → "
              "chuyển 1k (hoặc bấm ✅ Confirm) → kiểm tra DM, card SOLD, kênh Sold, bill."),
         ],
@@ -236,6 +240,9 @@ PAGES = {
             ("`/add_acc` hoặc `/stock acc` báo \"Chỉ seller…\" / \"chưa đăng ký ngân hàng\"",
              "Bạn cần là **seller còn hạn** (`.seller list`, admin thêm bằng `.seller add`) hoặc owner/admin, và đã `.shopbank`. "
              "Owner đăng hộ acc của seller khác thì seller đó cũng phải đã `.shopbank`. Gõ `.shopbank` (không tham số) để xem bank đang lưu."),
+            ("`.shopbank` + ảnh QR báo \"mã định danh\" (vd QR của MB)",
+             "Ngân hàng đó nhúng mã định danh vào QR thay cho số tài khoản, bot chỉ biết ngân hàng (BIN) chứ không có số TK thật. "
+             "Admin gán bằng số TK **in trên ảnh**: `.setbank <@seller|ID> 970422 <SỐ TK> <TÊN>` (hoặc seller nhập tay `.shopbank \"MB Bank\" 970422 <SỐ TK> \"TÊN\"`)."),
             ("`.shopbank` + ảnh QR báo không đọc được / không phải VietQR",
              "Dùng **mã QR nhận tiền theo số tài khoản** trong app ngân hàng (không phải QR ví MoMo/ZaloPay, không phải QR số thẻ). "
              "Chụp màn hình **nét, không cắt viền QR**. Vẫn lỗi → nhập tay: `.shopbank \"Vietinbank\" vietinbank 0123456789 \"Nguyen Van A\"`. "
