@@ -8,7 +8,7 @@ PNG (nền trắng để quét được), rồi gửi như file đính kèm `att
 
 Mọi lỗi (mạng, SVG không đổi được, thiếu thư viện) đều KHÔNG ném ra ngoài: `fetch_qr_image()` trả None và người gọi giữ
 nguyên embed dùng link như cũ — không bao giờ tệ hơn trước. Log `[QR]` ghi rõ status / content-type / định dạng /
-kích thước (đã che số tài khoản) để lần sau nhìn log Railway là biết vì sao ảnh không hiện.
+kích thước (đã che số tài khoản) để lần sau nhìn log bot (journalctl) là biết vì sao ảnh không hiện.
 
 Bộ đổi SVG→PNG (thử lần lượt, cái nào có thì dùng): `resvg-py` (wheel dựng sẵn, không cần thư viện hệ thống) rồi `cairosvg`
 (cần libcairo trên máy). Cả hai đều import lười — thiếu thì chỉ mất phần đổi SVG.

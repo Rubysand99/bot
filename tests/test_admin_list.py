@@ -271,7 +271,7 @@ class UiGateAndAuthGate(unittest.TestCase):
         self.assertIn("LỖI", cm.output[0]); self.assertIn("boom", cm.output[0])
 
 class TuytamDemotedToExtraAdmin(unittest.TestCase):
-    """Kịch bản: xoá ADMIN_TUYTAM_ID khỏi Railway, TuyTam (id 222) được `.ad` làm admin phụ ở guild 1."""
+    """Kịch bản: xoá ADMIN_TUYTAM_ID khỏi .env, TuyTam (id 222) được `.ad` làm admin phụ ở guild 1."""
     def setUp(self):
         self._ids = list(D.ADMIN_IDS); D.ADMIN_IDS[:] = [111]                  # chỉ còn Ruby là admin cố định
         self._n = D.TUYTAM_NOTIFY_ID; D.TUYTAM_NOTIFY_ID = 222

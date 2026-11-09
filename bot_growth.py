@@ -17,7 +17,7 @@ vẫn còn phụ thuộc verify_server.py (VERIFY_CALLBACKS RAM, coupling proces
 PAYMENT_CALLBACK/shop_orders.py). Rào cản đó đã hết: verify/IP đã bị xoá HOÀN TOÀN
 khỏi invite.py + verify_server.py cùng đợt này — xem CHANGELOG.md.)
 
-Deploy: Railway service riêng, Root Directory = gốc repo (giống bot.py/bot_ai.py/
+Deploy: process/service riêng (VPS: 1 service systemd riêng, chạy từ gốc repo như bot.py/bot_ai.py/
 bot_ticket.py), Start Command = `python bot_growth.py`, biến env TOKEN_GROWTH +
 MONGO_URI/ADMIN_*/... y hệt bot.py (dùng CHUNG 1 MongoDB).
 """

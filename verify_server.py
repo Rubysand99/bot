@@ -4,7 +4,7 @@ verify_server.py — Web server RÚT GỌN, giờ CHỈ còn webhook SePay (báo
 create_token/check_ip_info) đã BỊ XOÁ cùng đợt với việc bỏ tính năng verify/IP ở
 cogs/invite.py — xem CHANGELOG.md.
 
-Chạy song song với bot trên Railway (cùng process qua asyncio — bot.py gọi
+Chạy song song với bot trên VPS (cùng process qua asyncio — bot.py gọi
 start_verify_server() từ main(), SAU load_cogs() và TRƯỚC bot.start() — webhook có thể
 đến trước khi cache Mongo nạp xong → route trả 503 để SePay retry, xem PAYMENT_READY).
 
@@ -16,12 +16,12 @@ URL webhook trên SePay dashboard cho đúng service mới) → webhook SePay v�
 nhưng KHÔNG ai xử lý (2 biến PAYMENT_CALLBACK ở 2 process khác nhau, không thấy nhau)
 — cùng lớp bug mà VERIFY_CALLBACKS/cogs.invite từng gặp trước khi verify bị bỏ hẳn.
 
-Env vars cần trên Railway:
+Env vars cần trong file .env của VPS:
   SEPAY_WEBHOOK_API_KEY — chuỗi bí mật TỰ ĐẶT, điền y hệt vào SePay dashboard (API Key
                           auth) khi tạo Webhook trỏ về <domain>/webhook/sepay
-  PORT                  — Railway tự set, KHÔNG cần khai tay
-(VERIFY_BASE_URL / VERIFY_SECRET của bản cũ không còn code nào đọc nữa — để lại trên
-Railway cũng không sao, xoá đi cũng không ảnh hưởng gì.)
+  PORT                  — cổng web (mặc định 8080 nếu không khai)
+(VERIFY_BASE_URL / VERIFY_SECRET của bản cũ không còn code nào đọc nữa — để lại trong
+.env cũng không sao, xoá đi cũng không ảnh hưởng gì.)
 """
 
 import asyncio

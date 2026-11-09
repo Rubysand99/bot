@@ -61,9 +61,9 @@ nhiều model AI", xác nhận CHƯA có GEMINI_API_KEY, sẽ lấy nếu cần)
   số RPM/RPD cụ thể vì Google không công bố cố định 1 chỗ — xem AI Studio dashboard
   để biết số thật. KHÔNG dùng bản Pro (mạnh hơn Flash) vì Pro hiện thu phí ngay từ
   token đầu, không có free tier — ưu tiên giữ free.
-- GEMINI_API_KEY hiện CHƯA được set trên Railway (Ruby xác nhận) — entry Gemini tự
+- GEMINI_API_KEY hiện CHƯA được set trong .env (Ruby xác nhận) — entry Gemini tự
   bị bỏ qua êm trong _call_ai_tools() cho tới khi biến này có giá trị, KHÔNG lỗi,
-  KHÔNG cần sửa code thêm gì. Set biến trên Railway là kích hoạt ngay.
+  KHÔNG cần sửa code thêm gì. Set biến trong .env (rồi restart bot) là kích hoạt ngay.
 - Đổi tên _call_groq_tools() → _call_ai_tools() (đúng bản chất đa provider hơn) —
   cập nhật cả 3 chỗ gọi (run_ai_tools_agent, _call_groq legacy, route_agent() ở
   handle_ai_message) + comment liên quan ở core/ai_agents.py.
@@ -109,7 +109,7 @@ GROQ_API_KEY   = os.getenv("GROQ_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # optional — chưa cấu hình thì entry
                                                 # Gemini bên dưới tự bị bỏ qua êm,
                                                 # không lỗi gì, code vẫn chạy y như
-                                                # trước khi thêm. Điền vào Railway env
+                                                # trước khi thêm. Điền vào file .env
                                                 # là kích hoạt ngay, khỏi sửa code.
 
 GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
@@ -170,7 +170,7 @@ DEFAULT_NO_ANSWER_REPLY = (
 #
 # Mỗi entry tự mang theo base_url + api_key riêng — entry nào api_key rỗng (chưa
 # set biến môi trường tương ứng) sẽ tự bị BỎ QUA ÊM trong _call_ai_tools(), không
-# lỗi, không cần xoá dòng khỏi list. GEMINI_API_KEY hiện CHƯA có trên Railway của
+# lỗi, không cần xoá dòng khỏi list. GEMINI_API_KEY hiện CHƯA có trong .env của
 # Ruby (lúc thêm dòng này) — set biến đó vào là entry Gemini kích hoạt ngay.
 #
 # 2 TIER (v4.46.0 — routing theo độ phức tạp, xem _looks_simple() + comment tại

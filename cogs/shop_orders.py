@@ -479,7 +479,7 @@ class ShopOrdersCog(commands.Cog):
     # ── SePay: helper báo admin / resolve user ────────────────────────────
     async def _alert_admins(self, text: str) -> None:
         """DM cho ADMIN_IDS khi thanh toán rơi vào tình huống BẤT THƯỜNG cần người xử lý tay.
-        FIX (v4.59.1): trước đây các nhánh này chỉ log.warning trên Railway → tiền đã vào
+        FIX (v4.59.1): trước đây các nhánh này chỉ log.warning trong log bot → tiền đã vào
         nhưng không ai trong Discord biết."""
         log.warning(f"[SEPAY][ALERT] {text}")
         for admin_id in ADMIN_IDS:

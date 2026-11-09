@@ -109,7 +109,7 @@ def _load_admin_ids() -> list[int]:
             # TuyTam có thể được hạ xuống admin PHỤ (cấp bằng `.ad` theo từng server) → biến này là TÙY CHỌN.
             log.info("[DATA] ℹ️ ADMIN_TUYTAM_ID không cài → TuyTam KHÔNG phải admin cố định (cấp quyền theo server bằng `.ad`).")
         else:
-            log.warning(f"[DATA] ⚠️ {var} chưa được cài trong Railway env.")
+            log.warning(f"[DATA] ⚠️ {var} chưa được cài trong file .env.")
     if not ids:
         log.critical("[DATA] ❌ Không có ADMIN nào! Hãy set ADMIN_RUBY_ID và ADMIN_TUYTAM_ID.")
     return ids

@@ -14,7 +14,7 @@ tách thư mục con riêng), không phải bot_ai đã độc lập hoàn toàn
 has_open_ticket_db() (đọc qua Mongo) thay vì has_ticket() (cache RAM riêng của bot chính)
 — 2 process đọc chung Mongo vẫn ra kết quả đúng dù chạy tách biệt.
 
-Deploy: Railway service riêng, Root Directory = gốc repo (giống bot.py), Start Command =
+Deploy: process/service riêng (VPS: 1 service systemd riêng, chạy từ gốc repo như bot.py), Start Command =
 `python bot_ai.py`, biến env TOKEN_AI + toàn bộ biến MONGO_URI/ADMIN_*/GROQ_API_KEY/... y
 hệt bot.py (dùng CHUNG 1 MongoDB).
 """

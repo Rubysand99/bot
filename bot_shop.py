@@ -29,7 +29,7 @@ khác) vào SERVER THẬT lúc này sẽ khiến `.sold`/handle_sold()/webhook S
 2 LẦN (2 bot, 2 process, cùng ghi vào 1 MongoDB). Test trên server riêng trước, xem
 chi tiết bước "cutover thật" ở phần tách Growth.
 
-Deploy: Railway service riêng, Root Directory = gốc repo, Start Command =
+Deploy: process/service riêng (VPS: 1 service systemd riêng, chạy từ gốc repo như bot.py), Start Command =
 `python bot_shop.py`, biến env TOKEN_SHOP + MONGO_URI/ADMIN_*/SEPAY_WEBHOOK_API_KEY/
 PORT/... y hệt bot.py (dùng CHUNG 1 MongoDB).
 """

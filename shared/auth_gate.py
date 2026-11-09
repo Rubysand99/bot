@@ -145,7 +145,7 @@ async def global_guild_authorization_check(ctx: commands.Context) -> bool:
 
 # ── LOG KẾT QUẢ LỆNH — đăng ký ở bot.py bằng bot.add_listener(...) ──
 # Vì sao cần: AdminCog có on_command_error riêng → discord.py TẮT in traceback mặc định, nên mọi lệnh
-# crash đều im lặng hoàn toàn trên Railway. Các hàm dưới đây khôi phục log (kèm traceback đầy đủ).
+# crash đều im lặng hoàn toàn trong log (journalctl). Các hàm dưới đây khôi phục log (kèm traceback đầy đủ).
 async def log_command_completion(ctx: commands.Context):
     t0 = getattr(ctx, "_cmd_t0", None)
     ms = f" · {int((time.monotonic() - t0) * 1000)}ms" if t0 else ""

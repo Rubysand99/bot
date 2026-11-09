@@ -120,7 +120,7 @@ class AdminCog(commands.Cog):
     async def add_admin_cmd(self, ctx, user_id: str = None):
         if ctx.author.id != ADMIN_RUBY_ID:
             log.warning(f"[ADMIN-CMD] .{ctx.invoked_with} bị từ chối: author={ctx.author.id} ({ctx.author}) ≠ "
-                        f"ADMIN_RUBY_ID={ADMIN_RUBY_ID} (None = env ADMIN_RUBY_ID chưa cài/không hợp lệ trên Railway) "
+                        f"ADMIN_RUBY_ID={ADMIN_RUBY_ID} (None = env ADMIN_RUBY_ID chưa cài/không hợp lệ trong .env) "
                         f"· guild={getattr(ctx.guild, 'id', None)} · args={ctx.message.content[:100]!r}")
             return await ctx.reply("❌ Chỉ Ruby được dùng lệnh này.", mention_author=False)
         if not ctx.guild:
@@ -169,7 +169,7 @@ class AdminCog(commands.Cog):
     async def remove_admin_cmd(self, ctx, user_id: str = None):
         if ctx.author.id != ADMIN_RUBY_ID:
             log.warning(f"[ADMIN-CMD] .{ctx.invoked_with} bị từ chối: author={ctx.author.id} ({ctx.author}) ≠ "
-                        f"ADMIN_RUBY_ID={ADMIN_RUBY_ID} (None = env ADMIN_RUBY_ID chưa cài/không hợp lệ trên Railway) "
+                        f"ADMIN_RUBY_ID={ADMIN_RUBY_ID} (None = env ADMIN_RUBY_ID chưa cài/không hợp lệ trong .env) "
                         f"· guild={getattr(ctx.guild, 'id', None)} · args={ctx.message.content[:100]!r}")
             return await ctx.reply("❌ Chỉ Ruby được dùng lệnh này.", mention_author=False)
         if not ctx.guild:
@@ -182,7 +182,7 @@ class AdminCog(commands.Cog):
         if uid in ADMIN_IDS:
             return await ctx.reply(
                 "❌ Không thể xoá admin cố định (Ruby/TuyTam) qua lệnh này — phải đổi biến "
-                "môi trường `ADMIN_RUBY_ID`/`ADMIN_TUYTAM_ID` trên Railway.",
+                "môi trường `ADMIN_RUBY_ID`/`ADMIN_TUYTAM_ID` trong file `.env` của VPS.",
                 mention_author=False)
 
         removed = await remove_extra_admin(uid)
@@ -285,7 +285,7 @@ class AdminCog(commands.Cog):
             tag = " *(Ruby)*" if uid == ADMIN_RUBY_ID else (" *(TuyTam)*" if uid == ADMIN_TUYTAM_ID else "")
             fixed_lines.append(f"<@{uid}>{tag} — `{uid}` · {self._user_label(uid)}")
         if ADMIN_RUBY_ID is None:
-            fixed_lines.append("⚠️ `ADMIN_RUBY_ID` chưa cài / không hợp lệ trên Railway → `.ad` `.rmad` sẽ không ai dùng được.")
+            fixed_lines.append("⚠️ `ADMIN_RUBY_ID` chưa cài / không hợp lệ trong `.env` → `.ad` `.rmad` sẽ không ai dùng được.")
         if TUYTAM_NOTIFY_ID:
             note = ("(không phải admin cố định — là admin phụ theo từng server)" if TUYTAM_NOTIFY_ID not in ADMIN_IDS
                     else "(đồng thời là admin cố định)")
@@ -355,7 +355,7 @@ class AdminCog(commands.Cog):
             description=f"<@{uid}> — `{uid}` · {self._user_label(uid)}\n"
                         f"**Kết quả `is_admin()` ở server này: {'✅ CÓ quyền admin' if result else '⛔ KHÔNG có quyền admin'}**",
             color=0x57F287 if result else 0xED4245, timestamp=datetime.now(timezone.utc))
-        embed.add_field(name="1️⃣ Admin cố định (ADMIN_IDS / env Railway)",
+        embed.add_field(name="1️⃣ Admin cố định (ADMIN_IDS / file .env)",
                         value="✅ Có" if fixed else f"❌ Không (danh sách hiện tại: {list(ADMIN_IDS)})", inline=False)
         embed.add_field(name=f"2️⃣ Admin phụ của server này (`{gid}`)",
                         value="✅ Có" if here else "❌ Không — chưa được `.ad` ở server này", inline=False)
@@ -385,7 +385,7 @@ class AdminCog(commands.Cog):
             tips.append("Là admin phụ nhưng **không thấy trong server** → họ không dùng lệnh được cho tới khi vào lại server.")
         if tips:
             embed.add_field(name="💡 Gợi ý", value="\n".join(tips)[:1000], inline=False)
-        embed.set_footer(text="Log chi tiết mọi lần kiểm tra quyền: xem Railway logs, tìm [ADMIN-CHECK] / [ADMIN]")
+        embed.set_footer(text="Log chi tiết mọi lần kiểm tra quyền: xem log bot (journalctl -u tuytam-bot), tìm [ADMIN-CHECK] / [ADMIN]")
         log.info(f"[ADMIN-CMD] chẩn đoán uid={uid} guild={gid}: fixed={fixed} here={here} elsewhere={elsewhere} "
                  f"in_guild={bool(member)} → is_admin={result}")
         await ctx.reply(embed=embed, mention_author=False)
@@ -705,7 +705,7 @@ class AdminCog(commands.Cog):
                      "`.rmad <id>` — Thu hồi admin phụ khỏi server đang gõ lệnh (chỉ Ruby)\n"
                      "`.admin` (alias `.adminlist`/`.dsadmin`) — Danh sách admin: admin cố định xem được admin phụ của "
                      "**mọi server** (cảnh báo user không còn trong server, server chưa ủy quyền...); admin phụ chỉ xem server mình\n"
-                     "`.admin <id>` — Chẩn đoán quyền 1 user (vì sao báo không đủ quyền). Log chi tiết: Railway logs, tìm `[ADMIN-CHECK]`", False),
+                     "`.admin <id>` — Chẩn đoán quyền 1 user (vì sao báo không đủ quyền). Log chi tiết: log bot (`journalctl -u tuytam-bot`), tìm `[ADMIN-CHECK]`", False),
                     ("🔷 Slash commands",
                      "`/invite` `/invitetop` `/resetinvite`", False),
                 ]

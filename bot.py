@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 if os.path.exists(".env"):
     load_dotenv()
 
-BOT_VERSION = "4.66.1"
+BOT_VERSION = "4.66.2"
 BOT_UPDATED = "2026-11-09"
 CHANGELOG_CHANNEL_ID = 1469983483853144125
 
@@ -31,7 +31,7 @@ if not TOKEN:
 # LOGGING — PHẢI cấu hình ở đây vì bot chạy bằng `bot.start()` (KHÔNG phải `bot.run()`), nên discord.py
 # không tự setup logging: nếu thiếu đoạn này Python chỉ in log mức WARNING trở lên, TOÀN BỘ log INFO
 # (`[CMD]` `[ADMIN-CHECK]` `[ADMIN]` `[UI]` `[AUTH-GATE]` ...) bị nuốt im lặng — đây chính là lý do trước đây
-# "admin phụ dùng lệnh mà không thấy log". INFO → stdout, WARNING+ → stderr (Railway tô đỏ).
+# "admin phụ dùng lệnh mà không thấy log". INFO → stdout, WARNING+ → stderr (journalctl hiện mức ưu tiên lỗi).
 # Env: LOG_LEVEL=DEBUG|INFO|WARNING (mặc định INFO) · ADMIN_DEBUG=1 (log mọi lần kiểm tra quyền admin).
 # ══════════════════════════════════════════
 class _MaxLevel(logging.Filter):
@@ -87,7 +87,7 @@ bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None
 bot.before_invoke(set_guild_context_prefix)
 bot.check(global_guild_authorization_check)
 # Log kết quả lệnh (hoàn thành / bị chặn / LỖI kèm traceback). Bắt buộc có vì AdminCog.on_command_error làm
-# discord.py tắt in traceback mặc định — thiếu 3 dòng này, lệnh crash sẽ im lặng hoàn toàn trên Railway.
+# discord.py tắt in traceback mặc định — thiếu 3 dòng này, lệnh crash sẽ im lặng hoàn toàn trong log.
 bot.add_listener(log_command_completion, "on_command_completion")
 bot.add_listener(log_command_error, "on_command_error")
 bot.add_listener(log_app_command_completion, "on_app_command_completion")
@@ -161,7 +161,7 @@ async def _retry_init_data_cache():
 @bot.event
 async def on_ready():
     """⚠️ on_ready() KHÔNG chỉ chạy 1 lần lúc khởi động — Discord gateway reconnect
-    (rớt mạng, Railway restart container, session bị Discord invalidate...) khiến nó
+    (rớt mạng, restart service/VPS, session bị Discord invalidate...) khiến nó
     REFIRE bất cứ lúc nào trong suốt vòng đời bot. Nhiều bước "resume 1 lần" bên dưới
     trước đây chạy lại MỖI LẦN refire, gây bug thật đã xác nhận:
       • gw_cog.resume_active_giveaways() tạo THÊM 1 task đếm giờ cho MỖI giveaway đang

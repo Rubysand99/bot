@@ -1,3 +1,12 @@
+## [v4.66.2] — 2026-11-09
+
+### 📝 Dọn chữ "Railway" còn sót — bot đã chuyển sang VPS (nhiều file, chỉ đổi chữ/chú thích, KHÔNG đổi logic)
+- `AI_CONTEXT.md` — mục Deploy ghi đúng VPS Ubuntu (systemd `tuytam-bot` + `autoupdate.sh` mỗi 5 phút, tự `pip install` khi `requirements.txt` đổi, tự rollback), cách xem log `journalctl -u tuytam-bot`, lưu ý mọi commit lên `main` đều làm bot restart.
+- `cogs/admin.py` — thông báo/footer của `.admin`, `.ad`, `.rmad`: "Railway logs" → "log bot (`journalctl -u tuytam-bot`)"; "env Railway" → "file `.env`".
+- `cogs/ai_chat.py`, `cogs/shop_orders.py`, `shared/data.py`, `shared/auth_gate.py`, `core/data.py`, `core/qr_image.py`, `bot.py`, `verify_server.py`, `bot_ai.py`/`bot_ticket.py`/`bot_shop.py`/`bot_growth.py`, `scripts/seed_embed_templates.py`, `tests/test_admin_list.py` — chú thích/docstring/log nhắc Railway đổi sang VPS/`.env`/journalctl.
+
+---
+
 ## [v4.66.1] — 2026-11-09
 
 ### 🐛 Fix: bot gửi khung "Quét mã để thanh toán" nhưng KHÔNG hiện ảnh QR — tải ảnh về, đổi SVG→PNG, đính kèm file (`core/qr_image.py` MỚI, `cogs/shop_orders.py`, `cogs/ticket.py`, `cogs/autobuy.py`)

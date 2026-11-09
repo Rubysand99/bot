@@ -9,7 +9,7 @@ sao không tách thư mục riêng). Chỉ khác:
     (đây là domain CỦA RIÊNG Ticket — KHÔNG resume GiveawayView/resume_pending_sold_views,
     2 cái đó thuộc bot Growth/Shop, sẽ tự resume trong entry point của chính chúng)
 
-Deploy: Railway service riêng, Root Directory = gốc repo (giống bot.py/bot_ai.py),
+Deploy: process/service riêng (VPS: 1 service systemd riêng, chạy từ gốc repo như bot.py/bot_ai.py),
 Start Command = `python bot_ticket.py`, biến env TOKEN_TICKET + MONGO_URI/ADMIN_*/... y
 hệt bot.py (dùng CHUNG 1 MongoDB).
 """

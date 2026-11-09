@@ -304,7 +304,7 @@ def _trim_list(data: dict, key: str, limit: int) -> list:
     removed = lst[:cut]
     del lst[:cut]
     # Chỉ WARNING lần đầu mỗi key (mỗi process) — sau khi chạm giới hạn, MỖI lần append đều cắt 1 record,
-    # log WARNING mỗi lần sẽ spam Railway logs.
+    # log WARNING mỗi lần sẽ spam log bot.
     if key not in _trim_warned:
         _trim_warned.add(key)
         log.warning(f"[DATA] '{key}' chạm giới hạn {limit} record — từ nay bỏ record CŨ NHẤT mỗi lần ghi mới.")

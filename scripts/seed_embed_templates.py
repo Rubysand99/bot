@@ -8,8 +8,8 @@ qua .embed + nút 💾 Lưu làm mẫu.
 ⚠️ QUAN TRỌNG: bot cache dữ liệu theo guild trong RAM (core/data.py:
 _data_cache), chỉ nạp lại từ Mongo lúc khởi động. Script này ghi trực tiếp
 xuống Mongo nên PHẢI RESTART BOT sau khi chạy thì `.embeduse gia-1` mới
-thấy được mẫu (nếu bạn deploy qua Railway, chỉ cần push code là bot tự
-restart, chạy script này trước hoặc sau lúc push đều được — miễn bot có
+thấy được mẫu (trên VPS, push code lên main là script autoupdate tự
+restart bot, chạy script này trước hoặc sau lúc push đều được — miễn bot có
 khởi động lại 1 lần sau khi script chạy xong).
 
 Cách chạy (Termux, cùng thư mục có core/data.py):
@@ -108,7 +108,7 @@ def main():
 
     print(f"✅ Đã lưu {len(TEMPLATES)} mẫu vào document '{doc_id}': {', '.join(TEMPLATES)}")
     print(f"   matched={result.matched_count} modified={result.modified_count} upserted_id={result.upserted_id}")
-    print("⚠️ Nhớ RESTART bot (hoặc git push để Railway tự deploy lại) thì "
+    print("⚠️ Nhớ RESTART bot (`systemctl restart tuytam-bot`, hoặc git push để autoupdate tự restart) thì "
           "`.embeduse gia-1` / `gia-2` / `gia-3` mới thấy được mẫu.")
 
 
