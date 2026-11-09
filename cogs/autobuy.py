@@ -436,10 +436,14 @@ class AutoBuyCog(commands.Cog):
         if qr_embed is None and get_ab_cfg("fallback_qr"):
             main.set_image(url=get_ab_cfg("fallback_qr"))
         embeds.append(main)
+        qr_files = []
         if qr_embed is not None:
+            # Tải ảnh QR về rồi đính kèm file (img.vietqr.io có thể trả SVG mà Discord không hiện) — xem core/qr_image.py
+            from cogs.shop_orders import attach_qr_image
+            qr_files = await attach_qr_image(qr_embed, guild=guild.id, ref=ref_code)
             embeds.append(qr_embed)
         await channel.send(content=f"👋 {buyer.mention} đã tạo đơn mua tài khoản từ {seller_mention}!",
-                           embeds=embeds, view=ticket_view(acc["username"]),
+                           embeds=embeds, files=qr_files, view=ticket_view(acc["username"]),
                            allowed_mentions=discord.AllowedMentions(users=True))
         await interaction.followup.send(f"✅ Đã tạo kênh ticket cho bạn: {channel.mention}", ephemeral=True)
 

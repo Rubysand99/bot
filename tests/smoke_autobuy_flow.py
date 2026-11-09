@@ -37,6 +37,7 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
             patch.object(C, "load_global_data", lambda: self.gdata),
             patch.object(C, "save_global_data", lambda d: self.gdata.update(d)),
             patch.object(SO, "get_cfg_shop_orders_enabled", lambda: True),
+            patch.object(SO, "attach_qr_image", AsyncMock(return_value=[])),   # KHÔNG gọi mạng thật (img.vietqr.io) trong test
             patch.object(AB, "get_cfg_sold_category", lambda: 0),
             patch.object(AB, "is_active_seller", lambda g, u: True),
             patch.object(AB, "send_log", AsyncMock()),
@@ -107,7 +108,20 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
         sent = self.ticket_ch.send.await_args.kwargs
         self.assertEqual(len(sent["embeds"]), 2)
         self.assertIn(t["ref_code"], sent["embeds"][1].image.url)
+        self.assertEqual(sent["files"], [])        # attach_qr_image bị giả (không gọi mạng) → không có file; xem test bên dưới
         i.followup.send.assert_awaited()
+
+    async def test_buy_attaches_downloaded_qr_file(self):
+        """Hồi quy "bot không gửi QR": ảnh QR được tải về + đính kèm file vào CÙNG tin nhắn với embed QR."""
+        fake_file = MagicMock(spec=discord.File)
+        async def fake_attach(embed, **ctx):
+            embed.set_image(url="attachment://qr.png")
+            return [fake_file]
+        with patch.object(SO, "attach_qr_image", fake_attach):
+            await self._buy()
+        sent = self.ticket_ch.send.await_args.kwargs
+        self.assertEqual(sent["files"], [fake_file])
+        self.assertEqual(sent["embeds"][1].image.url, "attachment://qr.png")
 
     async def test_double_buy_rejected(self):
         await self._buy()

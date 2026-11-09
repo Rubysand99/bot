@@ -72,6 +72,8 @@
     │                      # qua _invoke_cmd() — dùng get_guild_prefix() để build lệnh giả lập,
     │                      # KHÔNG hardcode ".")
     ├── rag.py             # Q&A embedding + search, lọc theo guild_id
+    ├── qr_image.py        # Tải ảnh QR VietQR về + đổi SVG→PNG + đính kèm file (img.vietqr.io trả SVG, Discord không hiện).
+    │                      # MỌI chỗ gửi embed QR phải gọi `attach_qr_image(embed)` (cogs/shop_orders.py) và truyền `files=` — xem v4.66.1
     └── message_search.py  # Lưu/search tin nhắn đã index, lọc theo guild_id
 ```
 

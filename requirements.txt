@@ -7,6 +7,10 @@ python-dotenv>=1.0.0
 # ── Ảnh card AutoBuy (cogs/autobuy.py) ──
 Pillow>=10.1.0
 
+# ── Đổi ảnh QR VietQR từ SVG sang PNG (core/qr_image.py; img.vietqr.io trả SVG mà Discord không hiển thị được).
+#    Wheel dựng sẵn, không cần thư viện hệ thống. Thiếu thì bot vẫn chạy, chỉ là ảnh QR có thể không hiện + log "[QR] … THẤT BẠI" ──
+resvg-py>=0.1.0
+
 # ── Đọc ảnh QR ngân hàng cho `.shopbank` + ảnh QR (core/vietqr.py; thiếu thì `.shopbank` nhập tay vẫn dùng được) ──
 zxing-cpp>=2.2.0
 

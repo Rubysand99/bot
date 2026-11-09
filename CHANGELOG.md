@@ -1,3 +1,16 @@
+## [v4.66.1] — 2026-11-09
+
+### 🐛 Fix: bot gửi khung "Quét mã để thanh toán" nhưng KHÔNG hiện ảnh QR — tải ảnh về, đổi SVG→PNG, đính kèm file (`core/qr_image.py` MỚI, `cogs/shop_orders.py`, `cogs/ticket.py`, `cogs/autobuy.py`)
+- **Nguyên nhân (đã gặp và sửa ở dự án bot-sleep)**: `img.vietqr.io/image/...png` có thể trả về ảnh **SVG** dù đuôi link là `.png`. Discord **không hiển thị được SVG** (cả dạng link `embed.set_image(url=...)` lẫn đính kèm) → embed QR hiện đủ chữ nhưng trống ảnh. Trước đây bot chỉ đặt link vào embed nên không có cách nào biết/xử lý.
+- **Cách sửa**: bot tự tải ảnh QR về (`aiohttp`, timeout 8s), nhận diện định dạng qua vài byte đầu (không tin Content-Type); nếu là SVG thì đổi sang PNG nền trắng (`resvg-py`, dự phòng `cairosvg`; ảnh < 600px được phóng to nguyên số lần cho dễ quét) rồi gửi như file đính kèm `qr.png` cùng tin nhắn với embed. Ảnh PNG/JPEG thường cũng được đính kèm luôn (không phụ thuộc Discord có tải được link ngoài hay không).
+- **Hàm mới `attach_qr_image(embed)`** (`cogs/shop_orders.py`): dùng ở cả 3 chỗ gửi QR — `.done` gõ tay, nút/modal Done (`cogs/ticket.py`) và đơn mua Auto Buy (`cogs/autobuy.py`). Nút/modal Done giờ `defer()` rồi `followup.send` (tải ảnh có thể quá 3s, không defer sẽ "Unknown interaction").
+- **An toàn**: mọi lỗi (mạng, thiếu thư viện đổi SVG, server trả 404…) → giữ nguyên embed dùng link như trước, **không bao giờ làm hỏng `.done`/đơn mua** và không tệ hơn cũ.
+- **Log `[QR]`** (Railway): status, content-type, định dạng thật, kích thước, link đã che số TK. Nếu ảnh vẫn không hiện, nhìn dòng `[QR] tải ảnh VietQR: … dinhdang=…` là biết nguyên nhân (svg / 404 / lỗi mạng); dòng `[QR] … đổi sang PNG THẤT BẠI` nghĩa là thiếu `resvg-py`.
+- `requirements.txt`: thêm `resvg-py`.
+- Test: `tests/test_qr_image.py` MỚI (15 test: nhận diện định dạng, che số TK trong log, đổi SVG→PNG nền trắng + phóng to, dự phòng cairosvg, không có bộ đổi, SVG/404/rỗng/quá lớn/lỗi mạng, `attach_qr_image` đổi embed sang `attachment://` và giữ link khi lỗi); `tests/smoke_autobuy_flow.py` +1 (QR đính kèm file cùng tin nhắn, test cũ chặn mạng thật).
+
+---
+
 ## [v4.66.0] — 2026-11-09
 
 ### 🏦 `.setbank` — admin gán bank cho seller bằng 1 lệnh + xử lý QR kiểu "mã định danh" (MB…) (`cogs/shop_orders.py`, `core/vietqr.py`)

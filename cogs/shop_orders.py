@@ -27,6 +27,7 @@ KIẾN TRÚC MULTI-SELLER (mỗi seller 1 bank riêng, không còn 1 bank chung 
    không liên quan như trước).
 """
 
+import io
 import re
 import random
 import string
@@ -42,6 +43,8 @@ from discord.ui import TextInput
 
 from core.vietqr import (MAX_IMAGE_BYTES, QRDecoderMissing, bank_name_from_bin, bank_problem, decode_qr_texts,
                          normalize_account, normalize_holder, pick_vietqr, validate_bank)
+
+from core.qr_image import fetch_qr_image
 
 from core.data import is_admin
 from core.data import (
@@ -224,6 +227,30 @@ def build_payment_qr_embed(seller: discord.abc.User, buyer: discord.abc.User, am
     e.set_image(url=qr_url)
     e.set_footer(text="🧪 Shop Orders (thử nghiệm) — ghi ĐÚNG nội dung CK để hệ thống tự nhận thanh toán")
     return e, ref_code, None
+
+
+async def attach_qr_image(embed: discord.Embed, **log_ctx) -> list:
+    """Tải ảnh QR của embed (do build_payment_qr_embed dựng, đang trỏ link img.vietqr.io) về phía bot rồi đính kèm file.
+
+    Trả về danh sách file để truyền vào `send(..., files=...)` — và ĐỔI embed sang `attachment://qr.<đuôi>`.
+    Vì sao: img.vietqr.io có thể trả SVG (Discord không hiển thị được) → bot tự đổi sang PNG, xem core/qr_image.py.
+    Không làm được (mạng lỗi, thiếu thư viện đổi SVG…) → trả [] và GIỮ NGUYÊN embed dùng link như cũ.
+    ⚠️ Gọi SAU khi đã `interaction.response.defer()` (tải ảnh có thể mất vài giây, quá 3s là hết hạn tương tác).
+    Mọi chỗ gửi embed QR phải truyền `files=` kèm theo — gửi embed đã đổi mà thiếu file thì ảnh không hiện."""
+    url = getattr(getattr(embed, "image", None), "url", None)
+    if not url:
+        return []
+    try:
+        got = await fetch_qr_image(url, ctx=log_ctx)
+    except Exception:                      # fetch_qr_image không ném lỗi — chốt chặn cuối, QR không được làm hỏng .done
+        log.exception("[QR] attach_qr_image lỗi bất ngờ")
+        return []
+    if not got:
+        return []
+    data, ext = got
+    name = f"qr.{ext}"
+    embed.set_image(url=f"attachment://{name}")
+    return [discord.File(io.BytesIO(data), filename=name)]
 
 
 def build_queue_embed(seller: discord.abc.User, buyer: discord.abc.User,

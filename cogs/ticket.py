@@ -2154,7 +2154,7 @@ class TicketCog(commands.Cog):
 
         embed.set_footer(text=f"Xác nhận bởi {_uname_plain(ctx.author)}")
 
-        from cogs.shop_orders import build_payment_qr_embed, send_to_queue
+        from cogs.shop_orders import attach_qr_image, build_payment_qr_embed, send_to_queue
         qr_embed = qr_note = None
         if use_qr:
             qr_embed, qr_ref_code, qr_note = build_payment_qr_embed(
@@ -2169,7 +2169,9 @@ class TicketCog(commands.Cog):
         # cần lại. Chưa `.shopbank` (hoặc tính năng đang tắt, hoặc dùng `.done+`) thì giữ
         # hành vi CŨ nguyên vẹn — gửi thẳng hàng đợi để admin tự bấm "Hoàn thành" xác nhận.
         if qr_embed:
-            await ctx.reply(embed=qr_embed)
+            # Tải ảnh QR về rồi đính kèm file (img.vietqr.io có thể trả SVG mà Discord không hiện) — xem core/qr_image.py
+            qr_files = await attach_qr_image(qr_embed, guild=ctx.guild.id, ref=qr_ref_code)
+            await ctx.reply(embed=qr_embed, files=qr_files)
         else:
             await ctx.reply(embed=embed)
             if use_qr:
@@ -2463,7 +2465,7 @@ class TicketCog(commands.Cog):
             embed.add_field(name="🏆 Role", value=role_obj.mention if role_obj else role_cfg.get("label","?"), inline=False)
         embed.set_footer(text=f"Xác nhận bởi {_uname_plain(interaction.user)}")
 
-        from cogs.shop_orders import build_payment_qr_embed, send_to_queue
+        from cogs.shop_orders import attach_qr_image, build_payment_qr_embed, send_to_queue
         qr_embed, qr_ref_code, qr_note = build_payment_qr_embed(
             seller, buyer, parsed, interaction.guild.id, interaction.channel.id
         )
@@ -2472,7 +2474,10 @@ class TicketCog(commands.Cog):
         # QR làm phản hồi chính, thay vì embed "Hoàn Thành Đơn" trước rồi mới followup QR
         # như cũ (2 tin nhắn liên tiếp, thừa).
         if qr_embed:
-            await interaction.response.send_message(embed=qr_embed)
+            # defer trước: tải/đổi ảnh QR có thể quá 3 giây → không defer thì tương tác hết hạn ("Unknown interaction")
+            await interaction.response.defer()
+            qr_files = await attach_qr_image(qr_embed, guild=interaction.guild.id, ref=qr_ref_code)
+            await interaction.followup.send(embed=qr_embed, files=qr_files)
         else:
             await interaction.response.send_message(embed=embed)
             if qr_note:
