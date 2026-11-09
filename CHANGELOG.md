@@ -1,3 +1,11 @@
+## [v4.66.5] — 2026-11-09
+
+### ➕ Lệnh `.taokenh <nội dung>` — tạo nhanh kênh stock (`cogs/admin.py`)
+- `.taokenh 50k・3-cape` → tạo kênh `✅・50k・3-cape` trong danh mục stock (`cfg_stock_category`), mọi người xem được nhưng chỉ người tạo + bot gửi tin. Admin hoặc seller còn hạn dùng được; chưa cài Stock Category thì báo cách cài.
+- `taokenh` trước đây là alias của `.mkchannel` — giờ tách thành lệnh riêng, `.mkchannel`/`.mkch` giữ nguyên.
+
+---
+
 ## [v4.66.4] — 2026-11-09
 
 ### 🎫 Nhận diện kênh ticket/stock + ticket Auto Buy cho admin (`core/data.py`, `cogs/ticket.py`, `cogs/shop_admin.py`, `cogs/autobuy.py`)

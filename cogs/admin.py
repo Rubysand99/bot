@@ -27,7 +27,7 @@ from core.data import (
     can_use_dangerous_cmd,
     set_current_guild,
     get_cfg_shop_orders_enabled,
-    get_cfg_receipt_thankyou,
+    get_cfg_receipt_thankyou, get_cfg_stock_category,
     get_embed_template, get_embed_templates, save_embed_template, delete_embed_template,
     GuildContextView as View, GuildContextModal as Modal,
 )
@@ -533,7 +533,7 @@ class AdminCog(commands.Cog):
         except discord.Forbidden: await ctx.reply("❌ Bot thiếu quyền Manage Channels.")
         except Exception as e: await ctx.reply(f"❌ {e}")
 
-    @commands.command(name="mkchannel", aliases=["mkch", "taokenh"])
+    @commands.command(name="mkchannel", aliases=["mkch"])
     async def mkchannel_cmd(self, ctx):
         if not is_admin(ctx.author):
             return await ctx.reply("❌ Chỉ admin.")
@@ -555,6 +555,39 @@ class AdminCog(commands.Cog):
         )
         embed.set_footer(text=f"Yêu cầu bởi {ctx.author}  •  Timeout 2 phút")
         await ctx.reply(embed=embed, view=MkChannelView(ctx, cat_opts))
+
+    # ── .taokenh <nội dung> — tạo nhanh kênh stock ✅・<nội dung> trong category stock ──
+    @commands.command(name="taokenh")
+    async def taokenh_cmd(self, ctx, *, content: str = None):
+        """`.taokenh <nội dung>` → tạo kênh `✅・<nội dung>` trong danh mục stock (admin hoặc seller còn hạn)."""
+        from cogs.seller import is_active_seller
+        if not ctx.guild:
+            return
+        if not (is_admin(ctx.author) or is_active_seller(ctx.guild.id, ctx.author.id)):
+            return await ctx.reply("❌ Chỉ admin hoặc seller còn hạn mới tạo được kênh stock.")
+        content = (content or "").strip()
+        if not content:
+            return await ctx.reply(f"❌ Thiếu nội dung! Ví dụ: `{get_guild_prefix(ctx.guild.id)}taokenh 50k・3-cape`")
+        stock_cat = ctx.guild.get_channel(get_cfg_stock_category() or 0)
+        if not isinstance(stock_cat, discord.CategoryChannel):
+            return await ctx.reply("❌ Chưa cài **Stock Category** — vào `.st` → Stock Category để chọn danh mục stock.")
+        name = f"✅・{content}"[:100]
+        ow = {
+            ctx.guild.default_role: discord.PermissionOverwrite(view_channel=True, read_message_history=True,
+                                                                send_messages=False, add_reactions=False),
+            ctx.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True,
+                                                      attach_files=True, manage_channels=True, manage_messages=True),
+            ctx.author: discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True,
+                                                    embed_links=True, read_message_history=True, manage_messages=True),
+        }
+        try:
+            ch = await ctx.guild.create_text_channel(name=name, category=stock_cat, overwrites=ow,
+                                                     reason=f"taokenh bởi {ctx.author}")
+        except discord.Forbidden:
+            return await ctx.reply("❌ Bot thiếu quyền Manage Channels.")
+        except discord.HTTPException as e:
+            return await ctx.reply(f"❌ Không tạo được kênh: `{e}`")
+        await ctx.reply(f"✅ Đã tạo kênh stock {ch.mention} trong **{stock_cat.name}**.")
 
     # ── .setup ──
     @commands.command(name="setup", aliases=["sv_setup", "serversetup"])
@@ -869,7 +902,8 @@ class AdminCog(commands.Cog):
                      "`.delemoji <tên>` — Xóa emoji\n"
                      "`.rename #kênh <tên mới>` — Đổi tên kênh\n"
                      "`.setperm #kênh @role <quyền>` — Cài quyền kênh\n"
-                     "`.mkchannel` — Tạo kênh (chọn loại / danh mục / public-private / khoá)", False),
+                     "`.mkchannel` — Tạo kênh (chọn loại / danh mục / public-private / khoá)\n"
+                     "`.taokenh <nội dung>` — Tạo nhanh kênh `✅・<nội dung>` trong danh mục stock", False),
                     ("📢 Thông báo",
                      "`.embed [#kênh] [everyone|here]` (alias `.thongbao`/`.announce`) — Nhấn nút để "
                      "soạn embed (tiêu đề/nội dung/màu/ảnh lớn/thumbnail/footer). Sau khi soạn xong sẽ "
