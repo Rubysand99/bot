@@ -1,3 +1,11 @@
+## [v4.66.6] — 2026-11-09
+
+### 🔄 Đổi cách đặt tên kênh khi sold (`cogs/shop_admin.py`)
+- Tên kênh có ✅ → đổi ✅ thành ❌ (giữ nguyên phần còn lại); không có ✅ → thêm ❌ vào đầu tên. Kênh đã bắt đầu bằng ❌ thì giữ nguyên. Trước đây luôn đổi thành `❌•…`.
+- Hàm mới `make_sold_channel_name()`; test +1 trong `tests/test_ticket_stock_detect.py`.
+
+---
+
 ## [v4.66.5] — 2026-11-09
 
 ### ➕ Lệnh `.taokenh <nội dung>` — tạo nhanh kênh stock (`cogs/admin.py`)

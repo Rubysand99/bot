@@ -532,6 +532,16 @@ async def _escalate_pending_sold_after(bot, channel_id: int, delay_seconds: floa
 _SOLD_PATTERN = _re.compile(r"\bsold\b", _re.IGNORECASE)
 
 
+def make_sold_channel_name(old_name: str) -> str:
+    """Tên kênh khi sold: có ✅ thì đổi ✅ thành ❌ (giữ nguyên phần còn lại); không có ✅
+    thì thêm ❌ vào ĐẦU tên. Kênh đã có ❌ ở đầu thì giữ nguyên, không thêm lần nữa."""
+    if "✅" in old_name:
+        return old_name.replace("✅", "❌")
+    if old_name.startswith("❌"):
+        return old_name
+    return "❌" + old_name
+
+
 async def handle_sold(bot, message: discord.Message):
     """Gọi từ bot.py on_message để xử lý auto-sold."""
     if message.author.bot or not message.guild:
@@ -579,10 +589,7 @@ async def handle_sold(bot, message: discord.Message):
     except Exception as _e:
         print(f"[SOLD] ⚠️ AutoBuy on_manual_sold lỗi: {_e}")
 
-    if "•" in old_name:
-        new_name = "❌•" + old_name.split("•", 1)[-1]
-    else:
-        new_name = "❌•" + old_name
+    new_name = make_sold_channel_name(old_name)
 
     try:
         await channel.edit(

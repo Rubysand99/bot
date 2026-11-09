@@ -77,5 +77,15 @@ class BuyerTests(unittest.TestCase):
         self.assertEqual(T._ticket_buyer_id(Ch(id=9, name="ticket-x")), 77)
 
 
+class SoldNameTests(unittest.TestCase):
+    def test_sold_name(self):
+        import cogs.shop_admin as SA
+        f = SA.make_sold_channel_name
+        self.assertEqual(f("✅・50k・3-cape"), "❌・50k・3-cape")
+        self.assertEqual(f("acc-50k"), "❌acc-50k")
+        self.assertEqual(f("❌・50k"), "❌・50k")
+        self.assertEqual(f("50k✅3-cape"), "50k❌3-cape")
+
+
 if __name__ == "__main__":
     unittest.main()
