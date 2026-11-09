@@ -100,8 +100,14 @@ async def _http_get(url: str, timeout: float = FETCH_TIMEOUT):
     import aiohttp
     async with aiohttp.ClientSession() as session:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
-            data = await r.content.read(MAX_BYTES + 1)
-            return r.status, r.headers.get("Content-Type", ""), data
+            # ⚠️ KHÔNG dùng `r.content.read(n)`: nó chỉ trả phần dữ liệu ĐÃ về tới lúc gọi (≤ n byte), không phải cả file
+            # → SVG bị cụt giữa chừng, resvg báo "unexpected end of stream" (lỗi thật đã gặp ở v4.66.1). Đọc từng khúc tới hết.
+            data = bytearray()
+            async for chunk in r.content.iter_chunked(64 * 1024):
+                data += chunk
+                if len(data) > MAX_BYTES:        # quá lớn → dừng sớm, fetch_qr_image sẽ từ chối
+                    break
+            return r.status, r.headers.get("Content-Type", ""), bytes(data)
 
 
 async def fetch_qr_image(url: str, *, fetcher=None, ctx: dict | None = None):

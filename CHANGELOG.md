@@ -1,3 +1,12 @@
+## [v4.66.3] — 2026-11-09
+
+### 🐛 Fix: ảnh QR vẫn không hiện — bot tải file SVG bị CỤT nên không đổi sang PNG được (`core/qr_image.py`)
+- **Nguyên nhân (từ log VPS thật, v4.66.1/4.66.2)**: log `[QR]` xác nhận `img.vietqr.io` trả **SVG** (`image/svg+xml`) đúng như dự đoán, nhưng bộ đổi `resvg-py` báo `ValueError: unexpected end of stream` — file SVG bot nhận được bị cụt. Lỗi ở chính code tải: `r.content.read(n)` của aiohttp chỉ trả phần dữ liệu ĐÃ về tới lúc gọi (≤ n byte) chứ không phải cả file.
+- **Sửa**: đọc từng khúc (`iter_chunked`) cho tới hết, vẫn dừng sớm nếu vượt 5MB.
+- Test: `tests/test_qr_image.py` +2 (giả aiohttp trả body nhiều khúc → phải gom đủ; body quá lớn → dừng sớm và bị từ chối). Test cũ dùng fetcher giả nên không bắt được lỗi này.
+
+---
+
 ## [v4.66.2] — 2026-11-09
 
 ### 📝 Dọn chữ "Railway" còn sót — bot đã chuyển sang VPS (nhiều file, chỉ đổi chữ/chú thích, KHÔNG đổi logic)

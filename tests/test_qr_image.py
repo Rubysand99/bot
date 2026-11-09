@@ -116,6 +116,40 @@ class Fetch(unittest.TestCase):
             self.assertIsNone(run(Q.fetch_qr_image(QR_URL, fetcher=boom)))
 
 
+class HttpGetReadsWholeBody(unittest.TestCase):
+    """Hồi quy v4.66.1: `content.read(n)` chỉ trả phần đã về → SVG cụt → resvg "unexpected end of stream".
+    Giả aiohttp trả body theo NHIỀU khúc: _http_get phải gom đủ."""
+    def _fake_aiohttp(self, chunks, status=200):
+        class Content:
+            async def iter_chunked(self_, n):
+                for c in chunks:
+                    yield c
+            async def read(self_, n=-1):                      # hành vi thật của aiohttp: chỉ trả khúc đầu
+                return chunks[0]
+        class Resp:
+            def __init__(s): s.status = status; s.headers = {"Content-Type": "image/svg+xml"}; s.content = Content()
+            async def __aenter__(s): return s
+            async def __aexit__(s, *a): return False
+        class Session:
+            async def __aenter__(s): return s
+            async def __aexit__(s, *a): return False
+            def get(s, url, timeout=None): return Resp()
+        return types.SimpleNamespace(ClientSession=Session, ClientTimeout=lambda total: total)
+
+    def test_joins_all_chunks(self):
+        chunks = [SVG[:40], SVG[40:90], SVG[90:]]
+        with patch.dict(sys.modules, {"aiohttp": self._fake_aiohttp(chunks)}):
+            status, ctype, data = run(Q._http_get(QR_URL))
+        self.assertEqual((status, ctype, data), (200, "image/svg+xml", SVG))      # đủ cả file, không phải khúc đầu
+
+    def test_stops_early_when_too_large(self):
+        big = [b"x" * (1024 * 1024)] * 7                                          # 7MB > MAX_BYTES (5MB)
+        with patch.dict(sys.modules, {"aiohttp": self._fake_aiohttp(big)}):
+            _s, _t, data = run(Q._http_get(QR_URL))
+        self.assertGreater(len(data), Q.MAX_BYTES); self.assertLess(len(data), 7 * 1024 * 1024)
+        self.assertIsNone(run(Q.fetch_qr_image(QR_URL, fetcher=fetcher_of(data=data))))     # bị từ chối do quá lớn
+
+
 class FakeEmbed:
     def __init__(self, url): self.image = types.SimpleNamespace(url=url)
     def set_image(self, url): self.image = types.SimpleNamespace(url=url)
