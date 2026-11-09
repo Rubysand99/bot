@@ -884,6 +884,31 @@ def is_staff_member(member) -> bool:
     return False
 
 # ══════════════════════════════════════════
+# NHẬN DIỆN KÊNH TICKET / STOCK
+# ══════════════════════════════════════════
+def is_bot_ticket_topic(topic) -> bool:
+    """Topic ticket THẬT do bot gắn (định dạng '{user_id}||...')."""
+    if not topic or "|" not in topic:
+        return False
+    return topic.split("|", 1)[0].strip().isdigit()
+
+def is_ticket_channel(channel) -> bool:
+    """Kênh được tính là TICKET nếu tên có chữ "ticket" (không phân biệt hoa thường — gồm cả
+    kênh Auto Buy `ticket-<acc>`) HOẶC topic đúng định dạng ticket của bot (mua-123, acc-123...)."""
+    name = (getattr(channel, "name", "") or "").lower()
+    if "ticket" in name:
+        return True
+    return is_bot_ticket_topic(getattr(channel, "topic", None))
+
+def is_stock_channel(channel) -> bool:
+    """Kênh thuộc danh mục stock (cfg_stock_category) và KHÔNG phải ticket — ticket nằm
+    lọt trong category stock vẫn là ticket, không bị auto-sold/stock xử lý."""
+    cat_id = get_cfg_stock_category()
+    if not cat_id or getattr(channel, "category_id", None) != cat_id:
+        return False
+    return not is_ticket_channel(channel)
+
+# ══════════════════════════════════════════
 # TICKET TYPE → ROLE GROUP
 # ══════════════════════════════════════════
 def get_ticket_type_role(ticket_key: str) -> str | None:

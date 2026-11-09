@@ -27,6 +27,7 @@ from core.data import (
     get_buy_roles,
     save_ticket_record, get_user_ticket_history, get_monthly_stats,
     load_data, save_data, parse_amount, fmt_amount, is_staff_member,
+    is_ticket_channel, get_ab_ticket,
     _uname_plain,
     save_seller_category,
     remove_seller_category, get_all_seller_categories,
@@ -93,12 +94,28 @@ def _is_duplicate_undone(channel_id: int, buyer_id: int, amount: int) -> bool:
     return _dup_check(_recent_undone_guard, (channel_id, buyer_id, amount))
 
 def _is_bot_ticket_topic(topic: str | None) -> bool:
-    """Nhận diện topic ticket THẬT do bot tự gắn (định dạng '{user_id}||...'), thay vì
-    chỉ dò có dấu '|' trong topic — admin đổi topic kênh thường dính dấu '|' cũng sẽ bị
-    nhận nhầm là ticket nếu chỉ check '|' in topic."""
-    if not topic or "|" not in topic:
-        return False
-    return topic.split("|", 1)[0].strip().isdigit()
+    """Nhận diện topic ticket THẬT do bot tự gắn (định dạng '{user_id}||...')."""
+    from core.data import is_bot_ticket_topic
+    return is_bot_ticket_topic(topic)
+
+def _topic_parts(channel) -> list[str]:
+    """Các phần của topic ticket bot ('uid||loại|...'); [] nếu kênh không có topic ticket
+    (vd kênh chỉ có chữ 'ticket' trong tên)."""
+    topic = getattr(channel, "topic", None)
+    return topic.split("|") if _is_bot_ticket_topic(topic) else []
+
+def _ticket_buyer_id(channel) -> int | None:
+    """ID người mua của kênh ticket: từ topic bot; không có thì từ đơn Auto Buy của kênh."""
+    parts = _topic_parts(channel)
+    if parts and parts[0].strip().isdigit():
+        return int(parts[0].strip())
+    try:
+        ab = get_ab_ticket(channel.id)
+        if ab and str(ab.get("buyer_id", "")).isdigit():
+            return int(ab["buyer_id"])
+    except Exception:
+        pass
+    return None
 
 # ── Server keys cho mua/bán ──
 SERVER_DONUT  = "donut"
@@ -1733,7 +1750,7 @@ class TicketButtons(View):
     async def claim_ticket(self, interaction: discord.Interaction, button: Button):
         if not is_staff_member(interaction.user):
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
-        if not _is_bot_ticket_topic(interaction.channel.topic):
+        if not is_ticket_channel(interaction.channel):
             return await interaction.response.send_message("❌ Đây không phải kênh ticket.", ephemeral=True)
 
         prev_id = _set_ticket_claim(interaction.channel.id, interaction.user.id)
@@ -1789,7 +1806,7 @@ class TicketCog(commands.Cog):
         if not isinstance(message.channel, discord.TextChannel):
             return
         # Chỉ áp dụng trong kênh ticket (topic có dạng user_id||...)
-        if not (message.channel.topic and "|" in message.channel.topic):
+        if not is_ticket_channel(message.channel):
             return
         # FIX: listener này chạy Task riêng do discord.py tự dispatch, không thừa hưởng
         # guild context set ở on_message chính (bot.py). Thiếu dòng này khiến
@@ -1899,7 +1916,7 @@ class TicketCog(commands.Cog):
     @commands.command()
     async def close(self, ctx):
         if not is_staff_member(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
-        if not (ctx.channel.topic and "|" in ctx.channel.topic): return await ctx.reply("❌ Đây không phải kênh ticket.")
+        if not is_ticket_channel(ctx.channel): return await ctx.reply("❌ Đây không phải kênh ticket.")
         await _close_ticket(ctx.channel, self.bot, closer=ctx.author)
 
     @commands.command(name="send")
@@ -1931,7 +1948,7 @@ class TicketCog(commands.Cog):
         tính QR (dùng bank của người claim) + ghi nhận đơn cho người đã claim, không
         phải người gõ lệnh. Dùng khi 1 seller nhờ admin/seller khác gõ .done hộ."""
         if not is_staff_member(ctx.author): return await ctx.reply("❌ Bạn không có quyền.")
-        if not (ctx.channel.topic and "|" in ctx.channel.topic): return await ctx.reply("❌ Đây không phải kênh ticket.")
+        if not is_ticket_channel(ctx.channel): return await ctx.reply("❌ Đây không phải kênh ticket.")
 
         prev_id = _set_ticket_claim(ctx.channel.id, ctx.author.id)
 
@@ -1990,7 +2007,7 @@ class TicketCog(commands.Cog):
             # Bỏ mọi dạng mention khỏi chuỗi để lấy amount
             amount_str = amount_str.replace(buyer.mention, "").replace(f"<@!{buyer.id}>", "").replace(f"<@{buyer.id}>", "").strip()
 
-        is_ticket = _is_bot_ticket_topic(ctx.channel.topic)
+        is_ticket = is_ticket_channel(ctx.channel)
 
         # Seller thật của đơn này: nếu ticket đã được `.claim`, dùng người đã claim —
         # không phải ctx.author (người gõ .done/.done+ có thể chỉ đang gõ HỘ cho seller
@@ -2010,13 +2027,9 @@ class TicketCog(commands.Cog):
             if not is_ticket:
                 return await ctx.reply(f"❌ Ngoài kênh ticket, cần mention user: `{cmd_prefix} @user 50k`")
             # Đọc buyer từ topic
-            parts = ctx.channel.topic.split("|")
-            try:
-                user_id = int(parts[0]) if parts[0].isdigit() else None
-            except Exception:
-                user_id = None
+            user_id = _ticket_buyer_id(ctx.channel)
             if not user_id:
-                return await ctx.reply("❌ Không đọc được thông tin buyer từ ticket.")
+                return await ctx.reply("❌ Không đọc được buyer từ kênh này — hãy mention user: `@user 50k`.")
             buyer = ctx.guild.get_member(user_id)
             if not buyer:
                 return await ctx.reply(f"❌ Không tìm thấy buyer (ID: `{user_id}`).")
@@ -2045,7 +2058,7 @@ class TicketCog(commands.Cog):
         server_key = None
         trade_type = None
         if is_ticket:
-            parts = ctx.channel.topic.split("|")
+            parts = _topic_parts(ctx.channel)
             trade_type = parts[2] if len(parts) > 2 else None
             server_key = parts[5] if len(parts) > 5 else None
 
@@ -2229,18 +2242,14 @@ class TicketCog(commands.Cog):
             buyer = ctx.message.mentions[0]
             amount_str = amount_str.replace(buyer.mention, "").replace(f"<@!{buyer.id}>", "").replace(f"<@{buyer.id}>", "").strip()
 
-        is_ticket = _is_bot_ticket_topic(ctx.channel.topic)
+        is_ticket = is_ticket_channel(ctx.channel)
 
         if not buyer:
             if not is_ticket:
                 return await ctx.reply("❌ Ngoài kênh ticket, cần mention user: `.undone @user 50k`")
-            parts = ctx.channel.topic.split("|")
-            try:
-                user_id = int(parts[0]) if parts[0].isdigit() else None
-            except Exception:
-                user_id = None
+            user_id = _ticket_buyer_id(ctx.channel)
             if not user_id:
-                return await ctx.reply("❌ Không đọc được thông tin buyer từ ticket.")
+                return await ctx.reply("❌ Không đọc được buyer từ kênh này — hãy mention user: `@user 50k`.")
             buyer = ctx.guild.get_member(user_id)
             if not buyer:
                 return await ctx.reply(f"❌ Không tìm thấy buyer (ID: `{user_id}`).")
@@ -2266,7 +2275,7 @@ class TicketCog(commands.Cog):
         # đó, tránh lệch tổng theo server khi sửa đơn nhầm.
         server_key = None
         if is_ticket:
-            parts = ctx.channel.topic.split("|")
+            parts = _topic_parts(ctx.channel)
             trade_type = parts[2] if len(parts) > 2 else None
             server_key = parts[5] if len(parts) > 5 else None
 
@@ -2347,7 +2356,7 @@ class TicketCog(commands.Cog):
     async def slash_close(self, interaction: discord.Interaction):
         if not is_staff_member(interaction.user):
             return await interaction.response.send_message("❌ Bạn không có quyền.", ephemeral=True)
-        if not (interaction.channel.topic and "|" in interaction.channel.topic):
+        if not is_ticket_channel(interaction.channel):
             return await interaction.response.send_message("❌ Đây không phải kênh ticket.", ephemeral=True)
         await interaction.response.send_message("🔒 Đang đóng ticket...", ephemeral=True)
         await _close_ticket(interaction.channel, self.bot, closer=interaction.user)
@@ -2365,7 +2374,7 @@ class TicketCog(commands.Cog):
         if not parsed or parsed <= 0:
             return await interaction.response.send_message(f"❌ Số tiền `{amount}` không hợp lệ!", ephemeral=True)
 
-        is_ticket = bool(interaction.channel.topic and "|" in interaction.channel.topic)
+        is_ticket = is_ticket_channel(interaction.channel)
         buyer = user
 
         # Seller thật của đơn — xem comment chi tiết ở .done gõ tay (_complete_order_impl).
@@ -2382,13 +2391,9 @@ class TicketCog(commands.Cog):
                 return await interaction.response.send_message(
                     "❌ Ngoài kênh ticket, cần chọn **user** trong option.", ephemeral=True
                 )
-            parts = interaction.channel.topic.split("|")
-            try:
-                user_id = int(parts[0]) if parts[0].isdigit() else None
-            except Exception:
-                user_id = None
+            user_id = _ticket_buyer_id(interaction.channel)
             if not user_id:
-                return await interaction.response.send_message("❌ Không đọc được thông tin buyer.", ephemeral=True)
+                return await interaction.response.send_message("❌ Không đọc được buyer từ kênh này — hãy chọn option **user**.", ephemeral=True)
             buyer = interaction.guild.get_member(user_id)
             if not buyer:
                 return await interaction.response.send_message(f"❌ Không tìm thấy buyer (ID: `{user_id}`).", ephemeral=True)
@@ -2399,7 +2404,7 @@ class TicketCog(commands.Cog):
         server_key = None
         trade_type = None
         if is_ticket:
-            parts = interaction.channel.topic.split("|")
+            parts = _topic_parts(interaction.channel)
             trade_type = parts[2] if len(parts) > 2 else None
             server_key = parts[5] if len(parts) > 5 else None
 

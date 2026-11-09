@@ -48,7 +48,7 @@ from core.autobuy_logic import (
 from core.data import (
     add_seller_sale, add_user_spent, claim_ab_account, delete_ab_ticket, find_ab_account_by_channel,
     get_ab_account, get_ab_cfg, get_ab_ticket, get_all_ab_accounts, get_cfg_shop_orders_enabled, get_cfg_sold_category,
-    get_cfg_stock_category, get_or_fetch_channel, get_pending_shop_order, get_shop_orders_bank, is_admin,
+    get_cfg_category, get_cfg_stock_category, get_or_fetch_channel, get_pending_shop_order, get_shop_orders_bank, is_admin,
     pop_pending_shop_order, save_ab_account, save_ab_ticket, save_pending_shop_order, set_ab_cfg,
     set_current_guild, update_ab_account,
 )
@@ -286,6 +286,20 @@ class AutoBuyCog(commands.Cog):
         }
         if seller is not None and isinstance(seller, discord.Member):
             ow[seller] = rw
+        # Admin cố định + admin phụ (.ad) luôn vào được kênh — giống ticket thường
+        # (_build_ticket_overwrites). Trước đây thiếu → admin (vd Ruby) không phải seller/staff
+        # role nên không thấy/không xử lý được ticket Auto Buy.
+        try:
+            from shared.data import ADMIN_IDS, get_extra_admins
+            admin_rw = discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True,
+                                                   embed_links=True, read_message_history=True,
+                                                   manage_messages=True, manage_channels=True)
+            for aid in {*ADMIN_IDS, *get_extra_admins()}:
+                m = guild.get_member(aid)
+                if m:
+                    ow[m] = admin_rw
+        except Exception as e:
+            log.warning(f"[AUTOBUY] không gắn được quyền admin vào ticket: {e}")
         # staff được gán vai trò "🤖 Auto Buy" trong `.st` (role hoặc user)
         try:
             from core.data import get_ticket_role_ids
@@ -366,13 +380,18 @@ class AutoBuyCog(commands.Cog):
             seller = await self._resolve_user(guild, seller_id)
 
             parent = None
-            cat_id = get_ab_cfg("ticket_category_id")
-            if cat_id:
+            # Danh mục ticket: cấu hình riêng của Auto Buy, không có thì dùng danh mục ticket
+            # chung (cfg_category của .st) như ticket thường.
+            for cat_id in (get_ab_cfg("ticket_category_id"), get_cfg_category()):
+                if not cat_id:
+                    continue
                 c = guild.get_channel(int(cat_id))
                 if isinstance(c, discord.CategoryChannel):
                     parent = c
+                    break
             channel = await guild.create_text_channel(
                 name=f"ticket-{acc['username'].lower()}", category=parent,
+                topic=f"{buyer.id}||buy|autobuy|open",
                 overwrites=self._ticket_overwrites(guild, buyer, seller),
                 reason=f"AutoBuy: {buyer} mua {acc['username']}")
 

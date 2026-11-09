@@ -28,7 +28,7 @@ from cogs.logger import send_log
 from cogs.seller import is_active_seller
 from core.data import (
     TUYTAM_NOTIFY_ID, ADMIN_RUBY_ID,
-    get_cfg_stock_category, get_cfg_sold_category,
+    get_cfg_stock_category, get_cfg_sold_category, is_stock_channel,
     get_cfg_sold_detection_enabled, set_cfg_sold_detection_enabled,
     get_guild_prefix, is_admin, _uname_plain,
     parse_amount, fmt_amount,
@@ -544,7 +544,9 @@ async def handle_sold(bot, message: discord.Message):
     stock_cat_id = get_cfg_stock_category()
     sold_cat_id  = get_cfg_sold_category()
 
-    if not channel.category_id or channel.category_id != stock_cat_id:
+    # Kênh trong danh mục stock = kênh stock; NHƯNG kênh có chữ "ticket" trong tên (hoặc topic
+    # ticket của bot) luôn là ticket, không bị auto-sold chuyển category dù nằm trong stock.
+    if not is_stock_channel(channel):
         return
 
     if not get_cfg_sold_detection_enabled():

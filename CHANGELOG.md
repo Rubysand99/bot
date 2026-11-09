@@ -1,3 +1,14 @@
+## [v4.66.4] — 2026-11-09
+
+### 🎫 Nhận diện kênh ticket/stock + ticket Auto Buy cho admin (`core/data.py`, `cogs/ticket.py`, `cogs/shop_admin.py`, `cogs/autobuy.py`)
+- **Kênh ticket**: kênh có chữ `ticket` trong tên (không phân biệt hoa thường, vd `ticket-<acc>` của Auto Buy) HOẶC có topic ticket của bot đều được tính là ticket — hàm mới `is_ticket_channel()` (`core/data.py`). Áp dụng cho `.claim`/nút Nhận xử lý, `.close`/`/close`, `.done`/`.donecash`/`.undone`/`/done` và relay tin admin. Kênh chỉ có chữ "ticket" trong tên (không có topic bot): buyer đọc từ đơn Auto Buy của kênh, không có thì yêu cầu mention user (`.done @user 50k`) thay vì lỗi.
+- **Kênh stock**: kênh trong category stock (`cfg_stock_category`) là kênh stock — `is_stock_channel()`; kênh ticket nằm lọt trong category stock vẫn là ticket nên auto-sold (`handle_sold`) không còn chuyển nhầm nó sang category sold.
+- **Admin bị chặn trong ticket Auto Buy**: `_ticket_overwrites` chỉ cấp quyền cho khách, seller và role "🤖 Auto Buy", thiếu admin cố định + admin phụ (`.ad`) → admin không phải seller/staff role (vd Ruby) không thấy kênh. Giờ admin luôn vào được, giống `_build_ticket_overwrites` của ticket thường.
+- **Bấm BUY ở stock acc**: ticket tạo như ticket thường — topic `{buyer_id}||buy|autobuy|open`, nằm trong category ticket Auto Buy (chưa cấu hình thì dùng category ticket chung của `.st`), không còn rơi ra ngoài category.
+- Test: `tests/test_ticket_stock_detect.py` MỚI (9 test).
+
+---
+
 ## [v4.66.3] — 2026-11-09
 
 ### 🐛 Fix: ảnh QR vẫn không hiện — bot tải file SVG bị CỤT nên không đổi sang PNG được (`core/qr_image.py`)
