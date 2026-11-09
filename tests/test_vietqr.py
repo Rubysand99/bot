@@ -82,6 +82,13 @@ class BankValidation(unittest.TestCase):
         self.assertEqual(V.bank_problem({}), "chưa đăng ký ngân hàng")
         self.assertIsNone(V.bank_problem({"bank_code": "970422", "account_number": "0369999888", "account_holder": ""}))
 
+    def test_normalize_holder(self):
+        self.assertEqual(V.normalize_holder("Nguyễn Tấn Hoàng Quân"), "NGUYEN TAN HOANG QUAN")
+        self.assertEqual(V.normalize_holder("  nguyen   van a "), "NGUYEN VAN A")
+        self.assertEqual(V.normalize_holder("CÔNG TY ABC & Đạt"), "CONG TY ABC & DAT")
+        self.assertEqual(V.normalize_holder("@@@"), "")
+        self.assertEqual(V.normalize_holder(""), "")
+
     def test_qr_account_must_be_digits(self):
         self.assertEqual(V.parse_vietqr(make_vietqr("970422", "ABCDEF123"))["error"], "bad_account")
 

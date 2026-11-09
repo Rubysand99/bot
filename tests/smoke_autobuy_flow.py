@@ -342,7 +342,7 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
         ctx = self._bank_ctx(png, reply=True)
         await self._shopbank(ctx, args="Nguyen Van A")
         bank = C.get_shop_orders_bank(1)
-        self.assertEqual((bank["bank_code"], bank["account_holder"]), ("970436", "Nguyen Van A"))
+        self.assertEqual((bank["bank_code"], bank["account_holder"]), ("970436", "NGUYEN VAN A"))       # chuẩn hoá in hoa
         ctx.message.delete.assert_not_awaited()                 # ảnh của người khác (reply) thì KHÔNG xoá
         # không có tên ở cả QR lẫn lệnh → lưu rỗng + nhắc cách thêm tên
         self.data["shop_orders_banks"].pop("1")
@@ -429,6 +429,47 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
         ctx = self._bank_ctx(b"x"); ctx.message.attachments = []; ctx.message.reference = None
         await self._shopbank(ctx, args=None)
         self.assertIn("bị lỗi", ctx.reply.await_args.args[0])
+
+    # ───────── `.shopbank name <tên>`: QR ngân hàng thường không chứa tên chủ TK ─────────
+    def _plain_ctx(self, uid=1):
+        ctx = self._bank_ctx(b"x", uid=uid); ctx.message.attachments = []; ctx.message.reference = None
+        return ctx
+
+    async def test_shopbank_name_sets_holder_normalized_and_qr_shows_it(self):
+        self.data["shop_orders_banks"]["1"] = {"bank_name": "VietinBank", "bank_code": "970415", "account_number": "109885314930",
+                                                "account_holder": "", "template": "compact2"}      # đúng như bank đăng ký từ QR VietinBank, chưa có tên
+        view = self._plain_ctx(); await self._shopbank(view, args=None)
+        self.assertIn("Chưa có **tên chủ TK**", view.reply.await_args.args[0])                   # màn xem gợi ý cách thêm tên
+        ctx = self._plain_ctx()
+        await self._shopbank(ctx, args="name Nguyễn Tấn Hoàng Quân")
+        self.assertEqual(C.get_shop_orders_bank(1)["account_holder"], "NGUYEN TAN HOANG QUAN")
+        self.assertIn("NGUYEN TAN HOANG QUAN", ctx.reply.await_args.args[0])
+        self.assertEqual(C.get_shop_orders_bank(1)["account_number"], "109885314930")             # field khác giữ nguyên
+        seller = self._member(1); seller.mention = "<@1>"
+        embed, _ref, _warn = SO.build_payment_qr_embed(seller, self.buyer, 50000, 1, 555)
+        self.assertIn("accountName=NGUYEN%20TAN%20HOANG%20QUAN", embed.image.url)
+        self.assertIn("970415-109885314930", embed.image.url)
+        view2 = self._plain_ctx(); await self._shopbank(view2, args=None)
+        self.assertNotIn("Chưa có **tên chủ TK**", view2.reply.await_args.args[0])
+
+    async def test_shopbank_name_requires_valid_bank_and_valid_name(self):
+        ctx = self._plain_ctx(); await self._shopbank(ctx, args="name NGUYEN VAN A")                # chưa có bank
+        self.assertIn("chưa có bank", ctx.reply.await_args.args[0]); self.assertIsNone(C.get_shop_orders_bank(1))
+        self.data["shop_orders_banks"]["1"] = dict(self.GARBAGE_BANK)                               # bank đang sai
+        ctx = self._plain_ctx(); await self._shopbank(ctx, args="name NGUYEN VAN A")
+        self.assertIn("chưa có bank", ctx.reply.await_args.args[0]); self.assertEqual(C.get_shop_orders_bank(1)["account_holder"], "80086266778899")
+        self.data["shop_orders_banks"]["1"] = {"bank_code": "970415", "account_number": "109885314930", "account_holder": ""}
+        for bad in ("name 0123456789", "name @@@", "name x"):
+            ctx = self._plain_ctx(); await self._shopbank(ctx, args=bad)
+            self.assertIn("không hợp lệ", ctx.reply.await_args.args[0], bad)
+        self.assertEqual(C.get_shop_orders_bank(1)["account_holder"], "")
+
+    @unittest.skipUnless(all(importlib.util.find_spec(m) for m in ("qrcode", "zxingcpp")), "cần qrcode + zxing-cpp")
+    async def test_shopbank_qr_with_name_keyword_sets_holder(self):
+        ctx = self._bank_ctx(self._qr_png(TV.make_vietqr("970415", "109885314930")))
+        await self._shopbank(ctx, args="name Nguyễn Tấn Hoàng Quân")        # ảnh + "name <tên>" → đăng ký + đặt tên một lượt
+        bank = C.get_shop_orders_bank(1)
+        self.assertEqual((bank["bank_code"], bank["account_number"], bank["account_holder"]), ("970415", "109885314930", "NGUYEN TAN HOANG QUAN"))
 
 
 if __name__ == "__main__":

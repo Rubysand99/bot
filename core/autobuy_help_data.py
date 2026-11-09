@@ -79,7 +79,8 @@ PAGES = {
             ("4️⃣ Bank + thanh toán tự động (để bot tự giao)",
              "• Mỗi **seller/owner** đăng ký bank nhận tiền của mình (**bắt buộc trước khi đăng bán**) — cách nhanh nhất: gõ `.shopbank` "
              "và **đính kèm ảnh QR nhận tiền** của ngân hàng (hoặc reply vào ảnh QR), bot tự đọc ngân hàng + số TK. "
-             "Nhập tay: `.shopbank \"Vietinbank\" vietinbank 0123456789 \"Nguyen Van A\"` (xem lại: `.shopbank`, danh sách: `.listbank`)\n"
+             "QR ngân hàng thường **không chứa tên chủ TK** — muốn QR thanh toán hiện tên: `.shopbank name NGUYEN VAN A` (không bắt buộc). "
+             "Nhập tay: `.shopbank \"MB Bank\" mbbank 0123456789 \"NGUYEN VAN A\"` (xem lại: `.shopbank`, danh sách: `.listbank`)\n"
              "• Admin bật **Shop Orders** trong `.st`\n"
              "• Webhook SePay `/webhook/sepay` + biến môi trường `SEPAY_WEBHOOK_API_KEY` khớp API Key khai trên SePay "
              "(chi tiết: `.help shoporders`)\n"

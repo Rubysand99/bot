@@ -41,7 +41,7 @@ from discord.ext import commands
 from discord.ui import TextInput
 
 from core.vietqr import (MAX_IMAGE_BYTES, QRDecoderMissing, bank_name_from_bin, bank_problem, decode_qr_texts,
-                         normalize_account, pick_vietqr, validate_bank)
+                         normalize_account, normalize_holder, pick_vietqr, validate_bank)
 
 from core.data import is_admin
 from core.data import (
@@ -649,16 +649,21 @@ class ShopOrdersCog(commands.Cog):
 
         # 📷 Chỉ cần gửi ảnh QR ngân hàng: `.shopbank` + đính kèm ảnh (hoặc reply vào ảnh). Gõ đủ 4 tham số như cũ thì
         # giữ nguyên cách nhập tay; có ảnh mà tham số < 4 thì phần chữ (nếu có) được coi là TÊN CHỦ TK.
+        # ✏️ `.shopbank name <TÊN CHỦ TK>` — chỉ đặt/sửa TÊN CHỦ TK của bank đã lưu (QR ngân hàng thường KHÔNG chứa tên)
+        name_m = re.match(r"^(?:name|ten|tên)\s+(.+)$", (args or "").strip(), flags=re.I | re.S)
         qr_att = await _find_qr_attachment(ctx)
+        if name_m and not qr_att:
+            return await self._set_holder(ctx, name_m.group(1))
         if qr_att:
             typed_full = False
-            if args:
+            if args and not name_m:
                 try:
                     typed_full = len(shlex.split(args)) >= 4
                 except ValueError:
                     typed_full = False
             if not typed_full:
-                return await self._register_bank_from_qr(ctx, qr_att, (args or "").strip().strip('"'))
+                holder_arg = name_m.group(1) if name_m else (args or "")
+                return await self._register_bank_from_qr(ctx, qr_att, holder_arg.strip().strip('"'))
 
         if not args:
             bank = get_shop_orders_bank(ctx.author.id)
@@ -671,6 +676,9 @@ class ShopOrdersCog(commands.Cog):
             problem = bank_problem(bank)
             warn = (f"⚠️ **Bank đang lưu bị lỗi — {problem}.** QR thanh toán sẽ không hiện cho tới khi sửa: "
                     "gõ `.shopbank` kèm ảnh QR ngân hàng để đăng ký lại.\n\n") if problem else ""
+            if not problem and not bank.get("account_holder"):
+                warn = ("ℹ️ Chưa có **tên chủ TK** (QR ngân hàng thường không chứa tên) — QR thanh toán vẫn dùng được. "
+                        "Muốn hiện tên: `.shopbank name NGUYEN VAN A`\n\n")
             return await ctx.reply(
                 warn + "**Bank của bạn hiện tại:**\n"
                 f"› Tên hiển thị: `{bank.get('bank_name', '?')}`\n"
@@ -702,6 +710,7 @@ class ShopOrdersCog(commands.Cog):
                 "› **Dễ nhất:** gõ `.shopbank` và đính kèm **ảnh QR nhận tiền** của ngân hàng — bot tự đọc, không cần nhập gì."
             )
         account_number = normalize_account(account_number)
+        account_holder = normalize_holder(account_holder)
         default_content = parts[4] if len(parts) > 4 else ""
         template = parts[5] if len(parts) > 5 else "compact2"
         save_shop_orders_bank(
@@ -717,6 +726,17 @@ class ShopOrdersCog(commands.Cog):
             f"› Lưu ý: nội dung CK trên QR giờ TỰ SINH riêng theo từng đơn để đối soát — "
             f"tham số ghi chú ở trên chỉ để bạn tự nhớ, không còn in lên QR nữa."
         )
+
+    async def _set_holder(self, ctx: commands.Context, raw: str) -> None:
+        """`.shopbank name <tên>` — đặt tên chủ TK cho bank ĐÃ lưu (chuẩn hoá: in hoa, bỏ dấu)."""
+        bank = get_shop_orders_bank(ctx.author.id)
+        if bank_problem(bank):
+            return await ctx.reply("❌ Bạn chưa có bank hợp lệ để đặt tên — gõ `.shopbank` kèm **ảnh QR ngân hàng** trước.")
+        name = normalize_holder(raw)
+        if not (2 <= len(name) <= 60) or normalize_account(name).isdigit():
+            return await ctx.reply("❌ Tên chủ TK không hợp lệ — gõ ví dụ `.shopbank name NGUYEN VAN A` (chữ, không phải dãy số).")
+        save_shop_orders_bank(ctx.author.id, account_holder=name)
+        await ctx.reply(f"✅ Đã đặt tên chủ TK: **{name}** — QR thanh toán sẽ hiện tên này. Xem lại: `.shopbank`")
 
     async def _register_bank_from_qr(self, ctx: commands.Context, att: discord.Attachment, holder: str) -> None:
         """Đọc ảnh VietQR → lưu bank CỦA NGƯỜI GÕ LỆNH (giống `.shopbank` nhập tay, bank_code = mã BIN)."""
@@ -739,7 +759,8 @@ class ShopOrdersCog(commands.Cog):
 
         old = get_shop_orders_bank(ctx.author.id) or {}
         bank_name = bank_name_from_bin(info["bin"])
-        account_holder = holder or info["holder"] or (old.get("account_holder") if old.get("account_number") == info["account_number"] else "") or ""
+        holder = normalize_holder(holder)
+        account_holder = holder or normalize_holder(info["holder"]) or (old.get("account_holder") if old.get("account_number") == info["account_number"] else "") or ""
         save_shop_orders_bank(
             ctx.author.id,
             bank_name=bank_name, bank_code=info["bin"], account_number=info["account_number"],
@@ -753,8 +774,8 @@ class ShopOrdersCog(commands.Cog):
             "› Từ giờ QR thanh toán (`.done`, Auto Buy) dùng đúng bank này. Xem lại: `.shopbank` · toàn bộ: `.listbank`",
         ]
         if not account_holder:
-            lines.append('› QR này không chứa tên chủ TK nên QR thanh toán sẽ không hiện tên. Muốn hiện tên: gửi lại ảnh với lệnh '
-                         '`.shopbank Nguyen Van A` (thêm tên chủ TK sau lệnh).')
+            lines.append("› QR này không chứa tên chủ TK nên QR thanh toán sẽ không hiện tên (vẫn thanh toán bình thường). "
+                         "Muốn hiện tên: gõ `.shopbank name NGUYEN TAN HOANG QUAN` (tên in trên ảnh QR, không cần gửi lại ảnh).")
         lines.append("› Nhớ kiểm tra số TK ở trên có ĐÚNG không — tiền khách chuyển sẽ vào đúng tài khoản này.")
         await ctx.reply("\n".join(lines))
         if att in ctx.message.attachments:        # ảnh QR do chính người gõ gửi → xoá cho gọn (tin trả lời ở trên đã giữ thông tin)

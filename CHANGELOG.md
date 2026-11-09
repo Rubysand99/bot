@@ -1,3 +1,13 @@
+## [v4.65.2] — 2026-11-09
+
+### ✏️ `.shopbank name <tên>` — thêm tên chủ TK cho bank đăng ký từ ảnh QR (`cogs/shop_orders.py`, `core/vietqr.py`)
+- **Bối cảnh**: thử với ảnh QR VietinBank thật (iPay) — bot đọc ĐÚNG (VietinBank, BIN `970415`, số TK, CRC hợp lệ) nhưng payload QR **không có tên chủ TK** (tên chỉ in trên ảnh, không nằm trong mã) nên "Chủ TK" để trống. Đây là đặc điểm của QR ngân hàng, không phải lỗi đọc.
+- **Lệnh mới**: `.shopbank name NGUYEN TAN HOANG QUAN` — đặt/sửa tên chủ TK của bank ĐÃ lưu, không cần gửi lại ảnh. Gõ `name` kèm ảnh thì đăng ký + đặt tên một lượt. Chưa có bank hợp lệ → hướng dẫn gửi ảnh QR trước; tên toàn số/quá ngắn → từ chối.
+- **Chuẩn hoá tên** (mọi đường: QR, `name`, nhập tay): IN HOA, bỏ dấu, gọn khoảng trắng — "Nguyễn Tấn Hoàng Quân" → `NGUYEN TAN HOANG QUAN` (đúng dạng tên ngân hàng dùng, QR thanh toán `accountName` hiện đẹp).
+- `.shopbank` (xem bank): nếu bank hợp lệ nhưng chưa có tên thì nhắc cách thêm (QR thanh toán vẫn dùng được và vẫn nhận tiền bình thường — SePay đối soát bằng số TK + mã `DHxxxxxx`, không cần tên).
+- Tin nhắn sau khi đăng ký từ ảnh QR chỉ đúng lệnh `.shopbank name …` thay vì "gửi lại ảnh".
+- Test: `tests/test_vietqr.py` +1 (chuẩn hoá tên), `tests/smoke_autobuy_flow.py` 31 → 34 (đặt tên → QR thanh toán hiện `accountName`, từ chối khi chưa có bank/bank sai/tên không hợp lệ, ảnh + `name`).
+
 ## [v4.65.1] — 2026-11-09
 
 ### 🐛 Fix: ticket có khung "Quét mã để thanh toán" nhưng KHÔNG hiện ảnh QR (`core/vietqr.py`, `cogs/shop_orders.py`, `cogs/autobuy.py`)

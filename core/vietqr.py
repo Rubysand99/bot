@@ -13,6 +13,7 @@ Module THUẦN (decode ảnh import thư viện lười, có fallback); test ở
 import io
 import logging
 import re
+import unicodedata
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,14 @@ PLACEHOLDER_WORDS = {"ma_bank", "mabank", "ma-bank", "bank_code", "bankcode", "s
 def normalize_account(account: str) -> str:
     """'0123 456.789' → '0123456789' (bỏ khoảng trắng, dấu chấm, gạch ngang)."""
     return "".join(ch for ch in (account or "") if ch not in " .-_\t")
+
+
+def normalize_holder(name: str) -> str:
+    """Tên chủ TK dạng ngân hàng dùng: IN HOA, không dấu, gọn khoảng trắng ("Nguyễn Tấn Hoàng Quân" → "NGUYEN TAN HOANG QUAN")."""
+    s = unicodedata.normalize("NFD", name or "").replace("đ", "d").replace("Đ", "D")
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+    s = re.sub(r"[^A-Za-z0-9\s.&'-]", " ", s)
+    return re.sub(r"\s+", " ", s).strip().upper()
 
 
 def validate_bank(bank_code: str, account_number: str, account_holder: str = "") -> str | None:
