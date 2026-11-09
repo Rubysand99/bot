@@ -1,3 +1,16 @@
+## [v4.65.1] — 2026-11-09
+
+### 🐛 Fix: ticket có khung "Quét mã để thanh toán" nhưng KHÔNG hiện ảnh QR (`core/vietqr.py`, `cogs/shop_orders.py`, `cogs/autobuy.py`)
+- **Nguyên nhân (từ ảnh chụp ticket thật)**: bank của seller đang lưu **sai dữ liệu** — Ngân hàng `MB`, **Số tài khoản = `ma_bank`** (copy nguyên chữ mẫu trong lời hướng dẫn), **Chủ tài khoản = `80086266778899`** (số TK nằm nhầm ô). Link ảnh VietQR dựng từ số TK không phải số nên ảnh không hiện. Kiểm tra cũ chỉ xem "có mã + có số TK" nên bank sai vẫn qua cổng đăng bán.
+- **`.shopbank` nhập tay**: kiểm tra trước khi lưu — số TK phải 6–19 chữ số (tự bỏ khoảng trắng/dấu chấm), mã NH hợp lệ và không phải chữ mẫu (`ma_bank`, `SoTK`…), tên chủ TK không được toàn số. Sai thì **không lưu**, báo rõ bot đọc được gì + ví dụ đúng thứ tự + gợi ý dùng ảnh QR.
+- **Dựng QR thanh toán**: bank đã lưu mà sai thì KHÔNG gửi QR hỏng nữa; ticket nói rõ lý do ("bank đang lưu sai — số TK `ma_bank` không hợp lệ…") và rơi về Confirm tay. Không để lại đơn chờ thanh toán cho QR hỏng.
+- **Cổng đăng bán Auto Buy** (`/add_acc`, `/stock acc`): `has_bank` giờ kiểm dữ liệu thật dùng được (không chỉ "có mã + số"); bank lưu sai bị từ chối với lý do cụ thể.
+- **`.shopbank` (không tham số)**: nếu bank đang lưu bị lỗi sẽ cảnh báo đầu tin nhắn và chỉ cách sửa.
+- **Lời hướng dẫn**: bỏ chữ mẫu `ma_bank`/`SoTK` (người dùng hay copy nguyên văn) — thay bằng ví dụ giá trị thật `.shopbank "MB Bank" mbbank 0123456789 "NGUYEN VAN A"` và ưu tiên cách gửi ảnh QR.
+- QR đọc từ ảnh: số tài khoản phải toàn chữ số (6–19) mới nhận.
+- `.help autobuy loi`: thêm mục "khung QR nhưng không hiện ảnh".
+- Test: `tests/test_vietqr.py` +5 (validate bank, hồi quy đúng dữ liệu trong ảnh chụp), `tests/smoke_autobuy_flow.py` 25 → 31 (QR không dựng khi bank sai, mua với bank sai rơi về thủ công kèm lý do, `/stock acc` từ chối, `.shopbank` gõ sai không lưu / gõ đúng được chuẩn hoá, màn xem bank cảnh báo lỗi).
+
 ## [v4.65.0] — 2026-11-09
 
 ### 📷 `.shopbank` đăng ký bank bằng ẢNH QR — không cần gõ thông tin (`core/vietqr.py` MỚI, `cogs/shop_orders.py`)

@@ -36,7 +36,7 @@ class Parse(unittest.TestCase):
         self.assertEqual(V.bank_name_from_bin(r["bin"]), "Vietcombank")
 
     def test_unknown_bin_still_usable(self):
-        r = V.parse_vietqr(make_vietqr("970999", "111"))
+        r = V.parse_vietqr(make_vietqr("970999", "1112223334"))
         self.assertTrue(r["ok"])
         self.assertEqual(V.bank_name_from_bin("970999"), "Ngân hàng (BIN 970999)")
 
@@ -55,6 +55,35 @@ class Parse(unittest.TestCase):
         self.assertEqual(V.pick_vietqr([])["error"], "no_qr")
         self.assertEqual(V.pick_vietqr(["https://x.y", make_vietqr()])["bin"], "970415")
         self.assertEqual(V.pick_vietqr(["https://x.y", make_vietqr(service="QRIBFTTC")])["error"], "card")
+
+
+class BankValidation(unittest.TestCase):
+    def test_valid_banks(self):
+        for code, acc, holder in [("mbbank", "0123456789", "NGUYEN VAN A"), ("970422", "0369 999 888", ""), ("vietinbank", "1.234.567.890", "TRAN B")]:
+            self.assertIsNone(V.validate_bank(code, acc, holder), (code, acc))
+        self.assertEqual(V.normalize_account("0123 456.789-0"), "01234567890")
+
+    def test_screenshot_regression_placeholder_account_and_shifted_holder(self):
+        # Dữ liệu thật từng bị lưu: tên "MB", số TK = "ma_bank" (copy chữ mẫu), chủ TK = dãy số
+        err = V.validate_bank("mbbank", "ma_bank", "80086266778899")
+        self.assertIn("ma_bank", err)
+        self.assertIsNotNone(V.bank_problem({"bank_name": "MB", "bank_code": "mbbank", "account_number": "ma_bank", "account_holder": "80086266778899"}))
+
+    def test_invalid_variants(self):
+        self.assertIn("mã ngân hàng", V.validate_bank("ma_bank", "0123456789"))             # chữ mẫu ở ô mã NH
+        self.assertIn("mã ngân hàng", V.validate_bank("", "0123456789"))
+        self.assertIn("số tài khoản", V.validate_bank("mbbank", "SoTK"))
+        self.assertIn("số tài khoản", V.validate_bank("mbbank", "123"))                    # quá ngắn
+        self.assertIn("số tài khoản", V.validate_bank("mbbank", "1" * 20))                 # quá dài
+        self.assertIn("nhập lộn", V.validate_bank("mbbank", "0123456789", "80086266778899"))   # số TK nằm ở ô chủ TK
+
+    def test_bank_problem_for_missing_and_ok(self):
+        self.assertEqual(V.bank_problem(None), "chưa đăng ký ngân hàng")
+        self.assertEqual(V.bank_problem({}), "chưa đăng ký ngân hàng")
+        self.assertIsNone(V.bank_problem({"bank_code": "970422", "account_number": "0369999888", "account_holder": ""}))
+
+    def test_qr_account_must_be_digits(self):
+        self.assertEqual(V.parse_vietqr(make_vietqr("970422", "ABCDEF123"))["error"], "bad_account")
 
 
 HAVE_LIBS = all(importlib.util.find_spec(m) for m in ("PIL", "qrcode", "zxingcpp"))

@@ -12,12 +12,14 @@ Module THUẦN (decode ảnh import thư viện lười, có fallback); test ở
 """
 import io
 import logging
+import re
 
 log = logging.getLogger(__name__)
 
 NAPAS_GUID = "A000000727"
 SERVICE_ACCOUNT = "QRIBFTTA"      # chuyển nhanh tới TÀI KHOẢN
 SERVICE_CARD = "QRIBFTTC"         # chuyển nhanh tới SỐ THẺ — không dùng được cho bot
+ACCOUNT_MIN, ACCOUNT_MAX = 6, 19      # số tài khoản ngân hàng VN: 6–19 chữ số
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
 
@@ -35,6 +37,40 @@ BANKS_BY_BIN = {
     "546034": "CAKE by VPBank", "546035": "Ubank by VPBank", "963388": "Timo", "970462": "Kookmin Bank HN",
     "970463": "Kookmin Bank HCM", "970455": "IBK Bank HN", "970456": "IBK Bank HCM",
 }
+
+
+# Chữ MẪU trong lời hướng dẫn mà người dùng hay copy nguyên văn (từng gây ra bank lưu sai: số TK = "ma_bank")
+PLACEHOLDER_WORDS = {"ma_bank", "mabank", "ma-bank", "bank_code", "bankcode", "sotk", "so_tk", "stk", "ten_nh", "tennh",
+                     "chu_tk", "chutk", "ma_vietqr", "mavietqr", "<ma_bank>", "<sotk>"}
+
+
+def normalize_account(account: str) -> str:
+    """'0123 456.789' → '0123456789' (bỏ khoảng trắng, dấu chấm, gạch ngang)."""
+    return "".join(ch for ch in (account or "") if ch not in " .-_\t")
+
+
+def validate_bank(bank_code: str, account_number: str, account_holder: str = "") -> str | None:
+    """Kiểm tra bank NHẬP TAY / ĐÃ LƯU có dùng được để dựng QR không. None = hợp lệ, ngược lại trả lý do (tiếng Việt).
+    Chặn các lỗi thật đã gặp: copy nguyên chữ mẫu `ma_bank` làm số TK, nhập lộn thứ tự (số TK nằm ở ô chủ TK)."""
+    code = (bank_code or "").strip()
+    acc_raw = (account_number or "").strip()
+    holder = (account_holder or "").strip()
+    acc = normalize_account(acc_raw)
+    if code.lower() in PLACEHOLDER_WORDS or not re.fullmatch(r"[A-Za-z0-9_.\-]{2,32}", code):
+        return f"mã ngân hàng `{code or '(trống)'}` không hợp lệ (dùng mã VietQR như `mbbank`, `vietinbank`, hoặc mã BIN 6 số như `970422`)"
+    if not (acc.isdigit() and ACCOUNT_MIN <= len(acc) <= ACCOUNT_MAX):
+        return (f"số tài khoản `{acc_raw or '(trống)'}` không hợp lệ (phải là {ACCOUNT_MIN}–{ACCOUNT_MAX} chữ số"
+                + (", bạn đang để chữ mẫu/chữ không phải số" if acc_raw and not any(c.isdigit() for c in acc_raw) else "") + ")")
+    if holder and normalize_account(holder).isdigit() and len(normalize_account(holder)) >= ACCOUNT_MIN:
+        return f"tên chủ tài khoản `{holder}` toàn là số — có thể bạn nhập lộn thứ tự (tên NH, mã NH, SỐ TK, tên chủ TK)"
+    return None
+
+
+def bank_problem(bank: dict | None) -> str | None:
+    """Bank đã lưu của 1 user: None = dùng được; chuỗi = lý do không dùng được ("chưa đăng ký" hoặc dữ liệu sai)."""
+    if not bank:
+        return "chưa đăng ký ngân hàng"
+    return validate_bank(bank.get("bank_code"), bank.get("account_number"), bank.get("account_holder", ""))
 
 
 class QRDecoderMissing(RuntimeError):
@@ -94,7 +130,7 @@ def parse_vietqr(payload: str) -> dict:
     service = (napas.get("02") or "").upper()
     if service == SERVICE_CARD:
         return {"ok": False, "error": "card"}
-    if not (bin_.isdigit() and len(bin_) == 6 and acc.isalnum() and 1 <= len(acc) <= 19):
+    if not (bin_.isdigit() and len(bin_) == 6 and acc.isdigit() and ACCOUNT_MIN <= len(acc) <= ACCOUNT_MAX):
         return {"ok": False, "error": "bad_account"}
     return {"ok": True, "bin": bin_, "account_number": acc, "holder": (fields.get("59") or "").strip(),
             "amount": (fields.get("54") or "").strip(), "service": service or SERVICE_ACCOUNT}

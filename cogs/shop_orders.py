@@ -40,7 +40,8 @@ import discord
 from discord.ext import commands
 from discord.ui import TextInput
 
-from core.vietqr import MAX_IMAGE_BYTES, QRDecoderMissing, bank_name_from_bin, decode_qr_texts, pick_vietqr
+from core.vietqr import (MAX_IMAGE_BYTES, QRDecoderMissing, bank_name_from_bin, bank_problem, decode_qr_texts,
+                         normalize_account, pick_vietqr, validate_bank)
 
 from core.data import is_admin
 from core.data import (
@@ -181,13 +182,15 @@ def build_payment_qr_embed(seller: discord.abc.User, buyer: discord.abc.User, am
     if not bank:
         return None, None, (
             f"⚠️ {seller.mention} chưa đăng ký ngân hàng nhận tiền — gõ "
-            f'`.shopbank` kèm ảnh QR ngân hàng (hoặc `.shopbank "Tên NH" ma_bank SoTK "Chủ TK"`) để lần `.done` sau tự có QR.'
+            f'`.shopbank` kèm ảnh QR ngân hàng (hoặc nhập tay {BANK_TYPED_EXAMPLE}) để lần `.done` sau tự có QR.'
         )
 
+    problem = bank_problem(bank)
+    if problem:                                   # dữ liệu sai (vd số TK = "ma_bank") → KHÔNG dựng QR hỏng, báo rõ lý do
+        return None, None, (f"⚠️ Bank của {seller.mention} đang lưu **sai** — {problem}. "
+                            "Gõ `.shopbank` kèm **ảnh QR ngân hàng** để đăng ký lại.")
     bank_code      = bank.get("bank_code")
-    account_number = bank.get("account_number")
-    if not bank_code or not account_number:
-        return None, None, f"⚠️ Bank của {seller.mention} thiếu mã ngân hàng hoặc số TK — `.shopbank` lại đầy đủ."
+    account_number = normalize_account(bank.get("account_number"))
 
     template       = bank.get("template") or "compact2"
     account_holder = bank.get("account_holder", "")
@@ -392,6 +395,9 @@ class QueueOrderView(GuildContextView):
 
 
 _IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
+
+# Ví dụ nhập tay dùng GIÁ TRỊ THẬT (không dùng chữ mẫu như `ma_bank` — người dùng hay copy nguyên văn)
+BANK_TYPED_EXAMPLE = '`.shopbank "MB Bank" mbbank 0123456789 "NGUYEN VAN A"` (tên NH · mã NH · SỐ TK · tên chủ TK)'
 
 QR_ERRORS = {
     "no_qr": "❌ Không đọc được mã QR trong ảnh. Gửi ảnh **nét, đủ sáng, không bị cắt viền** — chụp màn hình mã QR nhận tiền trong app ngân hàng.",
@@ -660,17 +666,20 @@ class ShopOrdersCog(commands.Cog):
                 return await ctx.reply(
                     "📭 Bạn chưa đăng ký bank nào.\n"
                     'Đăng ký nhanh: gõ `.shopbank` và **đính kèm ảnh QR nhận tiền** của ngân hàng (bot tự đọc).\n'
-                    'Hoặc nhập tay: `.shopbank "Vietinbank" vietinbank 0123456789 "Nguyen Van A"`'
+                    f'Hoặc nhập tay: {BANK_TYPED_EXAMPLE}'
                 )
+            problem = bank_problem(bank)
+            warn = (f"⚠️ **Bank đang lưu bị lỗi — {problem}.** QR thanh toán sẽ không hiện cho tới khi sửa: "
+                    "gõ `.shopbank` kèm ảnh QR ngân hàng để đăng ký lại.\n\n") if problem else ""
             return await ctx.reply(
-                "**Bank của bạn hiện tại:**\n"
+                warn + "**Bank của bạn hiện tại:**\n"
                 f"› Tên hiển thị: `{bank.get('bank_name', '?')}`\n"
                 f"› Mã VietQR: `{bank.get('bank_code', '?')}`\n"
                 f"› Số TK: `{bank.get('account_number', '?')}`\n"
                 f"› Chủ TK: `{bank.get('account_holder', '?')}`\n"
                 f"› Ghi chú: `{bank.get('default_content') or '(không có)'}`\n"
                 f"› Template: `{bank.get('template', 'compact2')}`\n\n"
-                'Cập nhật: `.shopbank "Vietinbank" vietinbank 0123456789 "Nguyen Van A"`'
+                f'Cập nhật: {BANK_TYPED_EXAMPLE}'
             )
 
         try:
@@ -680,10 +689,19 @@ class ShopOrdersCog(commands.Cog):
         if len(parts) < 4:
             return await ctx.reply(
                 '❌ Dùng: `.shopbank "<tên hiển thị>" <bank_code_vietqr> <số TK> "<chủ TK>" ["<ghi chú>"] [template]`\n'
-                'Ví dụ: `.shopbank "Vietinbank" vietinbank 0123456789 "Nguyen Van A"`'
+                f'Ví dụ: {BANK_TYPED_EXAMPLE}'
             )
 
         bank_name, bank_code, account_number, account_holder = parts[0], parts[1], parts[2], parts[3]
+        err = validate_bank(bank_code, account_number, account_holder)
+        if err:                                   # KHÔNG lưu dữ liệu sai (từng có bank lưu số TK = "ma_bank" → QR không hiện ảnh)
+            return await ctx.reply(
+                f"❌ Chưa lưu — {err}.\n"
+                f"› Bot đọc được: Tên NH `{bank_name}` · Mã NH `{bank_code}` · Số TK `{account_number}` · Chủ TK `{account_holder}`\n"
+                f"› Thứ tự đúng: {BANK_TYPED_EXAMPLE}\n"
+                "› **Dễ nhất:** gõ `.shopbank` và đính kèm **ảnh QR nhận tiền** của ngân hàng — bot tự đọc, không cần nhập gì."
+            )
+        account_number = normalize_account(account_number)
         default_content = parts[4] if len(parts) > 4 else ""
         template = parts[5] if len(parts) > 5 else "compact2"
         save_shop_orders_bank(
@@ -710,7 +728,7 @@ class ShopOrdersCog(commands.Cog):
         except QRDecoderMissing as e:
             log.error(f"[SHOPBANK] {e}")
             return await ctx.reply("❌ Bot chưa cài thư viện đọc QR (`pip install zxing-cpp`) — nhờ admin cài, hoặc nhập tay: "
-                                   '`.shopbank "Vietinbank" vietinbank 0123456789 "Nguyen Van A"`')
+                                   f'{BANK_TYPED_EXAMPLE}')
         except Exception as e:
             log.warning(f"[SHOPBANK] không đọc được ảnh: {e}")
             return await ctx.reply("❌ Không mở được ảnh này — gửi lại ảnh PNG/JPG của mã QR.")

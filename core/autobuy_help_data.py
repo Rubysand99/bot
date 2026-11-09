@@ -242,6 +242,10 @@ PAGES = {
             ("Nút BUY báo \"đang có người mở đơn\" mãi",
              "Ticket cũ còn treo. Vào kênh `ticket-<tên acc>` bấm 🔒 **Close** (hoặc xoá kênh) → acc tự quay lại BUY được. "
              "Không thấy kênh ticket nữa mà nút vẫn kẹt → báo admin."),
+            ("Ticket có khung \"Quét mã để thanh toán\" nhưng KHÔNG hiện ảnh QR",
+             "Thường do **bank của seller lưu sai** (vd số TK là chữ `ma_bank`, hoặc số TK nằm nhầm ô tên chủ TK) nên ảnh QR không dựng được. "
+             "Seller gõ `.shopbank` (không kèm gì) để xem đang lưu gì, rồi đăng ký lại bằng `.shopbank` + **ảnh QR ngân hàng**. "
+             "Từ bản này bot chặn lưu bank sai và không còn gửi QR hỏng. Ticket cũ: bấm 🔒 **Close** rồi bấm BUY lại."),
             ("Ticket không có QR",
              "Seller của acc chưa `.shopbank`, Shop Orders đang tắt, hoặc giá không hợp lệ. "
              "Bán tay bằng ✅ Confirm, hoặc cài bank rồi mở đơn mới."),

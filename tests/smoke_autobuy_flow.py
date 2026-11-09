@@ -275,7 +275,7 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<@100>", i.response.send_message.await_args.args[0])
         i.response.defer.assert_not_awaited()
         # 3) đủ điều kiện (owner đăng hộ acc của seller 100 đã có bank) → đi qua cổng, tới bước vẽ card (render_card patched → None)
-        self.data["shop_orders_banks"]["100"] = {"bank_code": "vcb", "account_number": "1"}
+        self.data["shop_orders_banks"]["100"] = {"bank_code": "vcb", "account_number": "1234567890"}
         i = self._slash(self._member(1))
         with patch.object(AB, "is_active_seller", lambda g, u: False):
             await stock(i)
@@ -381,6 +381,54 @@ class FlowTest(unittest.IsolatedAsyncioTestCase):
             await self._shopbank(ctx)
         self.assertIn("zxing-cpp", ctx.reply.await_args.args[0])
         self.assertIsNone(C.get_shop_orders_bank(1))
+
+    # ───────── hồi quy từ ảnh chụp: bank lưu SAI (số TK = "ma_bank") → QR không hiện ─────────
+    GARBAGE_BANK = {"bank_name": "MB", "bank_code": "mbbank", "account_number": "ma_bank", "account_holder": "80086266778899"}
+
+    async def test_garbage_bank_builds_no_qr_and_explains(self):
+        self.data["shop_orders_banks"]["100"] = dict(self.GARBAGE_BANK)
+        seller = self._member(100); seller.mention = "<@100>"
+        embed, ref, warn = SO.build_payment_qr_embed(seller, self.buyer, 170000, 1, 555)
+        self.assertIsNone(embed); self.assertIsNone(ref)
+        self.assertIn("sai", warn); self.assertIn("ma_bank", warn); self.assertIn("ảnh QR", warn)
+        self.assertEqual(self.gdata.get("_shop_pending_orders", {}), {})       # không để lại đơn chờ cho QR hỏng
+
+    async def test_buy_with_garbage_bank_falls_back_with_clear_reason(self):
+        self.data["shop_orders_banks"]["100"] = dict(self.GARBAGE_BANK)
+        await self._buy()
+        t = C.get_ab_ticket(555)
+        self.assertIsNone(t["ref_code"])
+        embeds = self.ticket_ch.send.await_args.kwargs["embeds"]
+        self.assertEqual(len(embeds), 1)                                        # không còn embed QR hỏng không hiện ảnh
+        self.assertIn("sai", embeds[0].description)
+
+    async def test_stock_acc_rejects_garbage_bank_with_reason(self):
+        self.data["shop_orders_banks"]["100"] = dict(self.GARBAGE_BANK)
+        i = self._slash(self._member(1))
+        with patch.object(AB, "is_active_seller", lambda g, u: False):
+            await AB.AutoBuyCog.stock_acc.callback(self.cog, i, username="Foo", price="140k")
+        msg = i.response.send_message.await_args.args[0]
+        self.assertIn("<@100>", msg); self.assertIn("sai", msg)
+        i.response.defer.assert_not_awaited()
+
+    async def test_shopbank_typed_garbage_is_rejected_not_saved(self):
+        ctx = self._bank_ctx(b"x"); ctx.message.attachments = []; ctx.message.reference = None
+        await self._shopbank(ctx, args="MB mbbank ma_bank 80086266778899")        # đúng kiểu gõ trong ảnh chụp
+        self.assertIsNone(C.get_shop_orders_bank(1))
+        msg = ctx.reply.await_args.args[0]
+        self.assertIn("Chưa lưu", msg); self.assertIn("ma_bank", msg); self.assertIn("ảnh QR", msg)
+
+    async def test_shopbank_typed_good_input_is_normalized_and_saved(self):
+        ctx = self._bank_ctx(b"x"); ctx.message.attachments = []; ctx.message.reference = None
+        await self._shopbank(ctx, args='"MB Bank" MBBANK "0123 456 789" "NGUYEN VAN A"')
+        bank = C.get_shop_orders_bank(1)
+        self.assertEqual((bank["bank_code"], bank["account_number"], bank["account_holder"]), ("mbbank", "0123456789", "NGUYEN VAN A"))
+
+    async def test_shopbank_view_warns_when_saved_bank_is_broken(self):
+        self.data["shop_orders_banks"]["1"] = dict(self.GARBAGE_BANK)
+        ctx = self._bank_ctx(b"x"); ctx.message.attachments = []; ctx.message.reference = None
+        await self._shopbank(ctx, args=None)
+        self.assertIn("bị lỗi", ctx.reply.await_args.args[0])
 
 
 if __name__ == "__main__":

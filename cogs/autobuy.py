@@ -39,6 +39,7 @@ from cogs.listings import can_manage_listing
 from cogs.logger import send_log
 from cogs.seller import is_active_seller
 from core.autobuy_card import render_card
+from core.vietqr import bank_problem
 from core.autobuy_logic import (
     CUSTOM_EMOJI_RE, ST_AVAILABLE, ST_PROCESSING, ST_SOLD,
     convert_node_account, count_capes, fmt_vnd, format_price_display, make_stock_channel_name,
@@ -128,24 +129,36 @@ def can_sell_acc(member) -> bool:
     return isinstance(member, discord.Member) and (is_admin(member, quiet=True) or is_active_seller(member.guild.id, member.id))
 
 
-def has_bank(user_id) -> bool:
-    """User đã `.shopbank` ĐẦY ĐỦ (mã ngân hàng + số TK) — tiền khách chuyển sẽ vào bank này."""
+def bank_issue(user_id) -> str | None:
+    """None = bank dùng được. Ngược lại là lý do: chưa đăng ký, hoặc đã lưu nhưng SAI (số TK không phải số, nhập lộn ô...)."""
     try:
         bank = get_shop_orders_bank(int(user_id)) if user_id else None
     except (TypeError, ValueError):
-        return False
-    return bool(bank and bank.get("bank_code") and bank.get("account_number"))
+        return "chưa đăng ký ngân hàng"
+    return bank_problem(bank)
+
+
+def has_bank(user_id) -> bool:
+    """User đã `.shopbank` và dữ liệu DÙNG ĐƯỢC (không chỉ là có mã + số — bank lưu số TK `ma_bank` từng lọt qua kiểm tra cũ)."""
+    return bank_issue(user_id) is None
 
 
 MSG_NOT_SELLER = ("❌ Chỉ **seller** (đang có gói seller còn hạn — xem `.seller list`) hoặc **owner/admin** "
                   "mới được nạp kho và đăng bán tài khoản.")
-SHOPBANK_HINT = '`.shopbank` kèm **ảnh QR nhận tiền** của ngân hàng (bot tự đọc), hoặc nhập tay `.shopbank "Tên NH" ma_bank SoTK "Chủ TK"`'
+SHOPBANK_HINT = '`.shopbank` kèm **ảnh QR nhận tiền** của ngân hàng (bot tự đọc, không cần nhập gì)'
 
 
 def msg_no_bank(owner_id, me_id) -> str:
+    issue = bank_issue(owner_id)
+    wrong = issue is not None and issue != "chưa đăng ký ngân hàng"       # đã lưu nhưng dữ liệu sai
     if str(owner_id) == str(me_id):
+        if wrong:
+            return (f"❌ Bank bạn đang lưu bị **sai** — {issue}. Sửa lại: {SHOPBANK_HINT} "
+                    "(gõ `.shopbank` không kèm gì để xem đang lưu gì).")
         return (f"❌ Bạn chưa đăng ký **tài khoản ngân hàng** nhận tiền. Gõ {SHOPBANK_HINT} rồi thử lại "
                 "(tiền khách chuyển khoản sẽ vào đúng bank này).")
+    if wrong:
+        return f"❌ Bank của seller tài khoản này (<@{owner_id}>) đang lưu **sai** — {issue}. Họ cần đăng ký lại: {SHOPBANK_HINT}."
     return (f"❌ Seller của tài khoản này (<@{owner_id}>) chưa đăng ký **ngân hàng** nhận tiền — "
             f"họ cần gõ {SHOPBANK_HINT} trước khi đăng bán.")
 
