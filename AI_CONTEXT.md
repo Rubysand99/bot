@@ -3,7 +3,11 @@
 ## Thông tin repo
 - Repo: https://github.com/Rubysand99/bot.git
 - Branch: main
-- Deploy: Railway (auto-deploy khi push GitHub)
+- Deploy: **VPS Ubuntu** (KHÔNG còn Railway; `Procfile` chỉ là di sản) — service systemd `tuytam-bot`, thư mục `/root/bot` + `venv/`.
+  Script `autoupdate.sh` (ngoài repo) chạy mỗi 5 phút: có commit mới trên `main` → `git merge --ff-only` → nếu `requirements.txt`
+  đổi thì tự `pip install -r` → `systemctl restart tuytam-bot` → nếu service lỗi thì tự rollback commit cũ. Chi tiết: README mục "Triển khai (VPS)".
+  ⚠️ MỌI commit lên `main` (kể cả chỉ sửa tài liệu) đều làm bot restart trong vài giây → chạy test trước khi push.
+  Log bot: `journalctl -u tuytam-bot` · log cập nhật: `/var/log/tuytam-autoupdate.log`
 - Runtime: Python 3.11, discord.py 2.x, motor (async MongoDB)
 - Bot hỗ trợ **multi-guild** — nhưng từ v4.24.0, một guild chỉ hoạt động được sau khi
   admin (Ruby/TuyTam) **ủy quyền tường minh** qua lệnh `.as` (xem mục AUTH_GATE bên
@@ -178,7 +182,7 @@ mute nhầm vì "spam" dù mỗi guild riêng lẻ đều dưới ngưỡng). Pa
 `(guild_id, user_id)` làm key thay vì chỉ `user_id`.
 
 ### `on_ready()` KHÔNG chỉ chạy 1 lần lúc khởi động
-Discord gateway reconnect (rớt mạng, Railway restart container, session bị Discord
+Discord gateway reconnect (rớt mạng, restart service/VPS, session bị Discord
 invalidate...) khiến `on_ready()` **refire** bất cứ lúc nào trong suốt vòng đời bot —
 không chỉ 1 lần lúc khởi động thật. Bất kỳ logic nào trong `on_ready()` (hoặc hàm nó gọi)
 mà KHÔNG an toàn chạy lại nhiều lần sẽ gây bug thật khi reconnect xảy ra — đã gặp:
@@ -260,10 +264,10 @@ Xem `handle_sold()` làm mẫu, hoặc CHANGELOG v4.47.0 để biết chi tiết
 - **Env:** `ADMIN_RUBY_ID` (bắt buộc) · `ADMIN_TUYTAM_ID` (tùy chọn — đặt = TuyTam là admin cố định; bỏ = TuyTam chỉ là admin phụ qua `.ad`) · `TUYTAM_NOTIFY_ID` (người nhận DM đơn sold + ping trung gian, độc lập với quyền; không đặt thì dùng ADMIN_TUYTAM_ID).
 - **`can_use_dangerous_cmd()` / `is_admin_id(uid)`**: bản không có object member — cũng gồm admin phụ.
 - **Kiểm tra thụ động** (listener `on_message`, vòng lặp nền) gọi `is_admin(x, quiet=True)` và lọc rẻ trước (loại kênh/topic không liên quan) để khỏi spam log.
-- **LOGGING** (bot.py `setup_logging()`; bot chạy bằng `bot.start()` nên PHẢI tự cấu hình — thiếu thì mọi log INFO bị nuốt): INFO→stdout, WARNING+→stderr. Env `LOG_LEVEL`, `ADMIN_DEBUG=1`. Tiền tố log để tìm trên Railway: `[CMD]` (mỗi lệnh prefix + kết quả/lỗi kèm traceback) · `[SLASH]` · `[UI]` (nút/select/modal) · `[AUTH-GATE]` (chặn server chưa ủy quyền) · `[ADMIN-CHECK]` (mỗi lần is_admin từ chối/cho phép qua admin phụ, có `lệnh=` và file:dòng gọi) · `[ADMIN]` (thêm/xoá admin phụ + tóm tắt lúc khởi động) · `[ADMIN-CMD]` (`.ad` `.rmad` `.admin`).
+- **LOGGING** (bot.py `setup_logging()`; bot chạy bằng `bot.start()` nên PHẢI tự cấu hình — thiếu thì mọi log INFO bị nuốt): INFO→stdout, WARNING+→stderr. Env `LOG_LEVEL`, `ADMIN_DEBUG=1`. Tiền tố log để tìm trong `journalctl -u tuytam-bot`: `[CMD]` (mỗi lệnh prefix + kết quả/lỗi kèm traceback) · `[SLASH]` · `[UI]` (nút/select/modal) · `[AUTH-GATE]` (chặn server chưa ủy quyền) · `[ADMIN-CHECK]` (mỗi lần is_admin từ chối/cho phép qua admin phụ, có `lệnh=` và file:dòng gọi) · `[ADMIN]` (thêm/xoá admin phụ + tóm tắt lúc khởi động) · `[ADMIN-CMD]` (`.ad` `.rmad` `.admin`).
 - **Lỗi lệnh crash KHÔNG còn im lặng:** `AdminCog.on_command_error` làm discord.py tắt in traceback mặc định → `log_command_error` (shared/auth_gate.py, đăng ký ở bot.py) log đầy đủ. Đừng bỏ 3 dòng `bot.add_listener(...)` ở bot.py.
 - **Server chưa ủy quyền (`.as`) chặn MỌI lệnh/nút của MỌI người** — admin cố định và admin phụ được báo lý do, người khác im lặng (luôn có log `[AUTH-GATE]`). `.admin` đánh dấu server chưa ủy quyền.
-- Debug nhanh: `.admin` (danh sách), `.admin <id>` (vì sao user báo thiếu quyền), rồi tìm `[ADMIN-CHECK]`/`[CMD]` trong Railway logs.
+- Debug nhanh: `.admin` (danh sách), `.admin <id>` (vì sao user báo thiếu quyền), rồi tìm `[ADMIN-CHECK]`/`[CMD]` trong log bot (`journalctl -u tuytam-bot`).
 
 ## Log event types → nhóm kênh
 ```
@@ -293,6 +297,7 @@ git push origin main
 
 **Lưu ý:**
 - Git credential đã lưu sẵn, không cần nhập token
+- Sau `git push origin main`, VPS tự cập nhật + restart bot trong tối đa ~5 phút (xem mục "Deploy" đầu file) — không cần làm gì thêm trên VPS
 - Nếu conflict: `git fetch origin && git reset --hard origin/main` rồi copy lại
 - Kiểm tra không có file tên `-H` hoặc `-d` bị tạo nhầm sau `cp`
 
