@@ -62,6 +62,7 @@ from core.data import (
     load_data,
     GuildContextView, GuildContextModal,
 )
+from shared.data import guild_ui_gate
 from cogs.logger import send_log
 
 log = logging.getLogger(__name__)
@@ -272,12 +273,15 @@ def build_queue_embed(seller: discord.abc.User, buyer: discord.abc.User,
 
 
 def build_payment_confirmed_embed(seller: discord.abc.User, buyer: discord.abc.User,
-                                   amount: int, ref_code: str) -> discord.Embed:
-    """Embed báo trong ticket ngay khi webhook SePay xác nhận tiền đã vào TK — gửi SAU
-    khi tiền đã thực sự chuyển vào tài khoản ngân hàng qua QR (không phải lúc .done)."""
+                                   amount: int, ref_code: str, confirmed_by=None) -> discord.Embed:
+    """Embed báo trong ticket ngay khi tiền đã vào TK — do webhook SePay xác nhận (confirmed_by=None)
+    HOẶC do seller/staff/admin bấm nút \"Đã nhận tiền\" trên embed QR (confirmed_by = người bấm)."""
+    manual = confirmed_by is not None
     e = discord.Embed(
         title="✅ Đã nhận thanh toán",
-        description="SePay đã xác nhận tự động — tiền đã vào tài khoản ngân hàng qua QR.",
+        description=(f"{confirmed_by.mention} đã xác nhận thủ công — khách đã chuyển khoản (không qua SePay)."
+                     if manual else
+                     "SePay đã xác nhận tự động — tiền đã vào tài khoản ngân hàng qua QR."),
         color=COLOR_QUEUE_DONE,
         timestamp=datetime.now(timezone.utc),
     )
@@ -285,7 +289,8 @@ def build_payment_confirmed_embed(seller: discord.abc.User, buyer: discord.abc.U
     e.add_field(name="🧑 Seller", value=seller.mention, inline=True)
     e.add_field(name="💰 Số tiền", value=fmt_vnd(amount), inline=True)
     e.add_field(name="📝 Mã CK", value=f"`{ref_code}`", inline=True)
-    e.set_footer(text="🧪 Shop Orders — xác nhận tự động qua webhook SePay")
+    e.set_footer(text="🧪 Shop Orders — xác nhận thủ công bằng nút" if manual
+                 else "🧪 Shop Orders — xác nhận tự động qua webhook SePay")
     return e
 
 
@@ -393,6 +398,25 @@ class ReceiptProductModal(GuildContextModal, title="🧾 Hoàn thành đơn hàn
             ],
             user=interaction.user, guild_id=interaction.guild_id,
         )
+
+
+ID_QR_PAID = "shop_qr_paid:"   # + ref_code (mã CK in trên QR) — xử lý trong ShopOrdersCog.on_interaction, sống qua restart
+
+
+class _QRPaidView(discord.ui.View):
+    """Chỉ để HIỆN nút — mọi lượt bấm xử lý ở ShopOrdersCog.on_interaction (custom_id chứa mã CK nên không đăng ký view cố định)."""
+    def __init__(self, ref_code: str):
+        super().__init__(timeout=None)
+        self.add_item(discord.ui.Button(label="Đã nhận tiền", emoji="✅", style=discord.ButtonStyle.success,
+                                        custom_id=f"{ID_QR_PAID}{ref_code}"))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return False
+
+
+def qr_paid_view(ref_code: str | None):
+    """View có nút xác nhận tay cho embed QR của `.done` (None nếu không có QR/mã CK)."""
+    return _QRPaidView(ref_code) if ref_code else None
 
 
 class QueueOrderView(GuildContextView):
@@ -600,7 +624,7 @@ class ShopOrdersCog(commands.Cog):
             )
 
     async def _notify_paid_order(self, order: dict, ref_code: str, transfer_amount: int,
-                                 expected_amount: int) -> list[str]:
+                                 expected_amount: int, manual_by=None) -> list[str]:
         """Gửi xác nhận vào ticket + hàng đợi. Trả về danh sách vấn đề (rỗng = xong trọn vẹn)."""
         problems: list[str] = []
         set_current_guild(order["guild_id"])
@@ -631,7 +655,7 @@ class ShopOrdersCog(commands.Cog):
             log.info(f"[SEPAY] ℹ️ Order {ref_code} nhận THỪA ({transfer_amount} > {expected_amount}) — "
                      f"vẫn confirm bình thường, admin tự đối chiếu chênh lệch.")
         try:
-            await channel.send(embed=build_payment_confirmed_embed(seller, buyer, order["amount"], ref_code))
+            await channel.send(embed=build_payment_confirmed_embed(seller, buyer, order["amount"], ref_code, confirmed_by=manual_by))
         except Exception as e:
             problems.append(f"không gửi được xác nhận vào ticket: {e}")
         try:
@@ -639,6 +663,91 @@ class ShopOrdersCog(commands.Cog):
         except Exception as e:
             problems.append(f"không gửi được vào hàng đợi: {e}")
         return problems
+
+    # ── Nút "Đã nhận tiền" trên embed QR (.done) — thay SePay khi khách chuyển khoản xong ──
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        if interaction.type != discord.InteractionType.component:
+            return
+        cid = str((interaction.data or {}).get("custom_id") or "")
+        if not cid.startswith(ID_QR_PAID) or not interaction.guild:
+            return
+        if not await guild_ui_gate(interaction, "view", self):
+            return
+        try:
+            await self._on_qr_paid(interaction, cid[len(ID_QR_PAID):])
+        except Exception:
+            log.exception(f"[SHOP] lỗi xử lý nút {cid}")
+            try:
+                msg = "❌ Có lỗi xảy ra, vui lòng thử lại hoặc báo admin."
+                if interaction.response.is_done():
+                    await interaction.followup.send(msg, ephemeral=True)
+                else:
+                    await interaction.response.send_message(msg, ephemeral=True)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _can_confirm_qr(member, order: dict) -> bool:
+        """Seller/staff/admin (is_staff_member gồm admin + admin phụ + role support + role seller),
+        chủ server, hoặc đúng seller nhận tiền của đơn này."""
+        if is_staff_member(member):
+            return True
+        if member.id == order.get("seller_id"):
+            return True
+        guild = getattr(member, "guild", None)
+        return bool(guild and guild.owner_id == member.id)
+
+    async def _on_qr_paid(self, interaction: discord.Interaction, ref_code: str) -> None:
+        set_current_guild(interaction.guild.id)
+        order = get_pending_shop_order(ref_code)
+        if not order:
+            # đã được xác nhận (SePay hoặc người khác bấm trước) / hết hạn 7 ngày / bị xoá
+            return await interaction.response.send_message(
+                "ℹ️ Đơn này đã được xác nhận trước đó (hoặc đã hết hạn).", ephemeral=True)
+        if order.get("guild_id") != interaction.guild.id or order.get("channel_id") != interaction.channel_id:
+            return await interaction.response.send_message("❌ Nút này không thuộc kênh/đơn hiện tại.", ephemeral=True)
+        if not self._can_confirm_qr(interaction.user, order):
+            return await interaction.response.send_message(
+                "❌ **Từ chối:** chỉ seller/staff/admin mới xác nhận được đơn này!", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+        # Claim bằng pop (đồng bộ) — SePay về cùng lúc hoặc 2 người bấm cùng lúc thì chỉ 1 bên xử lý được.
+        order = pop_pending_shop_order(ref_code)
+        if not order:
+            return await interaction.followup.send("ℹ️ Đơn này vừa được xác nhận bởi người khác.", ephemeral=True)
+
+        amount = int(order.get("amount", 0))
+        try:
+            problems = await self._notify_paid_order(order, ref_code, amount, amount, manual_by=interaction.user)
+        except Exception as e:
+            log.exception(f"[SHOP] Lỗi khi xác nhận tay đơn {ref_code}")
+            problems = [f"lỗi không mong muốn: {type(e).__name__}: {str(e)[:150]}"]
+
+        # Cập nhật embed QR: đổi trạng thái + bỏ nút (tránh bấm lại)
+        try:
+            embed = interaction.message.embeds[0]
+            embed.title = "✅ Đã xác nhận thanh toán"
+            embed.color = COLOR_QUEUE_DONE
+            embed.set_footer(text=f"Xác nhận thủ công bởi {_uname_plain(interaction.user)}")
+            await interaction.message.edit(embed=embed, view=None)
+        except Exception as e:
+            problems.append(f"không cập nhật được embed QR: {e}")
+
+        try:
+            await send_log(
+                interaction.client, "SHOP_QUEUE_DONE", "Xác nhận thanh toán thủ công (nút QR)",
+                fields=[("🧾 Mã CK", f"`{ref_code}`", True), ("💰 Số tiền", fmt_vnd(amount), True),
+                        ("🎫 Kênh", interaction.channel.mention, True)],
+                user=interaction.user, guild_id=interaction.guild_id,
+            )
+        except Exception:
+            log.exception("[SHOP] send_log xác nhận tay lỗi")
+
+        if problems:
+            return await interaction.followup.send(
+                "⚠️ Đã xác nhận nhưng có vấn đề:\n" + "\n".join(f"• {p}" for p in problems), ephemeral=True)
+        await interaction.followup.send("✅ Đã xác nhận thanh toán — đơn đã vào hàng đợi.", ephemeral=True)
 
     @commands.command(name="setqueue")
     async def setqueue_cmd(self, ctx: commands.Context, channel: discord.TextChannel = None):

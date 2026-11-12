@@ -1,3 +1,16 @@
+## [v4.67.0] — 2026-11-13
+
+### ➕ Nút "Đã nhận tiền" trên embed QR của `.done` / `/done` — xác nhận tay, không cần SePay (`cogs/shop_orders.py`, `cogs/ticket.py`)
+- Embed **"Quét mã để thanh toán"** giờ có nút **✅ Đã nhận tiền**. Khách chuyển khoản xong mà SePay không báo (hoặc không dùng SePay) → bấm nút là xác nhận: gửi embed "✅ Đã nhận thanh toán" vào ticket + đẩy đơn vào hàng đợi, **y hệt** khi SePay tự xác nhận (embed ghi rõ "xác nhận thủ công bởi @người bấm").
+- **Ai bấm được**: admin / admin phụ (`.ad`), role support, role seller (`is_staff_member`), chủ server, và đúng seller nhận tiền của đơn. Khách / người khác bị từ chối, đơn vẫn chờ.
+- Bấm xong embed QR đổi thành "✅ Đã xác nhận thanh toán", nút biến mất. Mã CK được lấy ra khỏi hàng chờ ngay (đồng bộ) → bấm đúp / 2 người bấm / SePay về cùng lúc chỉ xử lý 1 lần.
+- Nút gắn mã CK trong `custom_id` (`shop_qr_paid:<mã>`), xử lý trong `ShopOrdersCog.on_interaction` → sống qua restart, không cần resume. Đơn quá 7 ngày (hết hạn) báo "đã xác nhận hoặc hết hạn".
+- Ticket Auto Buy KHÔNG đổi: vẫn dùng nút **Confirm** riêng của nó.
+- `build_payment_confirmed_embed(..., confirmed_by=None)` và `_notify_paid_order(..., manual_by=None)` thêm tham số tuỳ chọn (mặc định giữ nguyên hành vi SePay).
+- Test: `tests/test_qr_paid_button.py` MỚI (6 test).
+
+---
+
 ## [v4.66.6] — 2026-11-09
 
 ### 🔄 Đổi cách đặt tên kênh khi sold (`cogs/shop_admin.py`)
