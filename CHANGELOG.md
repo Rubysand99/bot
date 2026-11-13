@@ -1,3 +1,12 @@
+## [v4.67.1] — 2026-11-14
+
+### ➖ Bỏ DM hỏi admin nhập giá khi sold-stock không đọc được giá (`cogs/shop_admin.py`)
+- Gõ `sold` trong kênh stock mà tên kênh không có giá → bot vẫn chuyển kênh sang sold như cũ, nhưng **không còn DM hỏi admin TuyTam/Ruby** nút "💰 Nhập giá" và không còn lưu pending / escalate sau 24h. Chỉ ghi log INFO để staff biết; đơn này không vào thống kê doanh số seller và không hỏi người mua (cộng tiền cho khách thì dùng `.done` trong ticket).
+- Kênh có giá trong tên (vd `✅130k-...`) giữ nguyên: ghi thống kê + DM hỏi người mua như cũ.
+- Các DM "Nhập giá" đã gửi trước bản này vẫn bấm được (code xử lý + resume giữ nguyên).
+
+---
+
 ## [v4.67.0] — 2026-11-13
 
 ### ➕ Nút "Đã nhận tiền" trên embed QR của `.done` / `/done` — xác nhận tay, không cần SePay (`cogs/shop_orders.py`, `cogs/ticket.py`)

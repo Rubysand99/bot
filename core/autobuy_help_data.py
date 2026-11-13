@@ -132,7 +132,7 @@ PAGES = {
             ("📣 `/restock`",
              "Gửi bảng liệt kê **tất cả kênh trong danh mục Stock** vào kênh hiện tại — dùng để báo hàng mới."),
             ("✋ Bán tay ngoài bot",
-             "Gõ `sold` trong kênh stock → chạy luồng sold có sẵn (hỏi giá/người mua, chuyển kênh) và acc cũng thành "
+             "Gõ `sold` trong kênh stock → chạy luồng sold có sẵn (chuyển kênh, hỏi người mua nếu tên kênh có giá) và acc cũng thành "
              "**SOLD**, nút BUY bị khoá nên không ai mua nốt acc đã bán."),
             ("💡 Mẹo",
              "• Seller của acc = người nhận tiền: QR dùng **bank của người này** (`.shopbank`), được ping trong ticket và được tính doanh số\n"

@@ -647,28 +647,12 @@ async def handle_sold(bot, message: discord.Message):
                 user=message.author, guild_id=message.guild.id)
         return
 
-    # ── Không parse được giá → lưu pending + DM admin TuyTam nhập tay ──
-    # (sau khi admin nhập giá xong, _SoldPriceModal.on_submit sẽ TỰ hỏi tiếp người mua)
-    add_pending_sold_price(channel.id, seller_id, new_name, old_name, message.guild.id)
-
-    if not TUYTAM_NOTIFY_ID:
-        print(f"[SOLD] ⚠️ Không đọc được giá từ tên kênh `{old_name}` & chưa cài TUYTAM_NOTIFY_ID — bỏ qua hỏi giá.")
-        await send_log(bot, "INFO", "⚠️ Sold-stock — không parse được giá & chưa cài TUYTAM_NOTIFY_ID",
-            fields=[("👤 Seller", _uname_plain(message.author), True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
-            user=message.author, guild_id=message.guild.id)
-        return
-
-    msg_id = await _send_sold_price_dm(bot, TUYTAM_NOTIFY_ID, channel.id, old_name, message.author.mention)
-    if msg_id:
-        set_pending_sold_dm(channel.id, tuytam_message_id=msg_id)
-        bot.add_view(_SoldPriceView(channel.id), message_id=msg_id)
-    else:
-        await send_log(bot, "INFO", "⚠️ Không gửi được DM hỏi giá cho admin TuyTam (DM tắt)",
-            fields=[("👤 Seller", _uname_plain(message.author), True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
-            user=message.author, guild_id=message.guild.id)
-
-    # Sau 24h nếu chưa xử lý → escalate sang Ruby
-    asyncio.create_task(_escalate_pending_sold(bot, channel.id))
+    # ── Không parse được giá từ tên kênh → KHÔNG DM hỏi admin nữa (theo yêu cầu). ──
+    # Kênh vẫn đã chuyển sang sold ở trên; chỉ bỏ qua thống kê doanh số + bước hỏi người mua cho đơn này
+    # (cần cộng tiền cho khách thì dùng `.done` trong ticket). Ghi log để staff biết.
+    await send_log(bot, "INFO", "⚠️ Sold-stock — không đọc được giá từ tên kênh, bỏ qua thống kê",
+        fields=[("👤 Seller", _uname_plain(message.author), True), ("🎫 Kênh cũ", f"`{old_name}`", True)],
+        user=message.author, guild_id=message.guild.id)
 
 
 # ══════════════════════════════════════════
